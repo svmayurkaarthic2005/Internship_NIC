@@ -6,7 +6,7 @@ A bilingual (Tamil/English) AI-powered chatbot system for Sub Inspectors to mana
 
 - **Backend**: FastAPI, PostgreSQL, Ollama (Llama 3.1:8b)
 - **Frontend**: HTML/CSS/JavaScript (Vanilla)
-- **Vector Store**: ChromaDB
+- **Vector Store**: pgvector (PostgreSQL)
 - **Authentication**: JWT
 
 ## Quick Start
@@ -72,7 +72,7 @@ nic_internship/
 │   │   ├── chatbot.py               # Main chatbot orchestration
 │   │   ├── rag.py                   # Intent detection & routing
 │   │   ├── postgres.py              # Database query handlers
-│   │   ├── chroma.py                # Vector store operations
+│   │   ├── pgvector_store.py        # Vector store operations (pgvector)
 │   │   ├── embeddings.py            # Embedding generation
 │   │   └── speech_service.py        # Speech processing
 │   └── documents/                   # Knowledge base documents
@@ -195,7 +195,7 @@ Each intent has a dedicated query handler:
 # No reference: → Asks user for application number
 ```
 
-### 6. Vector Store (ChromaDB)
+### 6. Vector Store (pgvector)
 
 Documents ingested:
 - `faq_english.txt` - English FAQs
