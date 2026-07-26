@@ -1,5 +1,19 @@
 SIS WORKFLOW GUIDE FOR ISD AND NISD APPLICATIONS
 
+=== IMPORTANT BUSINESS RULES ===
+
+Survey Number Application Rules:
+- Only ONE active application (pending/in_progress) is allowed per survey number at any time
+- A new application for the same survey number can ONLY be submitted AFTER the previous application is completed (approved or rejected)
+- This rule applies to all application types: ISD, NISD, and MERGE
+- Attempting to submit a duplicate application while one is pending will be rejected
+- Officers should verify no active applications exist for a survey number before processing new submissions
+
+Application Status Definitions:
+- Active statuses: "pending", "in_progress", "escalated"
+- Completed statuses: "approved", "rejected"
+- Once an application reaches a completed status, a new application can be submitted for that survey number
+
 === ISD WORKFLOW (Involving Sub-Division) ===
 
 Step 1: Application Submission

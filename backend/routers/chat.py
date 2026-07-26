@@ -96,7 +96,7 @@ async def send_chat_message(
     Send a message to the AI chatbot and get a response
     
     - Detects language automatically (English, Tamil, or Tanglish)
-    - Uses RAG (Retrieval-Augmented Generation) with ChromaDB
+    - Uses RAG (Retrieval-Augmented Generation) with pgvector
     - Queries structured data from PostgreSQL based on intent
     - Returns AI-generated response from Llama 3.1
     """

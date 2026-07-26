@@ -5,7 +5,7 @@ Jurisdiction hierarchy: District → Taluk → Town → Ward → Block → Surve
 
 Components:
   detect_language()             — Tamil / Tanglish / English detection
-  get_rag_context()             — ChromaDB semantic retrieval
+  get_rag_context()             — pgvector semantic retrieval
   format_structured_data_for_llm() — Plain-text DB summary for LLM fallback
   build_html_response()         — Direct HTML builder (bypasses LLM for table queries)
   build_prompt()                — LLM prompt assembly (only when HTML path returns "")
@@ -23,7 +23,7 @@ from difflib import SequenceMatcher
 import re
 
 from backend.config import settings
-from backend.services.chroma import similarity_search
+from backend.services.pgvector_store import similarity_search
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ llm = ChatOllama(
 
 # ─────────────────────────────────────────────────────────────────────────────
 # detect_language
-#   - Default to "tanglish" (no ChromaDB filter) when content is mixed.
+#   - Default to "tanglish" (no pgvector filter) when content is mixed.
 #   - Pure-Tamil threshold at 50% so "Survey 145 எங்கே உள்ளது?"
 #     is correctly classified as tanglish, not ta.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ def detect_language(text: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 def get_rag_context(query: str, language: str = "en", n_results: int = 5) -> str:
     """
-    Retrieve relevant context from ChromaDB based on query.
+    Retrieve relevant context from pgvector (knowledge_embeddings) based on query.
 
     Language filter is applied for pure "en" or "ta"; tanglish searches
     both collections (no filter).
@@ -97,7 +97,7 @@ def get_rag_context(query: str, language: str = "en", n_results: int = 5) -> str
                 if not results:
                     logger.warning(
                         f"Language filter {where_filter} returned 0 results for query "
-                        f"'{query[:60]}'. ChromaDB may be missing '{language}' metadata on "
+                        f"'{query[:60]}'. pgvector may be missing '{language}' metadata on "
                         f"some documents. Retrying without filter."
                     )
                     results = similarity_search(query, n_results=n_results)
@@ -717,9 +717,9 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
             f"<td>{_e(fv.get('application_number'))}</td>"
             f"<td>{_e(fv.get('survey_no'))}</td>"
             f"<td>{_e(fv.get('block_number'))}</td>"
-            f"<td>{_e(fv.get('type'))}</td>"  # Changed from 'application_type' to 'type'
-            f"<td>{_status(fv.get('status'), lang)}</td>"
-            f"<td>{_e(fv.get('scheduled_date') or 'Not Scheduled')}</td>"  # Changed from 'field_visit_date'
+            f"<td>{_e(fv.get('application_type'))}</td>"  # Fixed: use 'application_type' from postgres
+            f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>"  # Add warning icon for overdue
+            f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>"  # Fixed: use 'field_visit_date' from postgres
             f"</tr>"
             for fv in field_visits
         )
@@ -1002,6 +1002,18 @@ def parse_intent(message: str) -> str:
     ta_next        = ["அடுத்த", "கிடைக்கும்", "next", "available", "nxt"]
     ta_detail      = ["விவரம்", "விவரங்கள்", "detail", "details", "info",
                       "contain", "included", "which", "what", "how", "land"]
+
+    # ── Greeting queries ──
+    _greetings_exact = [
+        "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+        "vanakkam", "வணக்கம்", "காலை வணக்கம்", "மாலை வணக்கம்", "ஹாய்",
+        "நன்றி", "thanks", "thank you", "how are you", "எப்படி இருக்கீங்க"
+    ]
+    clean_msg = msg.strip().rstrip("!.,")
+    if (clean_msg in _greetings_exact or
+        any(clean_msg.startswith(g) for g in ["வணக்கம்", "காலை வணக்கம்", "மாலை வணக்கம்", "good morning", "good evening", "good afternoon"])) and len(words) <= 5:
+        if not any(w in msg for w in ["app-", "application", "survey", "145", "146", "147", "148", "status", "stage", "விண்ணப்பம்", "கணக்கெண்"]):
+            return "greeting"
 
     # ── Document / file upload queries — catch before DB intent routing ──
     # Phrases that mean "I uploaded a file, help me with it" should never

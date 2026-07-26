@@ -42,14 +42,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"   ⚠️  Database initialization warning: {e}")
     
-    # Initialize ChromaDB
+    # Initialize pgvector store
     try:
-        from backend.services.chroma import init_chroma, get_collection_stats
-        init_chroma()
+        from backend.services.pgvector_store import init_pgvector, get_collection_stats
+        init_pgvector()
         stats = get_collection_stats()
-        print(f"   ✅ ChromaDB initialized ({stats['document_count']} documents)")
+        print(f"   ✅ pgvector store ready ({stats['document_count']} documents)")
     except Exception as e:
-        print(f"   ⚠️  ChromaDB initialization warning: {e}")
+        print(f"   ⚠️  pgvector initialization warning: {e}")
+        print(f"      Ensure 'CREATE EXTENSION IF NOT EXISTS vector;' has been run")
+
     
     # Check Ollama connectivity
     try:
@@ -156,6 +158,15 @@ app.include_router(chat.router, tags=["Chat"])
 app.include_router(applications.router, tags=["Applications"])
 app.include_router(survey.router, tags=["Survey"])
 app.include_router(speech.router, tags=["Speech"])
+
+# ========== STATIC FILES ==========
+import os
+from fastapi.staticfiles import StaticFiles
+
+frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/frontend", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
 
 
 # ========== ROOT ENDPOINTS ==========

@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 from datetime import datetime, timezone
 import uuid
 
@@ -520,3 +521,47 @@ class ChatMessage(Base):
     )
 
     session = relationship("ChatSession", back_populates="chat_messages")
+
+
+# ========== VECTOR STORE TABLE ==========
+
+class KnowledgeEmbedding(Base):
+    """
+    Stores document chunks and their vector embeddings for semantic
+    similarity search via pgvector.  Replaces ChromaDB as the vector store.
+
+    Embedding dimension : 768  (nomic-embed-text output size)
+    Index type          : HNSW cosine similarity
+    """
+    __tablename__ = "knowledge_embeddings"
+
+    id       = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chunk_id = Column(Text, unique=True, nullable=False)
+    content  = Column(Text, nullable=False)
+    # Vector(768) requires pgvector extension to be installed in PostgreSQL
+    embedding = Column(Vector(768), nullable=False)
+
+    # Metadata columns (directly queryable without JSON parsing)
+    source   = Column(Text)                          # e.g. "SIS Question Bank"
+    category = Column(Text)                          # e.g. "workflow"
+    section  = Column(Text)                          # e.g. "Field Visit Scheduling"
+    language = Column(Text, default="en")            # en / ta / tanglish
+    page     = Column(Integer, default=0)
+
+    created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow,
+                        onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        # HNSW index for fast approximate cosine-distance nearest neighbour
+        Index(
+            "idx_ke_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("idx_ke_category", "category"),
+        Index("idx_ke_language",  "language"),
+        Index("idx_ke_chunk_id",  "chunk_id"),
+    )

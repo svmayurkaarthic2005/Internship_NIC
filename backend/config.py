@@ -39,16 +39,6 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "llama3.1:8b"
     EMBEDDING_MODEL: str = "nomic-embed-text"
     
-    # ChromaDB — default is an absolute path so it's the same regardless of cwd
-    CHROMA_PERSIST_DIR: str = str(_PROJECT_ROOT / "vectorstore")
-
-    @validator("CHROMA_PERSIST_DIR", pre=True)
-    def resolve_chroma_dir(cls, v):
-        """Convert relative paths to absolute, anchored to the project root."""
-        p = Path(v)
-        if not p.is_absolute():
-            p = _PROJECT_ROOT / p
-        return str(p.resolve())
     
     # Environment
     ENVIRONMENT: str = "development"

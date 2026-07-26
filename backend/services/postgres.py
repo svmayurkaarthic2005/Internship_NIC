@@ -74,7 +74,8 @@ async def get_officer_applications(
     officer: OfficerContext,
     status: Optional[Any] = None,
     application_type: Optional[str] = None,
-    submission_year: Optional[int] = None
+    submission_year: Optional[int] = None,
+    submission_month: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Get applications assigned to officer with optional filters.
@@ -114,6 +115,11 @@ async def get_officer_applications(
         if submission_year:
             from sqlalchemy import extract
             query = query.where(extract('year', Application.submission_date) == submission_year)
+        
+        # Filter by submission month if provided
+        if submission_month:
+            from sqlalchemy import extract
+            query = query.where(extract('month', Application.submission_date) == submission_month)
         
         result = await db.execute(query)
         applications = result.scalars().all()
@@ -204,17 +210,25 @@ async def get_pending_applications(
     officer: OfficerContext,
     application_type: Optional[str] = None,
     status: Optional[Any] = None,
-    submission_year: Optional[int] = None
+    submission_year: Optional[int] = None,
+    submission_month: Optional[int] = None
 ) -> Dict[str, Any]:
     """
-    Get applications for officer with optional status and year filter.
+    Get applications for officer with optional status, year, and month filter.
     By default, returns both 'pending' and 'in_progress' applications.
     Pass a specific status string or list to filter differently.
     Pass submission_year to filter by year (e.g., 2025).
+    Pass submission_month to filter by month (1-12).
     """
     if status is None:
         status = ["pending", "in_progress"]
-    return await get_officer_applications(db, officer, status=status, application_type=application_type, submission_year=submission_year)
+    return await get_officer_applications(
+        db, officer, 
+        status=status, 
+        application_type=application_type, 
+        submission_year=submission_year,
+        submission_month=submission_month
+    )
 
 
 async def get_overdue_applications(
@@ -273,7 +287,8 @@ async def get_overdue_applications(
                     "status": app.current_status,
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat(),
-                    "days_overdue": (datetime.now().date() - app.submission_date).days - 15
+                    "days_overdue": (datetime.now().date() - app.submission_date).days - 15,
+                    "is_overdue": True  # Explicitly mark as overdue for HTML formatter
                 }
                 for app in applications
             ]
@@ -810,6 +825,7 @@ async def get_field_visits(
         ).where(
             and_(
                 FieldVisit.officer_id == officer.officer_id,
+                Application.current_status != 'rejected',  # Exclude field visits for rejected applications
                 *jur_conditions  # Unpack list of conditions
             )
         )
@@ -821,17 +837,27 @@ async def get_field_visits(
         visits = result.scalars().all()
         
         field_visits = []
+        from datetime import date
+        today = date.today()
+        
         for visit in visits:
             app = visit.application
             survey = app.survey_number if app else None
             block = survey.block if survey else None
+            
+            # Check if field visit is overdue (scheduled date in past and status is not completed)
+            is_overdue = False
+            if visit.scheduled_date and visit.status in ["scheduled", "rescheduled", "overdue"]:
+                is_overdue = visit.scheduled_date < today
+            
             field_visits.append({
                 "application_number": app.application_number if app else "N/A",
                 "survey_no": survey.survey_no if survey else "N/A",
                 "block_number": block.block_number if block else None,
                 "application_type": app.application_type if app else "N/A",
                 "status": visit.status,
-                "field_visit_date": visit.scheduled_date.isoformat() if visit.scheduled_date else None
+                "field_visit_date": visit.scheduled_date.isoformat() if visit.scheduled_date else None,
+                "is_overdue": is_overdue
             })
         
         return {

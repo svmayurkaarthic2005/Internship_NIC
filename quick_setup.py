@@ -121,25 +121,25 @@ async def check_database_seeded():
         print("Run: python backend/seed.py")
         return False
 
-def check_chromadb():
-    """Check ChromaDB status"""
-    print_step(5, "Checking ChromaDB")
+def check_pgvector():
+    """Check pgvector store status"""
+    print_step(5, "Checking pgvector store")
     
     try:
-        from backend.services.chroma import get_collection_stats
+        from backend.services.pgvector_store import get_collection_stats
         
         stats = get_collection_stats()
         doc_count = stats.get('document_count', 0)
         
         if doc_count > 0:
-            print_success(f"ChromaDB has {doc_count} documents")
+            print_success(f"pgvector store has {doc_count} documents")
             return True
         else:
-            print_warning("ChromaDB is empty")
+            print_warning("pgvector store is empty")
             print("Run: python backend/ingest.py")
             return False
     except Exception as e:
-        print_error(f"ChromaDB error: {e}")
+        print_error(f"pgvector error: {e}")
         return False
 
 def print_summary(checks):
@@ -191,11 +191,11 @@ async def main():
         else:
             checks["Database Seeded"] = False
         
-        checks["ChromaDB"] = check_chromadb()
+        checks["pgvector"] = check_pgvector()
     else:
         checks["Database Connection"] = False
         checks["Database Seeded"] = False
-        checks["ChromaDB"] = False
+        checks["pgvector"] = False
     
     # Print summary
     print_summary(checks)

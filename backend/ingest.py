@@ -1,9 +1,16 @@
 """
-Document ingestion script for ChromaDB
-Run this script to load knowledge documents into the vector store
+Document ingestion script for pgvector (PostgreSQL)
+Run this script to load knowledge documents into the vector store.
 """
 import os
 import sys
+# Force UTF-8 output on Windows to prevent UnicodeEncodeError on emoji/symbols
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
@@ -11,7 +18,7 @@ import uuid
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.services.chroma import init_chroma, add_documents, get_collection_stats
+from backend.services.pgvector_store import init_pgvector, add_documents, get_collection_stats
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -100,17 +107,17 @@ def ingest_documents():
     print("SIS CHATBOT - DOCUMENT INGESTION")
     print("=" * 60)
     
-    # Initialize ChromaDB
-    print("\n[1/4] Initializing ChromaDB...")
+    # Initialize pgvector store
+    print("\n[1/4] Initializing pgvector store...")
     try:
-        collection = init_chroma()
-        print(f"✓ ChromaDB initialized")
+        init_pgvector()
+        print(f"✓ pgvector store initialized")
         
         # Get initial stats
         initial_stats = get_collection_stats()
         print(f"  Current document count: {initial_stats['document_count']}")
     except Exception as e:
-        print(f"✗ Error initializing ChromaDB: {e}")
+        print(f"✗ Error initializing pgvector store: {e}")
         return
     
     # Load documents
@@ -167,8 +174,8 @@ def ingest_documents():
     print(f"\n  Total documents loaded: {total_docs}")
     print(f"  Total chunks prepared: {len(all_chunks)}")
     
-    # Ingest into ChromaDB
-    print("\n[3/4] Ingesting into ChromaDB...")
+    # Ingest into pgvector
+    print("\n[3/4] Ingesting into pgvector...")
     try:
         add_documents(all_chunks)
         print(f"✓ Successfully ingested {len(all_chunks)} chunks")

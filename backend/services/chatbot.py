@@ -49,6 +49,56 @@ from sqlalchemy import select, and_, func
 logger = get_logger(__name__)
 
 
+def extract_month_from_query(message: str) -> Optional[int]:
+    """
+    Extract month from message for filtering applications by submission month.
+    Handles English and Tamil month names with fuzzy matching for spelling mistakes.
+    
+    Returns:
+        Month number (1-12) if found, None otherwise
+    """
+    # Month mappings with common variations and misspellings
+    month_patterns = {
+        1: ["january", "jan", "ஜனவரி", "januvary", "janaury", "jenuary"],
+        2: ["february", "feb", "பிப்ரவரி", "feburary", "febuary", "februry"],
+        3: ["march", "mar", "மார்ச்", "மார்ச", "marh"],
+        4: ["april", "apr", "ஏப்ரல்", "aprill", "aprl"],
+        5: ["may", "மே", "மேமாதம்"],
+        6: ["june", "jun", "ஜூன்", "joon", "juun"],
+        7: ["july", "jul", "ஜூலை", "jully", "julai"],
+        8: ["august", "aug", "ஆகஸ்ட்", "agust", "augest"],
+        9: ["september", "sep", "sept", "செப்டம்பர்", "septembar", "septmber"],
+        10: ["october", "oct", "அக்டோபர்", "octobr", "octobar"],
+        11: ["november", "nov", "நவம்பர்", "novembar", "novembr"],
+        12: ["december", "dec", "டிசம்பர்", "decembr", "desember"]
+    }
+    
+    msg_lower = message.lower()
+    
+    # Direct exact match first
+    for month_num, patterns in month_patterns.items():
+        for pattern in patterns:
+            if pattern in msg_lower:
+                logger.info(f"Month extracted: {month_num} (matched '{pattern}')")
+                return month_num
+    
+    # Fuzzy matching for spelling mistakes (threshold 0.75 = 75% similarity)
+    words = msg_lower.split()
+    for word in words:
+        if len(word) < 3:  # Skip very short words
+            continue
+        for month_num, patterns in month_patterns.items():
+            for pattern in patterns:
+                if len(pattern) < 3:
+                    continue
+                similarity = SequenceMatcher(None, word, pattern).ratio()
+                if similarity >= 0.75:
+                    logger.info(f"Month extracted (fuzzy): {month_num} (word '{word}' ~= '{pattern}', similarity={similarity:.2f})")
+                    return month_num
+    
+    return None
+
+
 def _extract_app_number_from_context(message: str, chat_history: list = None, allow_implicit_continuation: bool = False) -> str:
     """
     Extract application number from current message or recent chat history.
@@ -298,6 +348,49 @@ async def process_chat(
                 "table_data": None
             }
 
+        # Step 2c: Direct greeting response handling
+        if intent == "greeting":
+            msg_lower = message.lower().strip()
+            is_tamil = language == "ta" or any(w in message for w in ["வணக்கம்", "காலை", "மாலை", "நன்றி", "ஹாய்"])
+
+            if "காலை" in msg_lower or "morning" in msg_lower:
+                if is_tamil:
+                    response_text = "காலை வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை எண்கள், விண்ணப்பங்கள் (ISD/NISD/MERGE), கள ஆய்வுகள் தொடர்பாக இன்று உங்களுக்கு எவ்வாறு உதவ முடியும்?"
+                else:
+                    response_text = "Good morning! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you today with survey numbers, applications (ISD/NISD/MERGE), or field visits?"
+            elif "மாலை" in msg_lower or "evening" in msg_lower:
+                if is_tamil:
+                    response_text = "மாலை வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை மற்றும் விண்ணப்பங்கள் தொடர்பான தகவல்களுக்கு இன்று உங்களுக்கு எவ்வாறு உதவ முடியும்?"
+                else:
+                    response_text = "Good evening! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you with your survey work today?"
+            elif "நன்றி" in msg_lower or "thanks" in msg_lower or "thank" in msg_lower:
+                if is_tamil:
+                    response_text = "நல்வரவு! 😊 உங்களுக்கு மேலும் ஏதேனும் உதவி தேவைப்பட்டால் தயங்காமல் கேளுங்கள்."
+                else:
+                    response_text = "You're very welcome! 😊 Feel free to ask if you need anything else regarding your survey work."
+            else:
+                if is_tamil:
+                    response_text = "வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை எண்கள், விண்ணப்பங்களின் நிலை, கள ஆய்வுகள் மற்றும் பட்டா பரிமாற்றங்கள் பற்றிய கேள்விகளுக்கு உதவ தயாராக உள்ளேன். இன்று உங்களுக்கு என்ன உதவி தேவை?"
+                else:
+                    response_text = "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
+
+            from backend.services.chatbot import save_chat_messages
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=response_text,
+                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+            )
+            return {
+                "response": response_text,
+                "language": language,
+                "intent": "greeting",
+                "sources": [],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+
         # Step 3: Execute structured database queries based on intent
         structured_data = {}
         response_text = ""
@@ -316,6 +409,9 @@ async def process_chat(
             # Extract year from message (e.g., "2025", "2026")
             year_match = re.search(r'\b(20\d{2})\b', message)
             submission_year = int(year_match.group(1)) if year_match else None
+            
+            # Extract month from message (handles English/Tamil with fuzzy matching)
+            submission_month = extract_month_from_query(message)
                 
             # For MERGE apps show all statuses; for others default to pending
             if app_type == "MERGE":
@@ -331,23 +427,37 @@ async def process_chat(
                 elif "reject" in message_lower:
                     status_filter = "rejected"
                 
-            structured_data = await get_pending_applications(db, officer, application_type=app_type, status=status_filter, submission_year=submission_year)
+            structured_data = await get_pending_applications(
+                db, officer, 
+                application_type=app_type, 
+                status=status_filter, 
+                submission_year=submission_year,
+                submission_month=submission_month
+            )
             
             # Determine appropriate query title
             type_str = f" {app_type}" if app_type else ""
             year_str = f" in {submission_year}" if submission_year else ""
+            
+            # Add month string to title if month filter is present
+            month_str = ""
+            if submission_month:
+                month_names = ["", "January", "February", "March", "April", "May", "June",
+                             "July", "August", "September", "October", "November", "December"]
+                month_str = f" {month_names[submission_month]}" if submission_year else f" in {month_names[submission_month]}"
+            
             if app_type == "MERGE":
-                structured_data["query_type"] = f"MERGE Applications{year_str}"
+                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}"
             elif status_filter == ["approved", "rejected"]:
-                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){year_str}"
+                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}"
             elif status_filter is None:
-                structured_data["query_type"] = f"All{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}"
             elif status_filter == "approved":
-                structured_data["query_type"] = f"Approved{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}"
             elif status_filter == "rejected":
-                structured_data["query_type"] = f"Rejected{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}"
             else:
-                structured_data["query_type"] = f"Pending{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}"
             
         elif intent == "overdue_applications":
             # Extract application type if mentioned in message
@@ -1712,7 +1822,7 @@ async def process_chat(
             else:
                 structured_data = {"found": False, "message": "Please specify a ward number or ensure your officer profile has a ward assignment."}
         
-        # Step 4: Get RAG context from ChromaDB — skip if DB data was actually found
+        # Step 4: Get RAG context from pgvector — skip if DB data was actually found
         # (avoids FAQ docs contaminating DB answers)
         has_db_results = (
             structured_data
@@ -2554,6 +2664,43 @@ async def process_chat_stream(
         intent = parse_intent(message)
         logger.info(f"Parsed intent: {intent}")
 
+        # Step 2c: Direct greeting response handling (STREAMING)
+        if intent == "greeting":
+            import json as _json_greeting
+            msg_lower = message.lower().strip()
+            is_tamil = language == "ta" or any(w in message for w in ["வணக்கம்", "காலை", "மாலை", "நன்றி", "ஹாய்"])
+
+            if "காலை" in msg_lower or "morning" in msg_lower:
+                if is_tamil:
+                    response_text = "காலை வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை எண்கள், விண்ணப்பங்கள் (ISD/NISD/MERGE), கள ஆய்வுகள் தொடர்பாக இன்று உங்களுக்கு எவ்வாறு உதவ முடியும்?"
+                else:
+                    response_text = "Good morning! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you today with survey numbers, applications (ISD/NISD/MERGE), or field visits?"
+            elif "மாலை" in msg_lower or "evening" in msg_lower:
+                if is_tamil:
+                    response_text = "மாலை வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை மற்றும் விண்ணப்பங்கள் தொடர்பான தகவல்களுக்கு இன்று உங்களுக்கு எவ்வாறு உதவ முடியும்?"
+                else:
+                    response_text = "Good evening! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you with your survey work today?"
+            elif "நன்றி" in msg_lower or "thanks" in msg_lower or "thank" in msg_lower:
+                if is_tamil:
+                    response_text = "நல்வரவு! 😊 உங்களுக்கு மேலும் ஏதேனும் உதவி தேவைப்பட்டால் தயங்காமல் கேளுங்கள்."
+                else:
+                    response_text = "You're very welcome! 😊 Feel free to ask if you need anything else regarding your survey work."
+            else:
+                if is_tamil:
+                    response_text = "வணக்கம்! 👋 நான் உங்கள் Sub Inspector Surveyor (SIS) AI உதவியாளர். நில அளவை எண்கள், விண்ணப்பங்களின் நிலை, கள ஆய்வுகள் மற்றும் பட்டா பரிமாற்றங்கள் பற்றிய கேள்விகளுக்கு உதவ தயாராக உள்ளேன். இன்று உங்களுக்கு என்ன உதவி தேவை?"
+                else:
+                    response_text = "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
+
+            # Stream the greeting response
+            yield f"data: {_json_greeting.dumps({'content': response_text})}\n\n".encode('utf-8')
+            
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=response_text,
+                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+            )
+            return
+
         # ── Step 2b: Jurisdiction access check (streaming) ─────────────────
         _jur_type = getattr(officer, "jurisdiction_type", "block")
         _jur_name = getattr(officer, "jurisdiction_name", "your jurisdiction")
@@ -2630,6 +2777,9 @@ async def process_chat_stream(
             # Extract year from message (e.g., "2025", "2026")
             year_match = re.search(r'\b(20\d{2})\b', message)
             submission_year = int(year_match.group(1)) if year_match else None
+            
+            # Extract month from message (handles English/Tamil with fuzzy matching)
+            submission_month = extract_month_from_query(message)
                 
             # For MERGE apps show all statuses; for others default to pending
             if app_type == "MERGE":
@@ -2645,23 +2795,37 @@ async def process_chat_stream(
                 elif "reject" in message_lower:
                     status_filter = "rejected"
                 
-            structured_data = await get_pending_applications(db, officer, application_type=app_type, status=status_filter, submission_year=submission_year)
+            structured_data = await get_pending_applications(
+                db, officer, 
+                application_type=app_type, 
+                status=status_filter, 
+                submission_year=submission_year,
+                submission_month=submission_month
+            )
             
             # Determine appropriate query title
             type_str = f" {app_type}" if app_type else ""
             year_str = f" in {submission_year}" if submission_year else ""
+            
+            # Add month string to title if month filter is present
+            month_str = ""
+            if submission_month:
+                month_names = ["", "January", "February", "March", "April", "May", "June",
+                             "July", "August", "September", "October", "November", "December"]
+                month_str = f" {month_names[submission_month]}" if submission_year else f" in {month_names[submission_month]}"
+            
             if app_type == "MERGE":
-                structured_data["query_type"] = f"MERGE Applications{year_str}"
+                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}"
             elif status_filter == ["approved", "rejected"]:
-                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){year_str}"
+                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}"
             elif status_filter is None:
-                structured_data["query_type"] = f"All{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}"
             elif status_filter == "approved":
-                structured_data["query_type"] = f"Approved{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}"
             elif status_filter == "rejected":
-                structured_data["query_type"] = f"Rejected{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}"
             else:
-                structured_data["query_type"] = f"Pending{type_str} Applications{year_str}"
+                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}"
             
         elif intent == "overdue_applications":
             # Extract application type if mentioned in message
@@ -3372,7 +3536,7 @@ async def process_chat_stream(
             structured_data = await get_application_detail(db, _isd_app_no)
             structured_data["query_type"] = "ISD Processing"
 
-        # Step 4: Get RAG context from ChromaDB — skip if DB data was actually found
+        # Step 4: Get RAG context from pgvector — skip if DB data was actually found
         has_db_results = (
             structured_data
             and structured_data.get("found", True)

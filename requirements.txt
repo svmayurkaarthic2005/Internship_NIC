@@ -13,7 +13,7 @@ httpx==0.27.2
 langchain==0.3.27
 langchain-community==0.3.27
 langchain-ollama==0.2.3
-chromadb==0.5.15
+pgvector>=0.3.0
 ollama>=0.4.4
 structlog==24.4.0
 faster-whisper>=1.0.0

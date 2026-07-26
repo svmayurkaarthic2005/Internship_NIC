@@ -1161,9 +1161,9 @@ async def _get_sd_remarks_context(message: str, db: AsyncSession) -> str:
 
 def retrieve_context(message: str, lang: str, top_k: int = 5) -> list:
     """
-    Retrieve semantic search results from knowledge base ChromaDB.
+    Retrieve semantic search results from the pgvector knowledge base.
     """
-    from backend.services.chroma import similarity_search
+    from backend.services.pgvector_store import similarity_search
     where_filter = None
     if lang == "ta":
         where_filter = {"language": "tamil"}
