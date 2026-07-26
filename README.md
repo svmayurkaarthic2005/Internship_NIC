@@ -1,620 +1,349 @@
 # Sub Inspector Surveyor AI Assistant
 
-## Overview
+A bilingual (Tamil/English) AI-powered chatbot system for Sub Inspectors to manage survey applications through natural language conversations.
 
-A bilingual (Tamil/English) AI-powered chatbot system designed to assist Sub Inspectors in managing survey applications. The system provides intelligent query handling, application tracking, document verification, and workflow management through natural language conversations.
+## Tech Stack
 
-## Features
+- **Backend**: FastAPI, PostgreSQL, Ollama (Llama 3.1:8b)
+- **Frontend**: HTML/CSS/JavaScript (Vanilla)
+- **Vector Store**: ChromaDB
+- **Authentication**: JWT
 
-### Core Functionality
-- **Bilingual Support**: Fully supports Tamil, English, and Tanglish (Tamil written in English)
-- **Intelligent Intent Detection**: Automatically identifies user intent from natural language queries
-- **RAG-based Architecture**: Uses Retrieval-Augmented Generation with ChromaDB for accurate responses
-- **Real-time Streaming**: SSE-based streaming responses for better user experience
-- **Context Awareness**: Maintains conversation continuity and implicit application references
-- **Voice Support**: Text-to-speech and speech-to-text capabilities
+## Quick Start
 
-### Application Management
-- **Application Status Tracking**: Query status, stage, and workflow history
-- **Document Verification**: Check uploaded documents and identify missing ones
-- **Joint Owner Queries**: Identify joint owners for applications or survey numbers
-- **Sale Deed Verification**: Validate sale deed registration status
-- **Type Classification**: Identify ISD/NISD/MERGE application types
-- **Field-specific Queries**: Get specific application fields (name, mobile, email, address, etc.)
+### Prerequisites
+- Python 3.8+
+- PostgreSQL 12+
+- Ollama with models: `llama3.1:8b`, `nomic-embed-text`
 
-### Advanced Features
-- **Spelling Error Handling**: Tolerates common spelling mistakes in Tamil and English
-- **Implicit Continuation**: Maintains context from previous messages for follow-up queries
-- **Smart Application Number Extraction**: Identifies application numbers from various formats
-- **Table Rendering**: Presents structured data in clean, formatted tables
-- **Fallback Mechanisms**: Graceful handling of ambiguous or unclear queries
+### Setup
+```bash
+# 1. Clone and setup environment
+git clone <repo>
+cd nic_internship
+python -m venv .venv
+.venv\Scripts\activate
 
-## Technology Stack
+# 2. Install dependencies
+pip install -r requirements.txt
 
-### Backend
-- **Framework**: FastAPI (Python)
-- **Database**: PostgreSQL with asyncpg
-- **Vector Store**: ChromaDB for semantic search
-- **LLM**: Ollama with Llama 3.1:8b model
-- **Embeddings**: Ollama nomic-embed-text
-- **Authentication**: JWT-based auth system
+# 3. Configure
+copy .env.example .env
+# Edit .env with your database credentials
 
-### Frontend
-- **HTML/CSS/JavaScript**: Vanilla JS with modern CSS
-- **Speech API**: Web Speech API for voice features
-- **Storage**: LocalStorage for chat history persistence
-- **Streaming**: EventSource API for SSE
+# 4. Setup database
+python create_database.py
+python backend/seed.py
+python backend/ingest.py
 
-### Infrastructure
-- **Environment**: Python 3.8+
-- **Package Management**: pip, requirements.txt
-- **Process Management**: Batch scripts for Windows
+# 5. Start backend
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+# 6. Start frontend (new terminal)
+cd frontend
+python -m http.server 3000
+```
+
+**Access**: `http://localhost:3000/login.html`
+
+**Test Credentials**:
+- arjun.kumar@sis.tn.gov.in / Test@1234 (Block SIS)
+- priya.devi@sis.tn.gov.in / Test@1234 (Ward SIS)
+- ramesh.babu@sis.tn.gov.in / Test@1234 (Taluk SIS)
+- lakshmi.narayanan@sis.tn.gov.in / Test@1234 (District SIS)
 
 ## Project Structure
 
 ```
 nic_internship/
 ├── backend/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── config.py               # Configuration management
-│   ├── database.py             # Database connection pooling
-│   ├── dependencies.py         # Dependency injection
-│   ├── models.py               # SQLAlchemy models
-│   ├── schemas.py              # Pydantic schemas
+│   ├── main.py                      # FastAPI entry point
+│   ├── config.py                    # Configuration
+│   ├── database.py                  # Database connection
+│   ├── models.py                    # SQLAlchemy models
+│   ├── schemas.py                   # Pydantic schemas
 │   ├── routers/
-│   │   ├── auth.py            # Authentication endpoints
-│   │   ├── chat.py            # Chat endpoints
-│   │   ├── applications.py   # Application management
-│   │   ├── survey.py          # Survey endpoints
-│   │   └── speech.py          # Speech-to-text/text-to-speech
+│   │   ├── auth.py                  # Login/register endpoints
+│   │   ├── chat.py                  # Chat & streaming endpoints
+│   │   ├── applications.py          # Application CRUD
+│   │   ├── survey.py                # Survey endpoints
+│   │   └── speech.py                # TTS/STT endpoints
 │   ├── services/
-│   │   ├── chatbot.py         # Main chatbot logic
-│   │   ├── rag.py             # RAG intent detection & query routing
-│   │   ├── postgres.py        # PostgreSQL query handlers
-│   │   ├── chroma.py          # ChromaDB vector store
-│   │   ├── embeddings.py      # Embedding generation
-│   │   ├── auth_service.py    # Authentication logic
-│   │   └── speech_service.py  # Speech processing
-│   ├── utils/
-│   │   ├── logger.py          # Logging configuration
-│   │   └── helpers.py         # Utility functions
-│   └── documents/
-│       ├── faq_english.txt    # English FAQ
-│       ├── faq_tamil.txt      # Tamil FAQ
-│       ├── survey_manual.txt  # Survey manual
-│       └── workflow_guide.txt # Workflow documentation
+│   │   ├── chatbot.py               # Main chatbot orchestration
+│   │   ├── rag.py                   # Intent detection & routing
+│   │   ├── postgres.py              # Database query handlers
+│   │   ├── chroma.py                # Vector store operations
+│   │   ├── embeddings.py            # Embedding generation
+│   │   └── speech_service.py        # Speech processing
+│   └── documents/                   # Knowledge base documents
 ├── frontend/
-│   ├── login.html             # Login page
-│   ├── chatbot.html           # Main chat interface
-│   ├── css/                   # Stylesheets
-│   │   ├── global.css         # Global styles
-│   │   ├── variables.css      # CSS variables
-│   │   ├── components.css     # Component styles
-│   │   ├── chatbot.css        # Chat-specific styles
-│   │   ├── animations.css     # Animations
-│   │   └── responsive.css     # Responsive design
-│   └── js/                    # JavaScript modules
-│       ├── auth.js            # Authentication handling
-│       ├── chat.js            # Chat logic
-│       ├── chatStorage.js     # Chat history storage
-│       ├── dataTable.js       # Table rendering
-│       ├── speechAPI.js       # Speech API integration
-│       └── voiceRecorder.js   # Voice recording
-├── vectorstore/
-│   └── chroma.sqlite3         # ChromaDB database
-├── .env                       # Environment variables (not in repo)
-├── .env.example               # Environment template
-├── requirements.txt           # Python dependencies
-└── start_backend.bat          # Backend startup script
+│   ├── login.html                   # Login page
+│   ├── chatbot.html                 # Chat interface
+│   ├── css/                         # Stylesheets
+│   └── js/                          # JavaScript modules
+├── verify_no_duplicates.py          # Quick integrity check
+├── check_missing_values.py          # Deep data validation
+└── requirements.txt
 ```
 
-## Installation
+## How It Works
 
-### Prerequisites
-- Python 3.8 or higher
-- PostgreSQL 12 or higher
-- Ollama (with Llama 3.1:8b model installed)
-- Git
+### 1. Request Flow
 
-### Setup Steps
+```
+User Message → FastAPI (/chat/stream)
+           ↓
+    chatbot.py (orchestrator)
+           ↓
+    rag.py (intent detection)
+           ↓
+    postgres.py (database queries)
+           ↓
+    LLM (Ollama) + Context
+           ↓
+    Streaming Response → User
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd nic_internship
-   ```
+### 2. Intent Detection (rag.py)
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   ```
+The system detects user intent and routes to appropriate handlers:
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```python
+Priority Order:
+1. greeting              # "Hello", "வணக்கம்"
+2. farewell              # "Bye", "நன்றி"
+3. joint_owner_check     # "Who are the joint owners?"
+4. application_status    # "Status of APP-2024-000001"
+5. check_documents       # "What documents are missing?"
+6. check_sale_deed       # "Is sale deed registered?"
+7. is_nisd_or_isd        # "What type is this application?"
+8. field_specific_query  # "What is the applicant name?"
+9. general_query         # Falls back to RAG search
+```
 
-4. **Install and setup Ollama**
-   ```bash
-   # Download and install Ollama from https://ollama.ai
-   
-   # Pull the required models
-   ollama pull llama3.1:8b
-   ollama pull nomic-embed-text
-   
-   # Verify Ollama is running
-   # Ollama should be running on http://localhost:11434
-   ```
+**Language Detection**:
+- Tamil script (Unicode range detection)
+- Tanglish (phonetic patterns)
+- English (default)
 
-5. **Configure environment**
-   ```bash
-   copy .env.example .env
-   # Edit .env with your configuration
-   ```
+### 3. Database Architecture
 
-6. **Setup database**
-   ```bash
-   python create_database.py
-   python backend/seed.py
-   ```
+**Key Tables**:
+- `applications` - Application records with status/stage tracking
+- `survey_numbers` - Survey number registry with geographic links
+- `field_visits` - Field visit scheduling and status
+- `application_sub_divisions` - MERGE application subdivisions
+- `sis_officers` - Officer accounts
+- `officer_jurisdictions` - Officer geographic assignments
 
-7. **Ingest documents into vector store**
-   ```bash
-   python backend/ingest.py
-   ```
+**Important Constraint**:
+```sql
+-- One active application per survey number
+CREATE UNIQUE INDEX idx_unique_active_app_per_survey 
+ON applications (survey_number_id) 
+WHERE current_status IN ('pending', 'in_progress', 'escalated');
+```
 
-8. **Start the backend**
-   ```bash
-   start_backend.bat
-   # Or manually:
-   uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-   ```
+### 4. Query Handling (postgres.py)
 
-9. **Open frontend**
-   - Navigate to `http://localhost:8000/frontend/login.html`
-   - Default credentials: admin / admin123
+Each intent has a dedicated query handler:
 
-## Configuration
+- `get_officer_applications()` - Get apps by officer + jurisdiction + stage
+- `get_field_visits()` - Field visits **excluding rejected apps**
+- `get_pending_applications()` - Pending/in-progress apps only
+- `get_application_detail()` - Full application details
+- `get_survey_detail()` - Survey number information
 
-### Environment Variables (.env)
+**Key Filter**: All queries exclude rejected applications to prevent duplicates
+
+### 5. Chatbot Logic (chatbot.py)
+
+**Response Accuracy**:
+- Direct database responses for count queries
+- Strict pattern matching for application numbers
+- Structured data validation before response generation
+- No LLM interpretation for numeric data
+
+**Context Management**:
+- Extracts application numbers from user messages
+- Maintains conversation history for implicit references
+- Validates references against chat context
+
+**Response Building**:
+- Language detection (Tamil/English/Tanglish)
+- Database-backed numeric responses
+- Proper Tamil/English formatting
+- Streaming for better UX
+
+**Query Recognition**:
+```python
+# Abbreviated forms supported:
+"show app" → pending_applications
+"show appl" → pending_applications  
+"show applications" → pending_applications
+
+# Count queries use database directly:
+"how many apps" → exact count
+"number of applications" → exact count
+```
+
+**Application Number Extraction**:
+```python
+# Explicit: "APP-2024-000001" → Found
+# Reference: "this application" → Checks last 2 messages
+# Field query: "what is the name?" → Checks context
+# No reference: → Asks user for application number
+```
+
+### 6. Vector Store (ChromaDB)
+
+Documents ingested:
+- `faq_english.txt` - English FAQs
+- `faq_tamil.txt` - Tamil FAQs  
+- `survey_manual.txt` - Survey procedures
+- `workflow_guide.txt` - Workflow and business rules
+
+Used for:
+- Intent detection (semantic similarity)
+- General queries fallback
+- Document retrieval for RAG
+
+## Core Features
+
+### Bilingual Support
+- Full Tamil and English support
+- Tanglish (Tamil written in English) recognition
+- Language-specific response formatting
+- Spelling error tolerance
+
+### Application Queries
+- Status tracking by application number or survey number
+- Document verification and missing document identification
+- Sale deed registration status
+- Application type identification (ISD/NISD/MERGE)
+- Field-specific queries (name, mobile, email, etc.)
+- Joint owner identification
+
+### Smart Features
+- **Context Continuity**: Remembers previous application references
+- **Implicit Continuation**: "What's the name?" uses last mentioned app
+- **Month-based Filtering**: "Show January applications" with fuzzy matching
+- **Overdue Warnings**: Visual indicators for overdue field visits
+- **Table Rendering**: Clean tables for structured data
+
+### Data Integrity
+- Unique constraint prevents duplicate active applications
+- Rejected applications excluded from active queries
+- Field visits for rejected apps marked as 'cancelled'
+- Comprehensive validation scripts
+
+## Database Verification
+
+```bash
+# Quick check for duplicates and integrity
+python verify_no_duplicates.py
+
+# Deep validation of all fields
+python check_missing_values.py
+```
+
+## Configuration (.env)
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/dbname
-SYNC_DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/sis_chatbot
+SYNC_DATABASE_URL=postgresql://user:pass@localhost:5432/sis_chatbot
 
-# Ollama Configuration
+# Ollama
 OLLAMA_BASE_URL=http://localhost:11434
 LLM_MODEL=llama3.1:8b
 EMBEDDING_MODEL=nomic-embed-text
 
 # Security
-SECRET_KEY=your_secret_key_here
-ALGORITHM=HS256
+SECRET_KEY=your_secret_key
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-
-# Vector Store
-CHROMA_PERSIST_DIR=./vectorstore
-
-# CORS Origins
-CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:5500","http://localhost:5500","http://localhost:8080"]
-
-# Environment
-ENVIRONMENT=development
-```
-
-### Ollama Configuration
-
-The system uses **Ollama** as the LLM backend with **Llama 3.1:8b** model for generation and **nomic-embed-text** for embeddings.
-
-**Ollama Installation**:
-- Download from: https://ollama.ai
-- Default port: 11434
-- Models are stored locally (no external API costs)
-
-**Supported Models**:
-```bash
-# Current configuration
-ollama pull llama3.1:8b          # Main LLM (8B parameters)
-ollama pull nomic-embed-text     # Embeddings model
-
-# Alternative models you can try
-ollama pull llama3.1:70b         # Larger model (better accuracy, slower)
-ollama pull mistral              # Alternative open-source model
-ollama pull phi3                 # Microsoft's efficient model
-```
-
-**Switching Models**:
-To use a different model, update `.env`:
-```env
-LLM_MODEL=mistral               # Change to desired model
-EMBEDDING_MODEL=nomic-embed-text # Keep embedding model same
-```
-
-**Model Recommendations**:
-- **llama3.1:8b** (Current): Best balance of speed and accuracy for bilingual support
-- **llama3.1:70b**: Better accuracy but requires more RAM (40GB+) and slower
-- **mistral**: Good alternative, similar performance
-- **phi3**: Faster but may have reduced Tamil language support
-
-**GPU Acceleration**:
-- Ollama automatically uses GPU if CUDA/ROCm is available
-- Significantly faster inference with GPU
-- Check GPU usage: `nvidia-smi` (NVIDIA) or `rocm-smi` (AMD)
-
-## Key Features & Implementation
-
-### 1. Intent Detection & Routing
-
-**File**: `backend/services/rag.py`
-
-The system uses a multi-stage intent detection pipeline:
-
-```python
-# Intent priority order:
-1. greeting                    # Welcome messages
-2. farewell                    # Goodbye messages  
-3. joint_owner_check          # Joint owner queries (MOVED BEFORE app_status)
-4. application_status         # Application tracking
-5. check_documents            # Document verification
-6. check_sale_deed           # Sale deed validation
-7. is_nisd_or_isd            # Application type
-8. field_specific_query      # Specific field queries
-9. ask_application_survey_no # Ask for app number
-10. general_query            # Fallback to RAG
-```
-
-**Key Enhancements**:
-- Tamil keyword support for all intents
-- Tanglish pattern matching
-- Spelling error tolerance
-- Context-aware detection
-
-### 2. Hallucination Prevention
-
-**Problem**: Chatbot was inventing application numbers when users used generic references like "the name"
-
-**Solution** (Lines ~51-95 in chatbot.py):
-```python
-def _extract_app_number_from_context(
-    self, 
-    message: str, 
-    history: list, 
-    allow_implicit_continuation: bool = False
-) -> Optional[str]:
-    """
-    Extract application number from current message or chat history.
-    
-    Rules:
-    1. Explicit mention: "APP-2024-000001" → returns it
-    2. Reference patterns: "this/that application" → checks last 2 messages
-    3. Implicit continuation: field queries → checks last 2 messages
-    4. No reference found → returns None (prevents hallucination)
-    """
-    # Strict patterns to avoid false positives
-    reference_patterns = [
-        r'\b(?:this|that|the)\s+application\b',
-        r'\b(?:above|previous|same)\s+(?:application|one)\b',
-    ]
-```
-
-**Before Fix**: "what is the name" → Hallucinated APP-2024-000001
-**After Fix**: "what is the name" → "Please provide an application number"
-
-### 3. Implicit Continuation
-
-**Feature**: Maintains context from previous messages for follow-up queries
-
-**Implementation** (Lines ~1099-1130 in chatbot.py):
-```python
-# User: "tell me about APP-2024-000001"
-# Bot: Shows application details
-# User: "what is the applicant name?"  ← Implicit reference
-# Bot: Uses APP-2024-000001 from context
-```
-
-**Activation**: Only for field-specific queries (name, mobile, email, address, etc.)
-
-### 4. Joint Owner Queries
-
-**Feature**: Check joint owners for applications or survey numbers
-
-**Tamil Support** (Lines ~1997-2023, ~3465-3495 in chatbot.py):
-```python
-# Tamil keywords:
-- கூட்டுரிமையாளர் (kootturrimaiyalar)
-- உரிமையாளர்கள் (urimaiyalargal)
-- ஒரே உரிமையாளர் (ore urimaiyalar)
-- joint owner, co-owner (Tanglish)
-
-# Responses:
-- English: "For application APP-2024-000001 (Survey 145): There are 2 joint owner(s) listed: Owner A, Owner B."
-- Tamil: "விண்ணப்பம் APP-2024-000001 (கணக்கெண் 145): 2 கூட்டு உரிமையாளர்கள் உள்ளனர்: Owner A, Owner B."
-```
-
-**Database Query** (postgres.py):
-```python
-async def get_joint_owners(app_number: str, survey_no: str):
-    # Returns all owners except the applicant
-    # Supports both application number and survey number queries
-```
-
-### 5. Bilingual Response System
-
-**Language Detection** (rag.py):
-```python
-def detect_language(text: str) -> str:
-    tamil_chars = re.findall(r'[\u0B80-\u0BFF]', text)
-    if len(tamil_chars) > 3:
-        return "ta"  # Tamil script
-    
-    # Check Tanglish patterns
-    tanglish_patterns = ['endha', 'epdi', 'enna', 'enga', ...]
-    if any(pattern in text.lower() for pattern in tanglish_patterns):
-        return "tanglish"
-    
-    return "en"  # English
-```
-
-**Response Builder Pattern**:
-```python
-# Every response builder checks language
-is_tamil = language in ("ta", "tanglish")
-
-if is_tamil:
-    chunk = "தமிழ் பதில்"
-else:
-    chunk = "English response"
-```
-
-### 6. Spelling Error Handling
-
-**Implementation**: Uses fuzzy matching and phonetic similarity
-
-**Examples**:
-- "aplication" → "application" ✓
-- "servey" → "survey" ✓
-- "விண்ணப்பம்" variations ✓
-- "உரிமையாலர்" → "உரிமையாளர்" ✓
-
-### 7. Table Rendering
-
-**Feature**: Presents structured data in clean tables
-
-**Configuration** (Lines ~3645, ~3978 in chatbot.py):
-```python
-# Intents that show tables:
-table_intents = [
-    "application_status",  # When multiple apps found
-    "check_documents",     # Document list
-    # joint_owner_check excluded - uses prose response
-]
-```
-
-**Rendering** (frontend/js/dataTable.js):
-```javascript
-// Automatically detects table data from structured_data
-// Renders sortable, filterable tables
-// Supports Tamil and English column headers
 ```
 
 ## API Endpoints
 
-### Authentication
+**Authentication**
 - `POST /auth/login` - User login
-- `POST /auth/register` - User registration
-- `GET /auth/me` - Get current user
 
-### Chat
-- `POST /chat` - Send message (JSON response)
-- `POST /chat/stream` - Send message (SSE streaming)
+**Chat**
+- `POST /chat/stream` - Streaming chat (SSE)
 - `GET /chat/history` - Get chat history
-- `DELETE /chat/history` - Clear chat history
 
-### Applications
-- `GET /applications` - List all applications
-- `GET /applications/{id}` - Get application details
+**Applications**
+- `GET /applications` - List applications
+- `GET /applications/{id}` - Get details
 - `PUT /applications/{id}` - Update application
-- `POST /applications` - Create application
-
-### Survey
-- `GET /survey/numbers` - List survey numbers
-- `GET /survey/{survey_no}` - Get survey details
-
-### Speech
-- `POST /speech/synthesize` - Text-to-speech
-- `POST /speech/transcribe` - Speech-to-text
-
-## Database Schema
-
-### Key Tables
-
-**applications**
-- id, application_number, applicant_name, mobile, email
-- type (ISD/NISD/MERGE), status, stage, survey_no
-- submission_date, created_at, updated_at
-
-**ownership**
-- id, survey_no, owner_name, owner_type
-- share_percentage, joint_owner_flag
-
-**documents**
-- id, application_id, document_type
-- is_uploaded, upload_date, file_path
-
-**workflow_history**
-- id, application_id, stage, action
-- officer_name, timestamp, remarks
-
-**users**
-- id, username, email, hashed_password
-- role, created_at, is_active
-
-## Testing
-
-### Test Files
-- `test_auth.py` - Authentication tests
-- `test_db_connection.py` - Database connectivity
-- `test_integration.py` - End-to-end tests
-- `test_streaming.py` - SSE streaming tests
-- `test_tamil_query.py` - Tamil language tests
-- `test_speech_direct.py` - Speech API tests
-
-### Run Tests
-```bash
-# Run all tests
-python -m pytest
-
-# Run specific test
-python test_tamil_query.py
-```
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Database Connection Error**
-   ```bash
-   # Check PostgreSQL is running
-   # Verify .env DATABASE_URL
-   python test_db_connection.py
-   ```
-
-2. **ChromaDB Not Loading**
-   ```bash
-   # Re-ingest documents
-   python backend/ingest.py
-   ```
-
-3. **Backend Not Starting**
-   ```bash
-   # Check port availability
-   netstat -ano | findstr :8000
-   # Kill process if needed
-   taskkill /PID <pid> /F
-   ```
-
-4. **Ollama Connection Issues**
-   ```bash
-   # Check if Ollama is running
-   curl http://localhost:11434/api/tags
-   
-   # Verify models are installed
-   ollama list
-   
-   # If models are missing, pull them
-   ollama pull llama3.1:8b
-   ollama pull nomic-embed-text
-   
-   # Restart Ollama service (Windows)
-   # Stop Ollama from Task Manager, then restart it
-   ```
-
-5. **Tamil Not Displaying**
-   - Ensure UTF-8 encoding in all files
-   - Check browser supports Tamil fonts
-   - Verify `Content-Type: text/html; charset=utf-8`
-
-6. **Hallucination Issues**
-   - Check `_extract_app_number_from_context()` logic
-   - Verify intent detection priority in rag.py
-   - Review chat history structure
-
-7. **Slow Response Times**
-   - Check Ollama GPU utilization (if available)
-   - Verify network latency to Ollama service
-   - Consider using smaller model or quantized version
-   - Monitor system resources (RAM, CPU)
-
-## Performance Optimization
-
-### Database Indexes
-```sql
--- Applied via apply_indexes.sql
-CREATE INDEX idx_applications_number ON applications(application_number);
-CREATE INDEX idx_applications_survey ON applications(survey_no);
-CREATE INDEX idx_ownership_survey ON ownership(survey_no);
-CREATE INDEX idx_workflow_app ON workflow_history(application_id);
+**Application List Queries**
+```bash
+# All forms are supported:
+"show applications"
+"show app"
+"show appl"
+"list applications"
 ```
 
-### Caching Strategy
-- ChromaDB embeddings cached in vectorstore/
-- Chat history stored in localStorage
-- Token-based auth reduces DB queries
+**Count Queries**
+```bash
+# Returns exact database count:
+"how many applications"
+"number of applications in july"
+"total applications"
 
-### Streaming Benefits
-- SSE streaming reduces perceived latency
-- Chunks sent as generated (not waiting for full response)
-- Better UX for long responses
+# Result: Precise count from database (e.g., "15 applications")
+```
 
-## Security Considerations
+**Ollama Connection**
+```bash
+# Verify Ollama is running
+curl http://localhost:11434/api/tags
 
-- JWT tokens with expiration
-- Password hashing with bcrypt
-- SQL injection prevention via parameterized queries
-- CORS configuration for API endpoints
-- Input validation on all endpoints
-- Rate limiting on chat endpoints
+# Check installed models
+ollama list
 
-## Future Enhancements
+# Install missing models
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+```
 
-- [ ] Multi-file upload support
-- [ ] Advanced search with filters
-- [ ] Analytics dashboard
-- [ ] Email notifications
-- [ ] Mobile app version
-- [ ] More language support (Hindi, Telugu, etc.)
-- [ ] Voice-only mode
-- [ ] Offline mode support
-- [ ] Integration with GIS systems
-- [ ] Automated report generation
-- [ ] Support for alternative Ollama models (Mistral, Phi, etc.)
-- [ ] Model fine-tuning for domain-specific queries
-- [ ] GPU acceleration optimization for faster inference
+**Database Connection**
+```bash
+# Test connectivity
+python -c "from backend.database import engine; print('Connected')"
 
-## Contributing
+# Reset data if needed
+python backend/seed.py
+```
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
+**Data Integrity**
+```bash
+# Verify database integrity
+python verify_no_duplicates.py
+python check_missing_values.py
+```
+
+## Recent Updates
+
+### Version 1.4 (Current)
+**Query Accuracy Improvements:**
+- Direct database count responses for numeric queries
+- Support for abbreviated forms: "app", "appl", "apps"
+- Enhanced intent detection for application list queries
+- Structured data responses prevent hallucination
+
+**Previous Updates:**
+- Duplicate prevention with unique survey number constraint
+- Rejected application filtering in all queries
+- Month-based filtering with fuzzy matching
+- Overdue warning indicators
+- Data integrity verification scripts
 
 ## License
 
-This project is developed for National Informatics Centre (NIC) internship.
-
-## Contact
-
-For support or queries, contact the development team.
-
-## Changelog
-
-### Version 1.2 (Current)
-- ✅ Fixed hallucination issues with application number extraction
-- ✅ Added implicit continuation for field-specific queries
-- ✅ Implemented joint owner queries with Tamil support
-- ✅ Enhanced intent detection priority (joint_owner before app_status)
-- ✅ Added Tamil response support for all intents
-- ✅ Improved spelling error tolerance
-- ✅ Removed empty table rendering for joint_owner_check
-- ✅ Enhanced conversation context maintenance
-
-### Version 1.1
-- Added streaming response support
-- Implemented bilingual (Tamil/English) support
-- Added voice recording capabilities
-- Enhanced RAG system with ChromaDB
-
-### Version 1.0
-- Initial release
-- Basic chatbot functionality
-- Application management system
-- User authentication
-
-## Acknowledgments
-
-- National Informatics Centre (NIC)
-- Tamil Nadu State Government
-- All contributors and testers
+Developed for National Informatics Centre (NIC) internship.

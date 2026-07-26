@@ -4226,7 +4226,7 @@ async def process_chat_stream(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
 
-        elif intent in ("field_visits", "ward_surveys", "block_surveys",
+        elif intent in ("pending_applications", "field_visits", "ward_surveys", "block_surveys",
                         "survey_detail", "survey_owners", "next_subdivision",
                         "jurisdiction_summary", "rejection_info", "taluk_summary",
                         "litigation_check", "highest_priority_applications",
@@ -4236,8 +4236,22 @@ async def process_chat_stream(
             if not found:
                 chunk = structured_data.get("message", "No records found.")
             else:
+                # Check if user is asking for count/number
+                asking_for_count = any(w in message.lower() for w in ["how many", "number of", "count", "total", "எத்தனை", "எண்ணிக்கை"])
+                
+                if asking_for_count and intent == "pending_applications":
+                    count = structured_data.get("count", 0)
+                    qtype = structured_data.get("query_type", "applications").lower()
+                    is_tamil = language in ("ta", "tanglish")
+                    
+                    if count == 0:
+                        chunk = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype}."
+                    elif count == 1:
+                        chunk = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')}."
+                    else:
+                        chunk = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype}."
                 # Special message for priority applications
-                if intent == "highest_priority_applications":
+                elif intent == "highest_priority_applications":
                     count = len(structured_data.get("applications", []))
                     stage_filter = structured_data.get("query_type", "").split("—")[-1].strip().replace(" Stage", "") if "—" in structured_data.get("query_type", "") else None
                     is_tamil = language in ("ta", "tanglish")

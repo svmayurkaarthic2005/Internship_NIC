@@ -991,7 +991,8 @@ def parse_intent(message: str) -> str:
                       "field", "visit", "visits", "scheduling", "schedule", "feild"]
     ta_workload    = ["பணிச்சுமை", "workload", "worklod", "work load"]
     ta_application = ["விண்ணப்பம்", "விண்ணப்பங்கள்",
-                      "application", "applications", "aplications", "aplication"]
+                      "application", "applications", "aplications", "aplication",
+                      "app", "appl", "apps"]
     ta_merge       = ["இணைப்பு", "இணைக்க", "இணைக்கப்பட்ட", "இணைப்பு விண்ணப்பம்",
                       "இணைப்பு விண்ணப்பங்கள்", "இணைத்தல்",
                       "merge", "merging", "merged", "merg"]
@@ -1438,8 +1439,7 @@ def parse_intent(message: str) -> str:
         if is_app_query and (is_action_query or is_type_query) and not has(ta_ward):
             return "pending_applications"
         if ("show" in msg or "list" in msg or "display" in msg or "காட்டு" in msg or "பட்டியல்" in msg) and \
-           ("all" in msg or "அனைத்தும்" in msg) and \
-           ("application" in msg or "விண்ணப்பம்" in msg or "விண்ணப்பங்கள்" in msg) and \
+           ("all" in msg or "அனைத்தும்" in msg or "application" in msg or "app" in msg or "விண்ணப்பம்" in msg or "விண்ணப்பங்கள்" in msg) and \
            not has(ta_ward):
             return "pending_applications"
         # Tamil: விண்ணப்பங்கள் பட்டியல் / காட்டு alone also triggers pending_applications
