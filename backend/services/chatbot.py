@@ -98,8 +98,10 @@ def _extract_app_number_from_context(message: str, chat_history: list = None, al
     # Avoid generic words like "the" which cause false positives
     reference_patterns = [
         "this application", "that application", "same application",
-        "this app", "that app", "the application",
-        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்",
+        "this app", "that app", "the application", "the app",
+        "prev application", "previous application", "prev app", "previous app",
+        "last application", "last app", "above application", "overdue application",
+        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
     ]
     _msg_lower = message.lower()
     has_explicit_reference = any(pattern in _msg_lower for pattern in reference_patterns)
@@ -231,8 +233,20 @@ async def process_chat(
                 }
         
         # Step 2: Parse intent to determine which DB query to run
-        intent = parse_intent(message)
-        logger.info(f"Parsed intent: {intent}")
+        _prev_intent = None
+        if chat_history:
+            for _h in reversed(chat_history):
+                if _h.get("role") == "assistant":
+                    import re as _re
+                    _m = _re.search(r'\[intent:([\w_]+)\]', _h.get("content", ""))
+                    if _m:
+                        _prev_intent = _m.group(1)
+                        break
+                    if _h.get("intent"):
+                        _prev_intent = _h.get("intent")
+                        break
+        intent = parse_intent(message, prev_intent=_prev_intent)
+        logger.info(f"Parsed intent: {intent} (prev_intent={_prev_intent})")
 
 
 
@@ -537,6 +551,20 @@ async def process_chat(
             msg_lower = message.lower()
             start_d, end_d = extract_date_range(message)
 
+            # Extract application type filter(s) from message — supports multi-type queries
+            # e.g. "isd and nisd", "merge and isd", "all types"
+            app_type_filter = []
+            if any(w in msg_lower for w in ["merge", "merger", "merging"]):
+                app_type_filter.append("MERGE")
+            if any(w in msg_lower for w in ["nisd", "non-isd", "non isd", "transfer"]):
+                app_type_filter.append("NISD")
+            if any(w in msg_lower for w in ["isd", "subdivision", "sub division", "sub-division"]):
+                if "NISD" not in app_type_filter:  # avoid double-match since "nisd" contains "isd"
+                    app_type_filter.append("ISD")
+            # Normalise: None means no filter (all types)
+            app_type_filter = app_type_filter if app_type_filter else None
+            type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+
             to_be_visited = any(w in msg_lower for w in [
                 "needed to be visited", "to be visited", "need to visit", "need to be visited",
                 "pending visit", "yet to visit", "upcoming"
@@ -552,19 +580,23 @@ async def process_chat(
                     start_d = today.replace(day=1)
                     _, last_day = calendar.monthrange(today.year, today.month)
                     end_d = today.replace(day=last_day)
-                query_type = "Field Visits Needed To Be Visited" if to_be_visited else "Field Visits Between Dates"
+                type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+                query_type = ("Field Visits Needed To Be Visited" if to_be_visited
+                              else f"{type_label} Field Visits Between Dates".strip())
             elif "scheduled" in msg_lower or "visit date" in msg_lower or "when" in msg_lower or "schedule" in msg_lower:
                 status_filter = "scheduled"
                 query_type = "Scheduled Field Visits"
             else:
-                query_type = "Field Visits Summary"
+                type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+                query_type = f"{type_label} Field Visits Summary".strip()
 
             structured_data = await get_field_visits(
                 db, officer,
                 status_filter=status_filter,
                 start_date=start_d,
                 end_date=end_d,
-                to_be_visited_only=to_be_visited
+                to_be_visited_only=to_be_visited,
+                application_type=app_type_filter
             )
             structured_data["query_type"] = query_type
             if start_d:
@@ -572,7 +604,7 @@ async def process_chat(
             if end_d:
                 structured_data["end_date"] = end_d.isoformat()
             structured_data["to_be_visited_only"] = to_be_visited
-            
+
         elif intent == "active_applications_taluks":
             from backend.models import SurveyNumber, Block, Ward, Town, Taluk
             query = select(Application, Taluk.name).join(
@@ -1367,7 +1399,8 @@ async def process_chat(
                 # Implicit continuation: if user just discussed an app, next field query refers to it
                 _field_keywords = [
                     "name", "address", "mobile", "phone", "email", "status", "stage",
-                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்"
+                    "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
+                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்"
                 ]
                 is_field_query = any(kw in message.lower() for kw in _field_keywords)
                 app_number = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=is_field_query)
@@ -1376,8 +1409,10 @@ async def process_chat(
                 if not app_number:
                     reference_patterns = [
                         "this application", "that application", "same application",
-                        "this app", "that app",
-                        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்",
+                        "this app", "that app", "the application", "the app",
+                        "prev application", "previous application", "prev app", "previous app",
+                        "last application", "last app", "above application", "overdue application",
+                        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
                     ]
                     _msg_lower = message.lower()
                     if any(pattern in _msg_lower for pattern in reference_patterns):
@@ -1853,18 +1888,21 @@ async def process_chat(
         _interrogative_keywords = [
             "which", "what", "how many", "how much", "why", "who",
             "where", "where is", "which department", "currently",
-            "give me", "tell me", "show me", "get me",
-            "எந்த", "என்ன", "எத்தனை", "ஏன்", "யார்",
+            "give me", "tell me", "show me", "get me", "how long", "how long it is",
+            "how long is", "how long has", "pending for", "how long pending",
+            "எந்த", "என்ன", "எத்தனை", "ஏன்", "யார்", "எவ்வளவு", "எத்தனை நாள்", "எவ்வளவு நாள்", "ஆச்சு",
         ]
         # Specific field keywords that indicate the user wants one piece of data (English + Tamil)
         _field_keywords = [
             "address", "mobile", "phone", "email", "name", "status", "type",
             "stage", "date", "year", "survey", "applicant", "priority", "aadhaar",
-            "reason", "overdue", "nisd", "isd", "merge",
+            "reason", "overdue", "nisd", "isd", "merge", "pending", "long", "duration",
+            "days", "since", "how long",
             # Tamil field keywords
             "முகவரி", "தொலைபேசி", "மின்னஞ்சல்", "பெயர்", "நாமாகும்", "நாமம்", "நிலை", "வகை",
             "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
-            "காரணம்", "காலதாமத",
+            "காரணம்", "காலதாமத", "நிலுவை", "நிலுவையில்", "எவ்வளவு", "எத்தனை", "நாட்கள்", "நாள்", "ஆச்சு",
+            "niluvai", "evvalavu", "ethanai", "naal", "naatkal",
             # Stage/location keywords
             "sd", "dis", "tahsildar", "sis", "department", "office",
             "right now", "currently", "current stage",
@@ -1877,14 +1915,12 @@ async def process_chat(
             ["included in", "part of", "belong to", "contains", "உள்ளது", "உள்ளன",
              "right now", "currently at", "currently with", "which department"]
         )
-        # Also treat as interrogative when user asks for a specific field
-        # In Tamil, users often directly state field name + app number without "what is" phrasing
         _has_field_keyword = any(kw in _msg_lower for kw in _field_keywords)
         _has_interrogative_phrase = any(
             kw in _msg_lower for kw in ["give", "tell", "show", "get", "what", "provide",
-                                         "where", "which", "currently", "right now", "is this"]
+                                         "where", "which", "currently", "right now", "is this",
+                                         "how", "how many", "days", "overdue"]
         )
-        # If has field keyword + app number pattern, treat as field query even without interrogative words
         _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
         _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
         _is_interrogative = _is_interrogative or _asking_specific_field
@@ -1956,9 +1992,122 @@ async def process_chat(
                 logger.info("User asked about application field without providing app number - prompted for app number")
 
             # ── Specific field extraction for application_status queries ──
-            if not response_text and _asking_specific_field and intent == "application_status" and app_no:
-                # Check for NISD/ISD type questions first (higher priority)
-                if ("nisd" in _msg_lower or "isd" in _msg_lower):
+            if not response_text and intent == "application_status" and app_no:
+                # Check for pending duration / how long pending / overdue questions (higher priority)
+                _is_pending_or_overdue_q = any(w in _msg_lower for w in [
+                    "overdue", "late", "delay", "tardiness", "தாமதம்", "காலதாமத",
+                    "how long", "how many days", "pending", "duration", "since",
+                    "நிலுவை", "நிலுவையில்", "எவ்வளவு நாள்", "எத்தனை நாள்", "எவ்வளவு நாட்கள்",
+                    "எத்தனை நாட்கள்", "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "ஆச்சு",
+                    "niluvai", "evvalavu", "ethanai", "naal", "naatkal"
+                ])
+                if _is_pending_or_overdue_q:
+                    fv_info = sd.get("field_visit") or {}
+                    fv_date_str = fv_info.get("scheduled_date") or sd.get("field_visit_date")
+                    sub_date_str = sd.get("submission_date")
+                    from datetime import date as _date_mod
+                    today = _date_mod.today()
+
+                    fv_days_overdue = None
+                    fv_days_until = None
+                    if fv_date_str:
+                        try:
+                            fv_d = _date_mod.fromisoformat(str(fv_date_str)[:10])
+                            if today > fv_d:
+                                fv_days_overdue = (today - fv_d).days
+                            else:
+                                fv_days_until = (fv_d - today).days
+                        except Exception:
+                            pass
+
+                    app_sub_days = None
+                    if sub_date_str:
+                        try:
+                            sub_d = _date_mod.fromisoformat(str(sub_date_str)[:10])
+                            app_sub_days = (today - sub_d).days
+                        except Exception:
+                            pass
+
+                    is_tamil = language in ("ta", "tanglish")
+                    app_status_str = str(sd.get("status", "")).lower()
+
+                    # Explicit pending duration question ("how long pending", "days pending", "ethanai naal niluvai")
+                    _asked_pending_explicit = any(w in _msg_lower for w in [
+                        "how long", "how long it is pending", "how long is it pending", "how long pending",
+                        "pending for", "days pending", "how many days pending", "how long has", "since submission",
+                        "நிலுவை", "நிலுவையில்", "எவ்வளவு நாள்", "எத்தனை நாள்", "எவ்வளவு நாட்கள்",
+                        "எத்தனை நாட்கள்", "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "ஆச்சு",
+                        "niluvai", "evvalavu", "ethanai", "naal"
+                    ]) and not any(w in _msg_lower for w in ["overdue", "late", "delay", "tardiness", "தாமதம்", "காலதாமத"])
+
+                    if _asked_pending_explicit and app_sub_days is not None:
+                        if app_status_str in ["completed", "approved", "closed"]:
+                            if is_tamil:
+                                response_text = f"விண்ணப்பம் {app_no} நிலுவையில் இல்லை — இது ஏற்கனவே முடிவடைந்தது/அங்கீகரிக்கப்பட்டது."
+                            else:
+                                response_text = f"Application {app_no} is no longer pending — it has been completed and approved."
+                        elif app_sub_days > 15:
+                            sla_past = app_sub_days - 15
+                            if is_tamil:
+                                response_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு **{app_sub_days} நாட்கள்** நிலுவையில் உள்ளது ({str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது). இது 15 நாட்கள் காலக்கெடுவை விட **{sla_past} நாட்கள் தாமதம்**."
+                            else:
+                                response_text = f"Application {app_no} has been pending for **{app_sub_days} days** (submitted on {str(sub_date_str)[:10]}). It is **{sla_past} days past the 15-day SLA**."
+                        else:
+                            rem = 15 - app_sub_days
+                            if is_tamil:
+                                response_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு **{app_sub_days} நாட்கள்** நிலுவையில் உள்ளது ({str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது). 15 நாட்கள் காலக்கெடுவில் இன்னும் **{rem} நாட்கள் மீதமுள்ளன**."
+                            else:
+                                response_text = f"Application {app_no} has been pending for **{app_sub_days} days** (submitted on {str(sub_date_str)[:10]}). It has **{rem} days remaining** within the 15-day SLA."
+                        logger.info(f"Responded pending duration ({app_sub_days} days) for {app_no}")
+
+                    # Overdue questions or default overdue calculations
+                    elif fv_days_overdue is not None and fv_days_overdue > 0:
+                        if is_tamil:
+                            response_text = f"விண்ணப்பம் {app_no}-ன் கள ஆய்வு ({str(fv_date_str)[:10]}) {fv_days_overdue} நாட்கள் தாமதமாக (overdue) உள்ளது."
+                        else:
+                            response_text = f"Application {app_no}: The field visit (scheduled for {str(fv_date_str)[:10]}) is **{fv_days_overdue} days overdue** (as of today, {today.isoformat()})."
+                        logger.info(f"Responded with {fv_days_overdue} days overdue for {app_no}")
+                    elif sd.get("is_overdue") and app_sub_days is not None and app_sub_days > 15:
+                        sla_overdue = app_sub_days - 15
+                        if is_tamil:
+                            response_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு {app_sub_days} நாட்கள் ஆகியுள்ளது (15 நாட்கள் காலக்கெடுவை விட {sla_overdue} நாட்கள் தாமதம்)."
+                        else:
+                            response_text = f"Application {app_no} was submitted on {str(sub_date_str)[:10]} ({app_sub_days} days ago) and is **{sla_overdue} days past the 15-day SLA**."
+                        logger.info(f"Responded with SLA overdue {sla_overdue} days for {app_no}")
+                    elif app_status_str in ["completed", "approved", "closed"]:
+                        if is_tamil:
+                            response_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை — இது ஏற்கனவே முடிவடைந்தது/அங்கீகரிக்கப்பட்டது."
+                        else:
+                            response_text = f"Application {app_no} is NOT overdue. It has been completed and approved."
+                        logger.info(f"Responded completed/not overdue for {app_no}")
+                    elif fv_days_until is not None:
+                        if fv_days_until == 0:
+                            if is_tamil:
+                                response_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. கள ஆய்வு இன்று ({str(fv_date_str)[:10]}) திட்டமிடப்பட்டுள்ளது."
+                            else:
+                                response_text = f"Application {app_no} is NOT overdue. The field visit is scheduled for TODAY ({str(fv_date_str)[:10]})."
+                        else:
+                            if is_tamil:
+                                response_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. கள ஆய்வு {str(fv_date_str)[:10]} அன்று திட்டமிடப்பட்டுள்ளது ({fv_days_until} நாட்களில்)."
+                            else:
+                                response_text = f"Application {app_no} is NOT overdue. The field visit is scheduled for {str(fv_date_str)[:10]} (in {fv_days_until} days)."
+                        logger.info(f"Responded upcoming field visit in {fv_days_until} days for {app_no}")
+                    elif app_sub_days is not None and app_sub_days <= 15:
+                        rem_days = 15 - app_sub_days
+                        if is_tamil:
+                            response_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. {str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது ({app_sub_days} நாட்களுக்கு முன்பு — 15 நாட்கள் காலக்கெடுவில் {rem_days} நாட்கள் மீதமுள்ளன)."
+                        else:
+                            response_text = f"Application {app_no} is NOT overdue. Submitted on {str(sub_date_str)[:10]} ({app_sub_days} days ago — {rem_days} days remaining within the 15-day SLA)."
+                        logger.info(f"Responded within SLA {rem_days} days remaining for {app_no}")
+                    else:
+                        if is_tamil:
+                            response_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை (காலக்கெடுவிற்குள் உள்ளது)."
+                        else:
+                            response_text = f"Application {app_no} is currently on schedule and not overdue."
+                        logger.info(f"Responded not overdue for {app_no}")
+
+                # Check for NISD/ISD type questions next
+                elif ("nisd" in _msg_lower or "isd" in _msg_lower):
                     app_type_value = sd.get("type", "N/A")
                     response_text = f"Application {app_no} is of type: {app_type_value}"
                     logger.info(f"Responded with application type '{app_type_value}' for {app_no}")
@@ -2718,8 +2867,20 @@ async def process_chat_stream(
         logger.info(f"Detected language: {language}")
         
         # Step 2: Parse intent to determine which DB query to run
-        intent = parse_intent(message)
-        logger.info(f"Parsed intent: {intent}")
+        _prev_intent = None
+        if chat_history:
+            import re as _re
+            for _h in reversed(chat_history):
+                if _h.get("role") == "assistant":
+                    _m = _re.search(r'\[intent:([\w_]+)\]', _h.get("content", ""))
+                    if _m:
+                        _prev_intent = _m.group(1)
+                        break
+                    if _h.get("intent"):
+                        _prev_intent = _h.get("intent")
+                        break
+        intent = parse_intent(message, prev_intent=_prev_intent)
+        logger.info(f"Parsed intent: {intent} (prev_intent={_prev_intent})")
 
 
 
@@ -2909,23 +3070,69 @@ async def process_chat_stream(
             structured_data = await get_officer_workload(db, officer)
             structured_data["query_type"] = "Officer Workload Summary"
             
-        elif intent == "field_visits":
-            # Check if asking for scheduled or unscheduled visits
+        elif intent in ("field_visits", "fv_between_dates"):
+            from backend.services.rag import extract_date_range
+            from datetime import date as _dt_date
+            import calendar
+
             msg_lower = message.lower()
+            start_d, end_d = extract_date_range(message)
+
+            # Extract application type filter(s) from message — supports multi-type queries
+            # e.g. "isd and nisd", "merge and isd", "all types"
+            app_type_filter = []
+            if any(w in msg_lower for w in ["merge", "merger", "merging"]):
+                app_type_filter.append("MERGE")
+            if any(w in msg_lower for w in ["nisd", "non-isd", "non isd", "transfer"]):
+                app_type_filter.append("NISD")
+            if any(w in msg_lower for w in ["isd", "subdivision", "sub division", "sub-division"]):
+                if "NISD" not in app_type_filter:  # avoid double-match since "nisd" contains "isd"
+                    app_type_filter.append("ISD")
+            # Normalise: None means no filter (all types)
+            app_type_filter = app_type_filter if app_type_filter else None
+            type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+
+            to_be_visited = any(w in msg_lower for w in [
+                "needed to be visited", "to be visited", "need to visit", "need to be visited",
+                "pending visit", "yet to visit", "upcoming"
+            ])
+
             status_filter = None
             if "unscheduled" in msg_lower or "not scheduled" in msg_lower or "yet to schedule" in msg_lower:
                 status_filter = "unscheduled"
                 query_type = "Unscheduled Field Visits"
+            elif intent == "fv_between_dates" or start_d or end_d or "between" in msg_lower or to_be_visited:
+                if not start_d and not end_d:
+                    today = _dt_date.today()
+                    start_d = today.replace(day=1)
+                    _, last_day = calendar.monthrange(today.year, today.month)
+                    end_d = today.replace(day=last_day)
+                type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+                query_type = ("Field Visits Needed To Be Visited" if to_be_visited
+                              else f"{type_label} Field Visits Between Dates".strip())
             elif "scheduled" in msg_lower or "visit date" in msg_lower or "when" in msg_lower or "schedule" in msg_lower:
                 status_filter = "scheduled"
                 query_type = "Scheduled Field Visits"
             else:
-                # Default to all field visits
-                query_type = "Field Visits Summary"
-                
-            structured_data = await get_field_visits(db, officer, status_filter=status_filter)
+                type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
+                query_type = f"{type_label} Field Visits Summary".strip()
+
+            structured_data = await get_field_visits(
+                db, officer,
+                status_filter=status_filter,
+                start_date=start_d,
+                end_date=end_d,
+                to_be_visited_only=to_be_visited,
+                application_type=app_type_filter
+            )
             structured_data["query_type"] = query_type
-            
+            if start_d:
+                structured_data["start_date"] = start_d.isoformat()
+            if end_d:
+                structured_data["end_date"] = end_d.isoformat()
+            structured_data["to_be_visited_only"] = to_be_visited
+
+
         elif intent == "active_applications_taluks":
             from backend.models import SurveyNumber, Block, Ward, Town, Taluk
             query = select(Application, Taluk.name).join(
@@ -3299,7 +3506,8 @@ async def process_chat_stream(
                 # Implicit continuation: if user just discussed an app, next field query refers to it
                 _field_keywords = [
                     "name", "address", "mobile", "phone", "email", "status", "stage",
-                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்"
+                    "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
+                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்"
                 ]
                 is_field_query = any(kw in message.lower() for kw in _field_keywords)
                 app_number = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=is_field_query)
@@ -3308,8 +3516,10 @@ async def process_chat_stream(
                 if not app_number:
                     reference_patterns = [
                         "this application", "that application", "same application",
-                        "this app", "that app",
-                        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்",
+                        "this app", "that app", "the application", "the app",
+                        "prev application", "previous application", "prev app", "previous app",
+                        "last application", "last app", "above application", "overdue application",
+                        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
                     ]
                     _msg_lower = message.lower()
                     if any(pattern in _msg_lower for pattern in reference_patterns):
@@ -3608,17 +3818,20 @@ async def process_chat_stream(
         _interrogative_keywords = [
             "which", "what", "how many", "how much", "why", "who",
             "where", "where is", "which department", "currently",
-            "give me", "tell me", "show me", "get me",
-            "எந்த", "என்ன", "எத்தனை", "ஏன்", "யார்",
+            "give me", "tell me", "show me", "get me", "how long", "how long it is",
+            "how long is", "how long has", "pending for", "how long pending",
+            "எந்த", "என்ன", "எத்தனை", "ஏன்", "யார்", "எவ்வளவு", "எத்தனை நாள்", "எவ்வளவு நாள்", "ஆச்சு",
         ]
         _field_keywords = [
             "address", "mobile", "phone", "email", "name", "status", "type",
             "stage", "date", "year", "survey", "applicant", "priority", "aadhaar",
-            "reason", "overdue", "nisd", "isd", "merge",
+            "reason", "overdue", "nisd", "isd", "merge", "pending", "long", "duration",
+            "days", "since", "how long",
             # Tamil field keywords
             "முகவரி", "தொலைபேசி", "மின்னஞ்சல்", "பெயர்", "நாமாகும்", "நாமம்", "நிலை", "வகை",
             "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
-            "காரணம்", "காலதாமத",
+            "காரணம்", "காலதாமத", "நிலுவை", "நிலுவையில்", "எவ்வளவு", "எத்தனை", "நாட்கள்", "நாள்", "ஆச்சு",
+            "niluvai", "evvalavu", "ethanai", "naal", "naatkal",
             # Stage/location keywords
             "sd", "dis", "tahsildar", "sis", "department", "office",
             "right now", "currently", "current stage",
@@ -3631,14 +3844,12 @@ async def process_chat_stream(
             ["included in", "part of", "belong to", "contains", "உள்ளது", "உள்ளன",
              "right now", "currently at", "currently with", "which department"]
         )
-        # Also treat as interrogative when user asks for a specific field
-        # In Tamil, users often directly state field name + app number without "what is" phrasing
         _has_field_keyword = any(kw in _msg_lower for kw in _field_keywords)
         _has_interrogative_phrase = any(
             kw in _msg_lower for kw in ["give", "tell", "show", "get", "what", "provide",
-                                         "where", "which", "currently", "right now", "is this"]
+                                         "where", "which", "currently", "right now", "is this",
+                                         "how", "how many", "days", "overdue"]
         )
-        # If has field keyword + app number pattern, treat as field query even without interrogative words
         _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
         _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
         _is_interrogative = _is_interrogative or _asking_specific_field
@@ -3712,9 +3923,122 @@ async def process_chat_stream(
                 logger.info("User asked about application field without providing app number - prompted for app number")
 
             # ── Specific field extraction for application_status queries (stream) ──
-            if not _direct_answer_text and _asking_specific_field and intent == "application_status" and app_no:
-                # Check for NISD/ISD type questions first (higher priority)
-                if ("nisd" in _msg_lower or "isd" in _msg_lower):
+            if not _direct_answer_text and intent == "application_status" and app_no:
+                # Check for pending duration / how long pending / overdue questions (higher priority)
+                _is_pending_or_overdue_q = any(w in _msg_lower for w in [
+                    "overdue", "late", "delay", "tardiness", "தாமதம்", "காலதாமத",
+                    "how long", "how many days", "pending", "duration", "since",
+                    "நிலுவை", "நிலுவையில்", "எவ்வளவு நாள்", "எத்தனை நாள்", "எவ்வளவு நாட்கள்",
+                    "எத்தனை நாட்கள்", "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "ஆச்சு",
+                    "niluvai", "evvalavu", "ethanai", "naal", "naatkal"
+                ])
+                if _is_pending_or_overdue_q:
+                    fv_info = sd.get("field_visit") or {}
+                    fv_date_str = fv_info.get("scheduled_date") or sd.get("field_visit_date")
+                    sub_date_str = sd.get("submission_date")
+                    from datetime import date as _date_mod
+                    today = _date_mod.today()
+
+                    fv_days_overdue = None
+                    fv_days_until = None
+                    if fv_date_str:
+                        try:
+                            fv_d = _date_mod.fromisoformat(str(fv_date_str)[:10])
+                            if today > fv_d:
+                                fv_days_overdue = (today - fv_d).days
+                            else:
+                                fv_days_until = (fv_d - today).days
+                        except Exception:
+                            pass
+
+                    app_sub_days = None
+                    if sub_date_str:
+                        try:
+                            sub_d = _date_mod.fromisoformat(str(sub_date_str)[:10])
+                            app_sub_days = (today - sub_d).days
+                        except Exception:
+                            pass
+
+                    is_tamil = language in ("ta", "tanglish")
+                    app_status_str = str(sd.get("status", "")).lower()
+
+                    # Explicit pending duration question ("how long pending", "days pending", "ethanai naal niluvai")
+                    _asked_pending_explicit = any(w in _msg_lower for w in [
+                        "how long", "how long it is pending", "how long is it pending", "how long pending",
+                        "pending for", "days pending", "how many days pending", "how long has", "since submission",
+                        "நிலுவை", "நிலுவையில்", "எவ்வளவு நாள்", "எத்தனை நாள்", "எவ்வளவு நாட்கள்",
+                        "எத்தனை நாட்கள்", "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "ஆச்சு",
+                        "niluvai", "evvalavu", "ethanai", "naal"
+                    ]) and not any(w in _msg_lower for w in ["overdue", "late", "delay", "tardiness", "தாமதம்", "காலதாமத"])
+
+                    if _asked_pending_explicit and app_sub_days is not None:
+                        if app_status_str in ["completed", "approved", "closed"]:
+                            if is_tamil:
+                                _direct_answer_text = f"விண்ணப்பம் {app_no} நிலுவையில் இல்லை — இது ஏற்கனவே முடிவடைந்தது/அங்கீகரிக்கப்பட்டது."
+                            else:
+                                _direct_answer_text = f"Application {app_no} is no longer pending — it has been completed and approved."
+                        elif app_sub_days > 15:
+                            sla_past = app_sub_days - 15
+                            if is_tamil:
+                                _direct_answer_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு **{app_sub_days} நாட்கள்** நிலுவையில் உள்ளது ({str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது). இது 15 நாட்கள் காலக்கெடுவை விட **{sla_past} நாட்கள் தாமதம்**."
+                            else:
+                                _direct_answer_text = f"Application {app_no} has been pending for **{app_sub_days} days** (submitted on {str(sub_date_str)[:10]}). It is **{sla_past} days past the 15-day SLA**."
+                        else:
+                            rem = 15 - app_sub_days
+                            if is_tamil:
+                                _direct_answer_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு **{app_sub_days} நாட்கள்** நிலுவையில் உள்ளது ({str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது). 15 நாட்கள் காலக்கெடுவில் இன்னும் **{rem} நாட்கள் மீதமுள்ளன**."
+                            else:
+                                _direct_answer_text = f"Application {app_no} has been pending for **{app_sub_days} days** (submitted on {str(sub_date_str)[:10]}). It has **{rem} days remaining** within the 15-day SLA."
+                        logger.info(f"Responded pending duration ({app_sub_days} days) for {app_no}")
+
+                    # Overdue questions or default overdue calculations
+                    elif fv_days_overdue is not None and fv_days_overdue > 0:
+                        if is_tamil:
+                            _direct_answer_text = f"விண்ணப்பம் {app_no}-ன் கள ஆய்வு ({str(fv_date_str)[:10]}) {fv_days_overdue} நாட்கள் தாமதமாக (overdue) உள்ளது."
+                        else:
+                            _direct_answer_text = f"Application {app_no}: The field visit (scheduled for {str(fv_date_str)[:10]}) is **{fv_days_overdue} days overdue** (as of today, {today.isoformat()})."
+                        logger.info(f"Responded with {fv_days_overdue} days overdue for {app_no}")
+                    elif sd.get("is_overdue") and app_sub_days is not None and app_sub_days > 15:
+                        sla_overdue = app_sub_days - 15
+                        if is_tamil:
+                            _direct_answer_text = f"விண்ணப்பம் {app_no} சமர்ப்பிக்கப்பட்டு {app_sub_days} நாட்கள் ஆகியுள்ளது (15 நாட்கள் காலக்கெடுவை விட {sla_overdue} நாட்கள் தாமதம்)."
+                        else:
+                            _direct_answer_text = f"Application {app_no} was submitted on {str(sub_date_str)[:10]} ({app_sub_days} days ago) and is **{sla_overdue} days past the 15-day SLA**."
+                        logger.info(f"Responded with SLA overdue {sla_overdue} days for {app_no}")
+                    elif app_status_str in ["completed", "approved", "closed"]:
+                        if is_tamil:
+                            _direct_answer_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை — இது ஏற்கனவே முடிவடைந்தது/அங்கீகரிக்கப்பட்டது."
+                        else:
+                            _direct_answer_text = f"Application {app_no} is NOT overdue. It has been completed and approved."
+                        logger.info(f"Responded completed/not overdue for {app_no}")
+                    elif fv_days_until is not None:
+                        if fv_days_until == 0:
+                            if is_tamil:
+                                _direct_answer_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. கள ஆய்வு இன்று ({str(fv_date_str)[:10]}) திட்டமிடப்பட்டுள்ளது."
+                            else:
+                                _direct_answer_text = f"Application {app_no} is NOT overdue. The field visit is scheduled for TODAY ({str(fv_date_str)[:10]})."
+                        else:
+                            if is_tamil:
+                                _direct_answer_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. கள ஆய்வு {str(fv_date_str)[:10]} அன்று திட்டமிடப்பட்டுள்ளது ({fv_days_until} நாட்களில்)."
+                            else:
+                                _direct_answer_text = f"Application {app_no} is NOT overdue. The field visit is scheduled for {str(fv_date_str)[:10]} (in {fv_days_until} days)."
+                        logger.info(f"Responded upcoming field visit in {fv_days_until} days for {app_no}")
+                    elif app_sub_days is not None and app_sub_days <= 15:
+                        rem_days = 15 - app_sub_days
+                        if is_tamil:
+                            _direct_answer_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை. {str(sub_date_str)[:10]} அன்று சமர்ப்பிக்கப்பட்டது ({app_sub_days} நாட்களுக்கு முன்பு — 15 நாட்கள் காலக்கெடுவில் {rem_days} நாட்கள் மீதமுள்ளன)."
+                        else:
+                            _direct_answer_text = f"Application {app_no} is NOT overdue. Submitted on {str(sub_date_str)[:10]} ({app_sub_days} days ago — {rem_days} days remaining within the 15-day SLA)."
+                        logger.info(f"Responded within SLA {rem_days} days remaining for {app_no}")
+                    else:
+                        if is_tamil:
+                            _direct_answer_text = f"விண்ணப்பம் {app_no} தாமதமாக இல்லை (காலக்கெடுவிற்குள் உள்ளது)."
+                        else:
+                            _direct_answer_text = f"Application {app_no} is currently on schedule and not overdue."
+                        logger.info(f"Responded not overdue for {app_no}")
+
+                # Check for NISD/ISD type questions next
+                elif ("nisd" in _msg_lower or "isd" in _msg_lower):
                     app_type_value = sd.get("type", "N/A")
                     _direct_answer_text = f"Application {app_no} is of type: {app_type_value}"
                     logger.info(f"Responded with application type '{app_type_value}' for {app_no}")
@@ -4296,8 +4620,9 @@ async def process_chat_stream(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
 
-        elif intent in ("pending_applications", "field_visits", "ward_surveys", "block_surveys",
-                        "survey_detail", "survey_owners", "next_subdivision",
+        elif intent in ("pending_applications", "field_visits", "fv_between_dates", "fv_scheduled_this_week",
+                        "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled",
+                        "ward_surveys", "block_surveys", "survey_detail", "survey_owners", "next_subdivision",
                         "jurisdiction_summary", "rejection_info", "taluk_summary",
                         "litigation_check", "highest_priority_applications",
                         "merge_info", "town_applications", "block_applications",
@@ -4345,12 +4670,25 @@ async def process_chat_stream(
                             f"{count} உயர் முன்னுரிமை விண்ணப்பங்கள் உள்ளன{stage_text} (⚠️ warning அல்லது overdue)." if is_tamil
                             else f"Found {count} high priority applications{stage_text} (⚠️ warning or overdue)."
                         )
+                elif intent in ("field_visits", "fv_between_dates"):
+                    count = structured_data.get("count", len(structured_data.get("field_visits", [])))
+                    qtype = structured_data.get("query_type", "Field Visits")
+                    start_date = structured_data.get("start_date")
+                    end_date = structured_data.get("end_date")
+                    date_range = f" ({start_date} to {end_date})" if (start_date and end_date) else ""
+                    if count == 0:
+                        chunk = f"No field visits found{date_range}."
+                    elif count == 1:
+                        chunk = f"Found 1 field visit{date_range}."
+                    else:
+                        chunk = f"Found {count} field visit(s){date_range}."
                 else:
                     qtype = structured_data.get("query_type", "") if structured_data else ""
                     if qtype:
                         chunk = f"Here are the {qtype.lower()} results."
                     else:
                         chunk = "Results are shown in the table below."
+
             full_response_text = chunk
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
@@ -4676,7 +5014,11 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
         }
         
     # 3. Field visit
-    elif intent_lower in ["field_visit", "field_visits", "awaiting_field_visit"]:
+    elif intent_lower in [
+        "field_visit", "field_visits", "awaiting_field_visit",
+        "fv_between_dates", "fv_overdue_inspections", "fv_scheduled_this_week",
+        "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"
+    ]:
         visits = []
         for visit in structured_data.get("field_visits", []):
             visits.append({
@@ -4688,7 +5030,7 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
                 "field_visit_date": visit.get("field_visit_date")
             })
         return {
-            "query_type": "Field Visits",
+            "query_type": structured_data.get("query_type", "Field Visits"),
             "field_visits": visits
         }
         

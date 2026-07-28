@@ -1010,12 +1010,17 @@ async def call_llama_stream(prompt: str):
 #   "show me survey 145"  → survey_detail  (not all_surveys_in_jurisdiction)
 #   "show all surveys"    → all_surveys_in_jurisdiction
 # ─────────────────────────────────────────────────────────────────────────────
-def parse_intent(message: str) -> str:
+def parse_intent(message: str, prev_intent: str = None) -> str:
     """
     Parse user intent from message using exact token-boundary and production edit-distance matching.
     Supports English, Tamil, and Tanglish. Deterministic identifiers use exact token bounds;
     natural language questions without deterministic keywords gracefully fall through to 'general_query'
     for semantic LLM / RAG processing.
+
+    Args:
+        message:     The current user message.
+        prev_intent: Intent of the immediately preceding turn (used for context-aware
+                     disambiguation of follow-up filter phrases like "in merge").
     """
     # Strip leading list-item prefixes like "1.", "2)", "a-" etc.
     message = re.sub(r'^\s*\d+[\.\)\-]\s*', '', message)
@@ -1051,33 +1056,35 @@ def parse_intent(message: str) -> str:
     def has(keywords: list) -> bool:
         return any(fuzzy_match(kw) for kw in keywords)
 
-    # ── keyword sets (English + Tamil) ───────────────────────────────
-    ta_survey      = ["கணக்கெண்", "கணக்கு", "survey", "surveys", "survay", "suvery"]
-    ta_subdivision = ["உட்பிரிவு", "உட்பிரிவுகள்", "subdivision", "subdivisions",
-                      "sub-division", "sub-divisions", "subdiv"]
-    ta_show        = ["காட்டு", "காண்பி", "பட்டியல்", "அனைத்தும்",
-                      "show", "list", "all", "my", "display", "get"]
-    ta_owner       = ["உரிமையாளர்", "சொந்தக்காரர்", "owner", "owners",
-                      "ownership", "patta", "pattadar"]
-    ta_pending     = ["நிலுவை", "நிலுவையில்", "காத்திருக்கும்",
-                      "pending", "waiting", "pendig", "pendng"]
-    ta_overdue     = ["காலதாமத", "காலதாமதமான", "தாமதம்",
-                      "overdue", "late", "delayed", "overdew", "overdu"]
-    ta_field_visit = ["கள ஆய்வு", "களஆய்வு", "வருகை",
-                      "field", "visit", "visits", "scheduling", "schedule", "feild"]
-    ta_workload    = ["பணிச்சுமை", "workload", "worklod", "work load"]
-    ta_application = ["விண்ணப்பம்", "விண்ணப்பங்கள்",
-                      "application", "applications", "aplications", "aplication",
-                      "app", "appl", "apps"]
-    ta_merge       = ["இணைப்பு", "இணைக்க", "இணைக்கப்பட்ட", "இணைப்பு விண்ணப்பம்",
-                      "இணைப்பு விண்ணப்பங்கள்", "இணைத்தல்",
+    # ── keyword sets (English + Tamil + Transliterated Tamil Script + Tanglish) ──
+    ta_survey      = ["கணக்கெண்", "கணக்கு", "நில அளவை", "நிலஅளவை", "சர்வே", "சர்வேக்கள்", "சர்வே எண்", "சர்வே எண்கள்", "சார்வே",
+                      "survey", "surveys", "survay", "suvery", "surveynumber", "survey no", "kanakken", "kanakku"]
+    ta_subdivision = ["உட்பிரிவு", "உட்பிரிவுகள்", "உட்பிரிவினை", "சப்டிவிஷன்", "சப் டிவிஷன்", "சப்டிவிஷன்கள்", "சப்டிவிஸன்",
+                      "subdivision", "subdivisions", "sub-division", "sub-divisions", "subdiv", "utpirivu", "utpirivugal"]
+    ta_show        = ["காட்டு", "காண்பி", "பட்டியல்", "அனைத்தும்", "காட்டவும்", "காண்பிக்கவும்", "காட்டுங்க", "காட்டுப்பா", "ஷோ", "லிஸ்ட்",
+                      "show", "list", "all", "my", "display", "get", "view", "fetch", "kaattu", "kaatuvom"]
+    ta_owner       = ["உரிமையாளர்", "சொந்தக்காரர்", "கூட்டுரிமையாளர்", "உரிமையாளர்கள்", "உரிமையாளரின்",
+                      "owner", "owners", "ownership", "patta", "pattadar", "urimaiyalar", "urimayalar"]
+    ta_pending     = ["நிலுவை", "நிலுவையில்", "நிலுவையிலுள்ள", "காத்திருக்கும்", "பெண்டிங்", "பெண்டிங்ஸ்", "பெண்டிங்கில்", "பெண்டிங்க்", "பென்டிங்",
+                      "pending", "waiting", "pendig", "pendng", "uncompleted", "niluvai", "niluvaiyil"]
+    ta_overdue     = ["காலதாமத", "காலதாமதமான", "தாமதம்", "தாமதமான", "காலக்கெடு கடந்த", "ஓவர்டியூ", "ஓவர் டியூ", "ஓவர்ட்யூ", "ஓவர்டியு", "ஓவர்டியூஸ்", "ஒவர்டியூ", "ஓவர்ட்யு", "ஓவர்",
+                      "overdue", "late", "delayed", "overdew", "overdu", "over-due", "kaalathaamadha", "kaalathamadhamaana", "thamadham"]
+    ta_field_visit = ["கள ஆய்வு", "களஆய்வு", "வருகை", "களப் பார்வை", "பீல்டு விசிட்", "பீடு விசிட்", "பீல்ட் விசிட்", "பீல்ட்", "விசிட்", "ஆய்வு",
+                      "field", "visit", "visits", "scheduling", "schedule", "feild", "inspection", "kala aaivu"]
+    ta_workload    = ["பணிச்சுமை", "வேலைச்சுமை", "ஒர்க்லோடு", "வொர்க்லோடு", "வர்க்லோட்", "வர்க் லோடு",
+                      "workload", "worklod", "work load", "panichumai", "velaichumai"]
+    ta_application = ["விண்ணப்பம்", "விண்ணப்பங்கள்", "விண்ணப்பங்களை", "விண்ணப்பங்களின்",
+                      "ஆப்ளிகேஷன்", "ஆப்ளிகேஷன்ஸ்", "ஆப்ளிகேஷன்கள்", "அப்ளிகேஷன்", "அப்ளிகேஷன்ஸ்", "அப்ளிகேஷன்கள்", "ஆப்ளிகேஷனை", "ஆப்ளிகேஷன்களை",
+                      "application", "applications", "aplications", "aplication", "app", "appl", "apps", "vinnappam", "vinnappangal"]
+    ta_merge       = ["இணைப்பு", "இணைக்க", "இணைக்கப்பட்ட", "இணைப்பு விண்ணப்பம்", "இணைப்பு விண்ணப்பங்கள்", "இணைத்தல்", "மெர்ஜ்", "மெர்ஜிங்",
                       "merge", "merging", "merged", "merg"]
-    ta_status      = ["நிலை", "status", "statuss", "staus"]
+    ta_status      = ["நிலை", "தற்போதைய நிலை", "ஸ்டேட்டஸ்", "ஸ்டேடஸ்", "ஸ்டேட்ஸ்",
+                      "status", "statuss", "staus", "stage", "nilai"]
     ta_area        = ["பரப்பளவு", "பரப்பு", "area", "arrea"]
     ta_ward        = ["வார்டு", "ward", "wards"]
     ta_block       = ["தொகுதி", "block", "blocks"]
     ta_next        = ["அடுத்த", "கிடைக்கும்", "next", "available", "nxt"]
-    ta_detail      = ["விவரம்", "விவரங்கள்", "detail", "details", "info",
+    ta_detail      = ["விவரம்", "விவரங்கள்", "விவரங்களை", "detail", "details", "info",
                       "contain", "included", "which", "what", "how", "land"]
 
     # ── Greeting queries ──
@@ -1135,8 +1142,61 @@ def parse_intent(message: str) -> str:
                                "நெருங்கும் காலக்கெடு"]):
         return "escalation_check"
 
+    # ── Context-aware type-filter follow-up detection (PRODUCTION) ───────────
+    # Handles short follow-up messages like:
+    #   "in merge", "only isd", "merge only", "isd n nisd", "both merge and isd"
+    # These are NOT new application-list queries — they refine the previous result.
+    #
+    # Production rules (two independent paths, either is sufficient):
+    #
+    # PATH A — Structural pure-filter: message matches one of the canonical
+    #   filter patterns regardless of previous intent.
+    #   Examples: "in merge", "only isd", "isd n nisd", "merge only"
+    #
+    # PATH B — Context-aware: prev_intent was a field-visit intent AND message
+    #   contains a type keyword with NO strong application-query signal.
+    #
+    # All paths guard against strong application-query signals so that
+    # "show merge applications" / "list isd" still reach merge/isd_applications.
+    #
+    # Word-boundary regex is used throughout to prevent substring false-positives
+    # (e.g. "in" matches "n", "stands" matches "and").
+
+    _TYPE_RE  = re.compile(r'\b(isd|nisd|merge|merg|merger|merging)\b', re.IGNORECASE)
+    _JOINER_RE = re.compile(r'\b(and|n|or|&)\b', re.IGNORECASE)
+    # "Strong application-query" signals — if any of these are present as whole
+    # words we should NOT redirect to field_visits.
+    _STRONG_APP_RE = re.compile(
+        r'\b(application|applications|app|apps|pending|show|list|display|fetch|give|'
+        r'get|find|all|view|detail|summary|count|total|how many|number of|'
+        r'காட்டு|காண்பி|பட்டியல்|விண்ணப்பம்|விண்ணப்பங்கள்)\b',
+        re.IGNORECASE
+    )
+    # Canonical filter patterns (anchor-to-end regex on normalized msg)
+    _PURE_FILTER_RE = re.compile(
+        r'^(?:in|only|for|filter|show only|just|of type|type)?\s*'
+        r'(?:isd|nisd|merge|merg|merger|merging)'
+        r'(?:\s+(?:and|n|or|&)\s+(?:isd|nisd|merge|merg|merger|merging))*'
+        r'\s*(?:only|type|types|applications?|apps?)?\s*$',
+        re.IGNORECASE
+    )
+    _FV_INTENTS = {
+        "field_visits", "fv_between_dates", "fv_scheduled_this_week",
+        "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled",
+        "fv_nearby_pending",
+    }
+
+    _has_type_kw   = bool(_TYPE_RE.search(msg))
+    _has_strong_app = bool(_STRONG_APP_RE.search(msg))
+    _is_pure_filter = bool(_PURE_FILTER_RE.match(msg.strip()))
+    _prev_was_fv   = (prev_intent in _FV_INTENTS)
+
+    if _has_type_kw and not _has_strong_app and (_is_pure_filter or _prev_was_fv):
+        return "field_visits"
+
     # Field visit specific workflow intents (check before general field_visits)
     # Match if message contains field visit keywords (as phrase OR separate words)
+
     has_field_visit_keywords = (
         any(w in msg for w in ["field visit", "inspection", "schedule", "calendar", "visit date",
                                "deadline", "15-working-day", "15 working day", "15-day", "working day",
@@ -1284,6 +1344,26 @@ def parse_intent(message: str) -> str:
     if any(w in msg for w in ["முன்னுரிமை", "முன்னதாய", "அவசர", "அவசரமான"]) and any(w in msg for w in ["உயர்ந்த", "அதிக", "இந்த வாரம்", "காட்டு", "பட்டியல்", "விண்ணப்பம்", "விண்ணப்பங்கள்"]):
         return "highest_priority_applications"
 
+    # ── High Priority & List Queries (overdue, pending, merge, subdivision, survey, field visits) ──
+    # MUST come before generic single-field interrogative checks (like application_status)
+    if has(ta_overdue):
+        return "overdue_applications"
+
+    if has(ta_pending) and (has(ta_application) or has(ta_show)):
+        return "pending_applications"
+
+    if has(ta_merge) and (has(ta_application) or has(ta_show)):
+        return "merge_applications"
+
+    if has(ta_subdivision) and (has(ta_application) or has(ta_show)):
+        return "subdivision_applications"
+
+    if has(ta_survey) and (has(ta_show) or has(ta_detail) or "number" in msg or "எண்" in msg or "எண்கள்" in msg):
+        return "survey_details"
+
+    if has(ta_workload):
+        return "workload_summary"
+
     # 2a. Field-specific queries (name, address, mobile, email, etc.) → application_status
     # These queries ask about specific applicant/application fields
     _field_keywords = [
@@ -1300,9 +1380,9 @@ def parse_intent(message: str) -> str:
                       "என்ன", "எந்த", "யார்", "எங்கே", "எப்போது", "காட்டு", "சொல்"]
     has_field = any(kw in msg for kw in _field_keywords)
     has_interrogative = any(kw in msg for kw in _interrogative)
-    has_application_context = any(w in msg for w in ["application", "applicant", "விண்ணப்பம்", "விண்ணப்பதாரர்"])
+    has_application_context = any(w in msg for w in ["application", "applicant", "விண்ணப்பம்", "விண்ணப்பதாரர்", "ஆப்ளிகேஷன்"])
     # Route to application_status if asking about a field + has interrogative OR mentions application
-    if has_field and (has_interrogative or has_application_context):
+    if has_field and (has_interrogative or has_application_context) and not has(ta_overdue) and not has(ta_pending):
         return "application_status"
 
     # 2b. "Where is this application" / "which department" → application_status
@@ -1329,7 +1409,45 @@ def parse_intent(message: str) -> str:
                                "எங்கே உள்ளது"]):
         return "application_status"
 
-    # 3. Overdue
+    # 2c. Specific overdue duration / status queries for an application or context reference
+    # "how many days overdue", "how many days over due of prev application", "is it overdue"
+    # Should route to application_status to calculate exact overdue days for that app/field visit.
+    _asking_days_overdue = any(p in msg for p in [
+        "how many days overdue", "how many days over due", "days overdue", "days over due",
+        "how long overdue", "how many days late", "how overdue", "how many days delayed",
+        "overdue of prev", "overdue of previous", "overdue for this", "overdue for that",
+        "overdue of application", "overdue for application", "is it overdue", "is this overdue",
+        "how many days", "how many day"
+    ]) or (
+        has(ta_overdue) and (
+            has_interrogative or
+            has_application_context or
+            bool(re.search(r'\b(prev|previous|this|that|same|last|the|it)\b', msg))
+        ) and not any(w in msg for w in ["all", "list", "show overdue", "display overdue", "overdue applications", "overdue list", "overdue count"])
+    )
+    if _asking_days_overdue:
+        return "application_status"
+
+    # 2d. Specific pending duration / status query for a specific application or context reference
+    # "APP-2024-000022 how long it is pending", "how long is this app pending", "how many days pending"
+    _asking_pending_duration = (
+        any(p in msg for p in [
+            "how long", "how many days pending", "pending for how long",
+            "how long pending", "how long it is pending", "how long is it pending",
+            "how many days since", "days pending", "duration pending",
+            "எவ்வளவு நாள்", "எத்தனை நாள்", "எவ்வளவு நாட்கள்", "எத்தனை நாட்கள்",
+            "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "நிலுவை காலம்"
+        ]) or (
+            has(ta_pending) and (
+                bool(re.search(r'(APP-\d{4}-\d{6}|(ISD|NISD|MERGE)/\w+/\d+/\d+)', msg, re.IGNORECASE)) or
+                bool(re.search(r'\b(this|that|prev|previous|same|last|it)\b', msg, re.IGNORECASE))
+            ) and any(w in msg for w in ["how long", "how many", "duration", "days", "since", "எவ்வளவு", "எத்தனை", "நாள்", "நாட்கள்"])
+        )
+    )
+    if _asking_pending_duration:
+        return "application_status"
+
+    # 3. Overdue applications list
     if has(ta_overdue):
         return "overdue_applications"
 
@@ -1428,13 +1546,17 @@ def parse_intent(message: str) -> str:
 
     # 16b. Typed application lists — MUST come before the is_nisd_or_isd trap below.
     # "display nisd", "show isd", "compare both nisd n isd", "show isd n merg", "no of nisd applications" → typed list.
-    # Guard: fire when there's an action, comparison, or count word
-    _action_words_16 = [
-        "show", "list", "display", "view", "count", "how many", "number", "no of", "no.", "no ", "no_of", "num", "total",
-        "compare", "both", "all", "get", "fetch", "give", "find", "details", "summary", "versus", "vs", "n", "and",
+    # Guard: fire ONLY when there's an unambiguous application-query action word.
+    # IMPORTANT: Use word-boundary regex for short tokens ("n", "and", "no") to avoid
+    # substring false-positives like "in" containing "n", "stands" containing "and", etc.
+    _has_action_16 = bool(re.search(
+        r'\b(show|list|display|view|count|how many|number|no of|num|total|compare|both|all|get|fetch|give|find|details|summary|versus|vs)\b'
+        r'|\band\b'   # "and" as a full word only
+        r'|\bn\b',    # "n" as a standalone word ("isd n nisd")
+        msg, re.IGNORECASE
+    )) or any(w in msg for w in [
         "காட்டு", "காண்பி", "பட்டியல்", "எத்தனை", "எண்ணிக்கை", "தொகை", "ஒப்பிடு", "இரண்டும்"
-    ]
-    _has_action_16 = any(w in msg for w in _action_words_16)
+    ])
     if _has_action_16:
         # Use word-boundary regex so "nisd" as a substring doesn't falsely match "isd"
         _has_nisd_word  = bool(re.search(r'\bnisd\b', msg))

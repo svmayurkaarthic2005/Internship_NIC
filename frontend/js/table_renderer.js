@@ -326,14 +326,26 @@ function prepareApplicationsTable(data, isTamil = false) {
     const tamCols = _translateCols(engCols, isTamil);
     const rows = apps.map(app => {
         const jur = app.jurisdiction || {};
+        const getVal = (primary, secondary) => (primary && primary !== 'N/A') ? primary : ((secondary && secondary !== 'N/A') ? secondary : 'N/A');
+
+        const rawBlock = (jur.block && jur.block !== 'N/A') ? jur.block : (app.block_number || app.block);
+        const blockVal = rawBlock && rawBlock !== 'N/A' 
+            ? (String(rawBlock).toLowerCase().includes('block') ? String(rawBlock) : `Block ${rawBlock}`)
+            : 'N/A';
+
+        const rawWard = (jur.ward && jur.ward !== 'N/A') ? jur.ward : (app.ward_number || app.ward);
+        const wardVal = rawWard && rawWard !== 'N/A'
+            ? (String(rawWard).toLowerCase().includes('ward') ? String(rawWard) : `Ward ${rawWard}`)
+            : 'N/A';
+
         const r = {
             'Application Number': app.application_number || 'N/A',
             'Type':               app.type || 'N/A',
-            'District':           jur.district || app.district_name || 'N/A',
-            'Taluk':              jur.taluk || app.taluk_name || 'N/A',
-            'Town':               jur.town || app.town_name || 'N/A',
-            'Ward':               jur.ward || (app.ward_number ? `Ward ${app.ward_number}` : 'N/A'),
-            'Block':              jur.block || (app.block_number ? `Block ${app.block_number}` : 'N/A'),
+            'District':           getVal(jur.district, app.district_name),
+            'Taluk':              getVal(jur.taluk, app.taluk_name),
+            'Town':               getVal(jur.town, app.town_name),
+            'Ward':               wardVal,
+            'Block':              blockVal,
             'Status':             app.status || 'Pending',
             'Stage':              app.current_stage || app.stage || 'N/A',
             'Submitted Date':     app.submission_date ? new Date(app.submission_date).toLocaleDateString() : 'N/A'

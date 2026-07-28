@@ -262,7 +262,9 @@ async def get_overdue_applications(
         # Get the officer's stage
         officer_stage = officer.officer_stage
         
-        query = select(Application).join(
+        query = select(Application).options(
+            selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district)
+        ).join(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
         ).join(
             Block, SurveyNumber.block_id == Block.id
@@ -291,21 +293,41 @@ async def get_overdue_applications(
         result = await db.execute(query)
         applications = result.scalars().all()
         
+        app_rows = []
+        for app in applications:
+            sn = app.survey_number
+            block = sn.block if sn else None
+            ward = block.ward if block else None
+            town = ward.town if ward else None
+            taluk = town.taluk if town else None
+            district = taluk.district if taluk else None
+            jur_dict = {
+                "district": district.name if district else "N/A",
+                "taluk": taluk.name if taluk else "N/A",
+                "town": town.name if town else "N/A",
+                "ward": ward.ward_number if ward else "N/A",
+                "block": block.block_number if block else "N/A"
+            }
+            app_rows.append({
+                "application_number": app.application_number,
+                "type": app.application_type,
+                "status": app.current_status,
+                "stage": app.current_stage,
+                "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                "days_overdue": (datetime.now().date() - app.submission_date).days - 15 if app.submission_date else 0,
+                "is_overdue": True,
+                "district_name": district.name if district else "N/A",
+                "taluk_name": taluk.name if taluk else "N/A",
+                "town_name": town.name if town else "N/A",
+                "ward_number": ward.ward_number if ward else "N/A",
+                "block_number": block.block_number if block else "N/A",
+                "jurisdiction": jur_dict
+            })
+
         return {
-            "count": len(applications),
+            "count": len(app_rows),
             "jurisdiction_type": officer.jurisdiction_type,
-            "applications": [
-                {
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat(),
-                    "days_overdue": (datetime.now().date() - app.submission_date).days - 15,
-                    "is_overdue": True  # Explicitly mark as overdue for HTML formatter
-                }
-                for app in applications
-            ]
+            "applications": app_rows
         }
     except Exception as e:
         logger.error(f"Error getting overdue applications: {e}")
@@ -330,7 +352,9 @@ async def get_highest_priority_applications(
         # Get the officer's stage
         officer_stage = officer.officer_stage
         
-        query = select(Application).join(
+        query = select(Application).options(
+            selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district)
+        ).join(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
         ).join(
             Block, SurveyNumber.block_id == Block.id
@@ -363,24 +387,44 @@ async def get_highest_priority_applications(
         result = await db.execute(query)
         applications = result.scalars().all()
         
+        app_rows = []
+        for app in applications:
+            sn = app.survey_number
+            block = sn.block if sn else None
+            ward = block.ward if block else None
+            town = ward.town if ward else None
+            taluk = town.taluk if town else None
+            district = taluk.district if taluk else None
+            jur_dict = {
+                "district": district.name if district else "N/A",
+                "taluk": taluk.name if taluk else "N/A",
+                "town": town.name if town else "N/A",
+                "ward": ward.ward_number if ward else "N/A",
+                "block": block.block_number if block else "N/A"
+            }
+            app_rows.append({
+                "application_number": app.application_number,
+                "type": app.application_type,
+                "status": app.current_status,
+                "stage": app.current_stage,
+                "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                "is_overdue": app.is_overdue,
+                "priority_flag": app.priority_flag,
+                "field_visit_scheduled": app.field_visit_scheduled,
+                "field_visit_date": app.field_visit_date.isoformat() if app.field_visit_date else None,
+                "days_pending": (datetime.now().date() - app.submission_date).days if app.submission_date else 0,
+                "district_name": district.name if district else "N/A",
+                "taluk_name": taluk.name if taluk else "N/A",
+                "town_name": town.name if town else "N/A",
+                "ward_number": ward.ward_number if ward else "N/A",
+                "block_number": block.block_number if block else "N/A",
+                "jurisdiction": jur_dict
+            })
+
         return {
-            "count": len(applications),
+            "count": len(app_rows),
             "jurisdiction_type": officer.jurisdiction_type,
-            "applications": [
-                {
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat(),
-                    "is_overdue": app.is_overdue,
-                    "priority_flag": app.priority_flag,
-                    "field_visit_scheduled": app.field_visit_scheduled,
-                    "field_visit_date": app.field_visit_date.isoformat() if app.field_visit_date else None,
-                    "days_pending": (datetime.now().date() - app.submission_date).days
-                }
-                for app in applications
-            ]
+            "applications": app_rows
         }
     except Exception as e:
         logger.error(f"Error getting highest priority applications: {e}")
@@ -924,11 +968,12 @@ async def get_field_visits(
     status_filter: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    to_be_visited_only: bool = False
+    to_be_visited_only: bool = False,
+    application_type: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Get field visits for the officer with optional status, date range (start_date to end_date),
-    and to-be-visited filtering.
+    to-be-visited filtering, and application type filtering (supports multiple types via list).
     """
     try:
         from sqlalchemy.orm import joinedload
@@ -949,12 +994,20 @@ async def get_field_visits(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
         ).join(
             Block, SurveyNumber.block_id == Block.id
+        ).join(
+            Ward, Block.ward_id == Ward.id
+        ).join(
+            Town, Ward.town_id == Town.id
+        ).join(
+            Taluk, Town.taluk_id == Taluk.id
+        ).join(
+            District, Taluk.district_id == District.id
         ).where(
             and_(
                 FieldVisit.officer_id == officer.officer_id,
                 Application.current_stage == officer.officer_stage,
                 Application.current_status != 'rejected',  # Exclude field visits for rejected applications
-                *jur_conditions
+                or_(*jur_conditions) if jur_conditions else True
             )
         )
         
@@ -970,6 +1023,15 @@ async def get_field_visits(
         if end_date:
             query = query.where(FieldVisit.scheduled_date <= end_date)
             
+        if application_type:
+            # Support both single string and list of types
+            types_list = application_type if isinstance(application_type, list) else [application_type]
+            types_upper = [t.upper() for t in types_list]
+            if len(types_upper) == 1:
+                query = query.where(Application.application_type == types_upper[0])
+            else:
+                query = query.where(Application.application_type.in_(types_upper))
+
         query = query.order_by(FieldVisit.scheduled_date.asc())
 
         result = await db.execute(query)
