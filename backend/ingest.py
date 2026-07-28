@@ -49,6 +49,11 @@ DOCUMENT_CONFIG = {
         "category": "regulations",
         "language": "english",
         "source": "official_manual"
+    },
+    "district_codes.txt": {
+        "category": "reference",
+        "language": "english",
+        "source": "official_manual"
     }
 }
 

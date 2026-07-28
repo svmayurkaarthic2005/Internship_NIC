@@ -17,14 +17,17 @@ Components:
 """
 
 from langchain_ollama import ChatOllama
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from html import escape
 from difflib import SequenceMatcher
+from datetime import date, datetime, timedelta
+import calendar
 import re
 
-from backend.config import settings
+from backend.config import settings, DISTRICT_CODE_MAP, DISTRICT_NAME_MAP
 from backend.services.pgvector_store import similarity_search
 from backend.utils.logger import get_logger
+from backend.utils.fuzzy import extract_tokens, is_token_typo_match, normalize_text
 
 logger = get_logger(__name__)
 
@@ -48,7 +51,7 @@ def detect_language(text: str) -> str:
 
     Returns:
         "ta"        — predominantly Tamil (>50 % Tamil chars)
-        "tanglish"  — mixed Tamil + English, or any Tamil present
+        "tanglish"  — mixed Tamil + English, Tamil chars present, or Romanized Tanglish keywords
         "en"        — pure English / no Tamil
     """
     if not text:
@@ -61,15 +64,25 @@ def detect_language(text: str) -> str:
         return "en"
 
     tamil_pct = (tamil_chars / total_chars) * 100
-    has_english = bool(re.search(r'[a-zA-Z]', text))
 
     if tamil_pct > 50:
         return "ta"
     elif tamil_chars > 0:
-        # Any Tamil present alongside English → tanglish (no filter)
+        # Any Tamil script present alongside English → tanglish
         return "tanglish"
-    else:
-        return "en"
+
+    # Check for Romanized Tanglish keywords
+    tanglish_words = {
+        "enna", "eppadi", "engay", "yenge", "yenga", "eppo", "vanakkam",
+        "sollunga", "pannunga", "solla", "kaattu", "irukku", "irukkanga",
+        "kudunga", "yaaru", "evvalavu", "edhu", "edhukku", "aama", "illai",
+        "varum", "seri", "romba", "nalla", "panno", "kuduthu"
+    }
+    words = set(re.findall(r'\b[a-zA-Z]+\b', text.lower()))
+    if words.intersection(tanglish_words):
+        return "tanglish"
+
+    return "en"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -415,7 +428,26 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
         if not applications:
             return f"<div>{t['no_records_found']}</div>"
 
-        is_merge = bool(applications) and "subdivisions_being_merged" in applications[0]
+        # Determine location columns based on officer jurisdiction level:
+        # district -> district, taluk, town, ward, block
+        # taluk    -> taluk, town, ward, block
+        # town     -> town, ward, block
+        # ward     -> ward, block
+        # block    -> block (only)
+        j_type = (structured_data.get("jurisdiction_type") or "block").lower()
+        if j_type == "district":
+            loc_keys = ["district", "taluk", "town", "ward", "block"]
+        elif j_type == "taluk":
+            loc_keys = ["taluk", "town", "ward", "block"]
+        elif j_type == "town":
+            loc_keys = ["town", "ward", "block"]
+        elif j_type == "ward":
+            loc_keys = ["ward", "block"]
+        else:
+            loc_keys = ["block"]
+
+        loc_th = "".join(f"<th>{t[k]}</th>" for k in loc_keys)
+        is_merge = bool(applications) and ("subdivisions_being_merged" in applications[0] or applications[0].get("type") == "MERGE")
 
         if is_merge:
             rows = ""
@@ -428,27 +460,37 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
                 subdiv_list = _e(subdiv_list)
 
                 merge_area = f"{app['total_merge_area_sqm']:.2f}" if app.get('total_merge_area_sqm') else 'N/A'
+                overdue = " ⚠️" if app.get("is_overdue") else ""
+                
+                loc_map = {
+                    "district": jur.get('district') or app.get('district_name') or 'N/A',
+                    "taluk": jur.get('taluk') or app.get('taluk_name') or 'N/A',
+                    "town": jur.get('town') or app.get('town_name') or 'N/A',
+                    "ward": jur.get('ward') or app.get('ward_number') or 'N/A',
+                    "block": jur.get('block') or app.get('block_number') or 'N/A'
+                }
+                loc_td = "".join(f"<td>{_e(loc_map[k])}</td>" for k in loc_keys)
+
                 rows += (
                     f"<tr>"
                     f"<td>{_e(app.get('application_number'))}</td>"
+                    f"<td>{_e(app.get('type') or 'MERGE')}</td>"
                     f"<td>{_e(app.get('survey_no'))}</td>"
                     f"<td>{subdiv_list}</td>"
                     f"<td>{merge_area}</td>"
-                    f"<td>{_status(app.get('status'), lang)}</td>"
+                    f"<td>{_status(app.get('status'), lang)}{overdue}</td>"
                     f"<td>{_e(app.get('stage'))}</td>"
                     f"<td>{_e(app.get('submission_date'))}</td>"
-                    f"<td>{_e(jur.get('district'))}</td>"
-                    f"<td>{_e(jur.get('taluk'))}</td>"
-                    f"<td>{_e(jur.get('town'))}</td>"
+                    f"{loc_td}"
                     f"</tr>"
                 )
             return (
                 f"<div class='table-intro'>{t['found']} <strong>{count}</strong> {t['merge_applications']}:</div>"
                 f"<table class='data-table'>"
                 f"<thead><tr>"
-                f"<th>{t['application_no']}</th><th>{t['survey_no']}</th><th>{t['subdivisions']}</th>"
+                f"<th>{t['application_no']}</th><th>{t['type']}</th><th>{t['survey_no']}</th><th>{t['subdivisions']}</th>"
                 f"<th>{t['area_sqm']}</th><th>{t['status']}</th><th>{t['stage']}</th><th>{t['submitted']}</th>"
-                f"<th>{t['district']}</th><th>{t['taluk']}</th><th>{t['town']}</th>"
+                f"{loc_th}"
                 f"</tr></thead>"
                 f"<tbody>{rows}</tbody>"
                 f"</table>"
@@ -457,6 +499,17 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
             rows = ""
             for app in applications:
                 overdue = " ⚠️" if app.get("is_overdue") else ""
+                jur = app.get("jurisdiction", {})
+                
+                loc_map = {
+                    "district": jur.get('district') or app.get('district_name') or 'N/A',
+                    "taluk": jur.get('taluk') or app.get('taluk_name') or 'N/A',
+                    "town": jur.get('town') or app.get('town_name') or 'N/A',
+                    "ward": jur.get('ward') or app.get('ward_number') or 'N/A',
+                    "block": jur.get('block') or app.get('block_number') or 'N/A'
+                }
+                loc_td = "".join(f"<td>{_e(loc_map[k])}</td>" for k in loc_keys)
+
                 rows += (
                     f"<tr>"
                     f"<td>{_e(app.get('application_number'))}</td>"
@@ -464,6 +517,7 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
                     f"<td>{_status(app.get('status'), lang)}{overdue}</td>"
                     f"<td>{_e(app.get('stage'))}</td>"
                     f"<td>{_e(app.get('submission_date'))}</td>"
+                    f"{loc_td}"
                     f"</tr>"
                 )
             return (
@@ -472,6 +526,7 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
                 f"<thead><tr>"
                 f"<th>{t['application_no']}</th><th>{t['type']}</th>"
                 f"<th>{t['status']}</th><th>{t['stage']}</th><th>{t['submitted']}</th>"
+                f"{loc_th}"
                 f"</tr></thead>"
                 f"<tbody>{rows}</tbody>"
                 f"</table>"
@@ -708,24 +763,34 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en") -
     if "field_visits" in structured_data and isinstance(structured_data["field_visits"], list):
         field_visits = structured_data["field_visits"]
         query_type = structured_data.get("query_type", "Field Visits")
+        start_date = structured_data.get("start_date")
+        end_date = structured_data.get("end_date")
+        to_be_visited_count = structured_data.get("to_be_visited_count")
         
+        date_info = f" ({start_date} to {end_date})" if (start_date and end_date) else ""
+        
+        if to_be_visited_count is not None and structured_data.get("to_be_visited_only"):
+            count_info = f"Found <strong>{to_be_visited_count}</strong> field visit(s) needed to be visited"
+        else:
+            count_info = f"Found <strong>{len(field_visits)}</strong> field visit(s)"
+
         if not field_visits:
-            return f"<div>No field visits found.</div>"
+            return f"<div class='table-intro'><strong>{query_type}</strong>{date_info}: No field visits found.</div>"
         
         rows = "".join(
             f"<tr>"
             f"<td>{_e(fv.get('application_number'))}</td>"
             f"<td>{_e(fv.get('survey_no'))}</td>"
             f"<td>{_e(fv.get('block_number'))}</td>"
-            f"<td>{_e(fv.get('application_type'))}</td>"  # Fixed: use 'application_type' from postgres
-            f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>"  # Add warning icon for overdue
-            f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>"  # Fixed: use 'field_visit_date' from postgres
+            f"<td>{_e(fv.get('application_type'))}</td>"
+            f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>"
+            f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>"
             f"</tr>"
             for fv in field_visits
         )
         
         return (
-            f"<div class='table-intro'><strong>{query_type}</strong>: Found <strong>{len(field_visits)}</strong> field visit(s)</div>"
+            f"<div class='table-intro'><strong>{query_type}</strong>{date_info}: {count_info}</div>"
             f"<table class='data-table'>"
             f"<thead><tr>"
             f"<th>Application Number</th><th>Survey Number</th><th>Block</th>"
@@ -820,11 +885,11 @@ Your responsibilities:
 - If asked about something you don't have information on, simply say you don't have that information.
 
 CRITICAL APPLICATION TYPE DEFINITIONS:
-1. **ISD (Involving Sub-Division)**: Creates NEW sub-divisions when dividing land into smaller parcels
+1. **ISD (Involving Sub-Division)**: Service Code `0154` — Creates NEW sub-divisions when dividing land into smaller parcels
    - Example: Survey 145 (1000 sq.m) → 145/1 (600 sq.m) + 145/2 (400 sq.m)
    - Requires field visit and new sub-division numbering
    
-2. **NISD (Not Involving Sub-Division)**: Only transfers ownership, NO sub-divisions created
+2. **NISD (Not Involving Sub-Division)**: Service Code `0153` — Only transfers ownership, NO sub-divisions created
    - Survey number and boundaries remain unchanged
    - Only patta holder name changes
    
@@ -947,29 +1012,40 @@ async def call_llama_stream(prompt: str):
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_intent(message: str) -> str:
     """
-    Parse user intent from message using keyword + fuzzy matching.
-    Supports English, Tamil, and Tanglish. Tolerates minor typos.
-    Order matters — most specific checks first.
+    Parse user intent from message using exact token-boundary and production edit-distance matching.
+    Supports English, Tamil, and Tanglish. Deterministic identifiers use exact token bounds;
+    natural language questions without deterministic keywords gracefully fall through to 'general_query'
+    for semantic LLM / RAG processing.
     """
     # Strip leading list-item prefixes like "1.", "2)", "a-" etc.
     message = re.sub(r'^\s*\d+[\.\)\-]\s*', '', message)
     message = re.sub(r'^\s*[a-zA-Z][\.\)\-]\s*', '', message)
 
-    msg = message.lower()
-    words = re.findall(r'[\w\u0B80-\u0BFF]+', msg)
+    msg = normalize_text(message)
+    words = extract_tokens(msg)
 
     def fuzzy_match(keyword: str, threshold: float = 0.82) -> bool:
         """
-        True if keyword is an exact substring OR close enough to any word.
-        Tamil/Unicode keywords and short tokens use exact-only to avoid false positives.
+        Token-boundary matching: exact token match or edit-distance typo match on tokens.
+        Does NOT match arbitrary substrings across token boundaries.
         """
-        if keyword in msg:
-            return True
-        if len(keyword) <= 3 or any('\u0B80' <= c <= '\u0BFF' for c in keyword):
+        kw_norm = normalize_text(keyword)
+        if not kw_norm or not words:
             return False
+
+        # Exact token match (word boundary strict)
+        if kw_norm in words:
+            return True
+
+        # For tokens length < 4 or containing Tamil Unicode, require exact token match
+        if len(kw_norm) < 4 or any('\u0B80' <= c <= '\u0BFF' for c in kw_norm):
+            return False
+
+        # Edit distance typo match against individual words
         for word in words:
-            if SequenceMatcher(None, keyword, word).ratio() >= threshold:
+            if len(word) >= 4 and is_token_typo_match(word, kw_norm):
                 return True
+
         return False
 
     def has(keywords: list) -> bool:
@@ -1078,6 +1154,11 @@ def parse_intent(message: str) -> str:
     )
     
     if has_field_visit_keywords:
+        if any(w in msg for w in ["between date", "between dates", "between", "needed to be visited",
+                                   "to be visited", "need to be visited", "visits between", "from date",
+                                   "date range", "தேதிகளுக்கு இடையே", "தேதி வரம்பு"]):
+            return "fv_between_dates"
+
         if any(w in msg for w in ["date did i select", "select for this", "what date", "which date",
                                    # Tamil: எந்த தேதி
                                    "எந்த தேதி", "தேர்ந்தெடுத்த தேதி"]):
@@ -1170,7 +1251,10 @@ def parse_intent(message: str) -> str:
        not any(w in msg for w in ["கள ஆய்வு", "களஆய்வு", "வருகை", "field", "visit",
                                    "இணைப்பு", "இணைக்க", "merge"]) and \
        not any(w in msg for w in ["பெயர்", "நாமாகும்", "நாமம்", "என்ன", "எது", "யார்", "எங்கே", "எப்போது",
-                                   "தொலைபேசி", "மின்னஞ்சல்", "முகவரி", "நிலை", "கட்டம்"]):
+                                   "தொலைபேசி", "மின்னஞ்சல்", "முகவரி", "நிலை", "கட்டம்"]) and \
+       not any(w in msg for w in ["முன்னுரிமை", "முன்னதாய", "அதிக", "உயர்ந்த",
+                                   "அவசர", "அவசரமான",
+                                   "நிலுவை", "காலதாமதமான", "தாமதம்", "overdue", "priority"]):
         return "pending_applications"
 
     # 1. Joint owner check - MUST come before application_status to catch ownership questions
@@ -1196,8 +1280,8 @@ def parse_intent(message: str) -> str:
     # Priority check must come BEFORE application_status field check (which includes "show" in interrogatives)
     if "priority" in msg and ("week" in msg or "highest" in msg or "high" in msg or "show" in msg or "list" in msg):
         return "highest_priority_applications"
-    # Tamil: முன்னுரிமை
-    if any(w in msg for w in ["முன்னுரிமை", "அவசர"]) and any(w in msg for w in ["உயர்ந்த", "அதிக", "இந்த வாரம்", "காட்டு", "பட்டியல்"]):
+    # Tamil: முன்னுரிமை, முன்னதாய, அவசர
+    if any(w in msg for w in ["முன்னுரிமை", "முன்னதாய", "அவசர", "அவசரமான"]) and any(w in msg for w in ["உயர்ந்த", "அதிக", "இந்த வாரம்", "காட்டு", "பட்டியல்", "விண்ணப்பம்", "விண்ணப்பங்கள்"]):
         return "highest_priority_applications"
 
     # 2a. Field-specific queries (name, address, mobile, email, etc.) → application_status
@@ -1333,13 +1417,49 @@ def parse_intent(message: str) -> str:
     if any(w in msg for w in ["எனது பணி", "என் பணிச்சுமை", "பணி விவரம்"]):
         return "officer_workload"
 
-    # 16. NISD vs ISD - catch ANY question about application type definitions
+    # 16. NISD vs ISD & Service Codes (0153 / 0154) - catch ANY question about application type definitions or service codes
+    if any(w in msg for w in ["0153", "0154", "service code", "service_code"]):
+        return "general_query"
+
     if any(w in msg for w in ["nisd", "isd", "merge"]) and \
        any(w in msg for w in ["what", "என்ன", "difference", "வேறுபாடு", "mean", "stand for",
-                               "explain", "விளக்கம்", "define", "definition"]):
+                               "explain", "விளக்கம்", "define", "definition", "code", "service"]):
         return "general_query"  # Force RAG retrieval for definition queries
-    if "nisd" in msg and "isd" in msg:
-        return "is_nisd_or_isd"
+
+    # 16b. Typed application lists — MUST come before the is_nisd_or_isd trap below.
+    # "display nisd", "show isd", "compare both nisd n isd", "show isd n merg", "no of nisd applications" → typed list.
+    # Guard: fire when there's an action, comparison, or count word
+    _action_words_16 = [
+        "show", "list", "display", "view", "count", "how many", "number", "no of", "no.", "no ", "no_of", "num", "total",
+        "compare", "both", "all", "get", "fetch", "give", "find", "details", "summary", "versus", "vs", "n", "and",
+        "காட்டு", "காண்பி", "பட்டியல்", "எத்தனை", "எண்ணிக்கை", "தொகை", "ஒப்பிடு", "இரண்டும்"
+    ]
+    _has_action_16 = any(w in msg for w in _action_words_16)
+    if _has_action_16:
+        # Use word-boundary regex so "nisd" as a substring doesn't falsely match "isd"
+        _has_nisd_word  = bool(re.search(r'\bnisd\b', msg))
+        _has_isd_word   = bool(re.search(r'\bisd\b', msg))
+        _has_merge_word = bool(re.search(r'\bmerge?\b', msg))  # matches "merge" and "merg"
+        _type_count = sum([_has_nisd_word, _has_isd_word, _has_merge_word])
+        if _type_count >= 2:
+            # Multiple types requested — combined intent
+            return "both_applications"
+        if _has_nisd_word:
+            return "nisd_applications"
+        if _has_isd_word:
+            return "isd_applications"
+        if _has_merge_word:
+            return "merge_applications"
+
+    # is_nisd_or_isd only fires for queries about a SPECIFIC application (e.g. "is APP-2024-000001 nisd or isd?")
+    # Guard: requires explicit application number pattern or application reference words
+    _has_app_ref = bool(re.search(r'(APP-\d{4}-\d{6}|(ISD|NISD|MERGE)/\w+/\d+/\d+)', msg, re.IGNORECASE)) or any(
+        p in msg for p in ["this app", "that app", "this application", "that application", "same application", "the application"]
+    )
+    if bool(re.search(r'\bnisd\b', msg)) and bool(re.search(r'\bisd\b', msg)):
+        if _has_app_ref:
+            return "is_nisd_or_isd"
+        return "both_applications"
 
     # 17. Check documents
     if "document" in msg and any(w in msg for w in ["missing", "required", "all", "have"]):
@@ -1419,22 +1539,50 @@ def parse_intent(message: str) -> str:
     if has(ta_survey) and has(ta_show) and not has(ta_ward) and not has(ta_block) and not has(ta_owner):
         return "all_surveys_in_jurisdiction"
 
-    # 26. Pending applications
-    # NOTE: merge-specific queries are handled in check 32 below.
-    # Guard here so "இணைப்பு விண்ணப்பங்கள் காட்டு" doesn't fall into pending_applications.
-    is_workflow_query = any(w in msg for w in ["workflow", "step", "guide", "procedure",
-                                                "process", "work flow", "mean", "stand for",
-                                                "difference", "explain"])
-    if not is_workflow_query and not has(ta_merge):
+    # 27. Typed application lists — check FIRST, before the generic pending catch-all
+    # "display nisd", "show isd", "list merge" should return typed intents, not pending_applications
+    _action_words = ["show", "list", "display", "view", "count", "how many",
+                     "காட்டு", "காண்பி", "பட்டியல்", "எத்தனை"]
+    _has_action = any(w in msg for w in _action_words)
+    if fuzzy_match("isd") and fuzzy_match("nisd"):
+        return "both_applications"
+    if fuzzy_match("nisd") and (has(ta_show + ta_application) or _has_action):
+        return "nisd_applications"
+    if fuzzy_match("isd") and (has(ta_show + ta_application) or _has_action):
+        return "isd_applications"
+
+    # 26. Pending applications - ONLY for explicit list/show/count queries
+    # Let comparison/explanation queries fall through to general_query
+    # Guard: workflow/explanation queries should NOT be caught here
+    is_explanation_query = any(w in msg for w in ["workflow", "step", "guide", "procedure",
+                                                   "process", "work flow", "mean", "stand for",
+                                                   "difference", "explain", "compare", "versus", "vs",
+                                                   "between", "what is", "what are", "tell me about",
+                                                   "என்றால்", "என்ன", "எது"])
+    
+    if not is_explanation_query and not has(ta_merge):
         is_type_query   = any(w in msg for w in ["isd", "nisd", "merge"])
         is_app_query    = has(ta_application)
+        is_year_query   = bool(re.search(r'\b(20\d{2})\b', msg))  # Check for year like 2025, 2026
+        is_month_query  = any(w in msg for w in ["january", "february", "march", "april", "may", "june",
+                                                   "july", "august", "september", "october", "november", "december",
+                                                   "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+                                                   "ஜனவரி", "பிப்ரவரி", "மார்ச்", "ஏப்ரல்", "மே", "ஜூன்", "ஜூலை"])
         is_action_query = any(w in msg for w in ["how many", "howmuch", "show", "list",
                                                    "display", "view", "pending", "active",
                                                    "assigned", "count", "are there", "there are",
                                                    "காட்டு", "காண்பி", "பட்டியல்",
                                                    # Tamil: எத்தனை, காண்பி
                                                    "எத்தனை", "உள்ளன"])
-        if is_type_query and is_action_query and not has(ta_ward):
+        
+        # Year/Month + applications = pending_applications (e.g., "2026 applications", "july applications")
+        if is_app_query and (is_year_query or is_month_query) and not has(ta_ward):
+            return "pending_applications"
+        
+        # is_type_query + is_action_query only returns pending_applications when
+        # there is ALSO an application keyword — otherwise typed-only queries like
+        # "display nisd" (no "application" word) would be caught here instead of rule 27
+        if is_type_query and is_action_query and is_app_query and not has(ta_ward):
             return "pending_applications"
         if is_app_query and (is_action_query or is_type_query) and not has(ta_ward):
             return "pending_applications"
@@ -1449,11 +1597,6 @@ def parse_intent(message: str) -> str:
         if has(ta_pending) and not has(ta_ward):
             return "pending_applications"
 
-    # 27. Typed application lists — nisd before isd (substring trap)
-    if fuzzy_match("nisd") and has(ta_show + ta_application):
-        return "nisd_applications"
-    if fuzzy_match("isd") and has(ta_show + ta_application):
-        return "isd_applications"
 
     # 28. Field visits
     if has(ta_field_visit) and not has(ta_application):
@@ -1639,21 +1782,117 @@ def extract_taluk_name(message: str) -> Optional[str]:
 
 def extract_district_name(message: str) -> Optional[str]:
     """
-    Extract district name from message.
+    Extract district name from message, resolving district codes (01-38) to district names.
     District is the top of the jurisdiction hierarchy.
     """
     cleaned = clean_message(message)
 
+    # 1. Check for explicit district code references like "district code 02", "district 02", "code 02"
+    code_match = re.search(r'\b(?:district\s+(?:code\s+)?)?0*([1-9]|[1-3][0-8])\b', cleaned, re.IGNORECASE)
+    if code_match:
+        num = int(code_match.group(1))
+        code_str = f"{num:02d}"
+        if code_str in DISTRICT_CODE_MAP:
+            return DISTRICT_CODE_MAP[code_str]
+
+    # 2. Check for district name patterns like "district of Chennai" or "Chennai district"
     match = re.search(
         r'\bdistrict\s+(?:of\s+)?([A-Za-z\s]+?)(?:\s+district)?\b',
         cleaned, re.IGNORECASE
     )
     if match:
-        return match.group(1).strip()
+        val = match.group(1).strip()
+        val_lower = val.lower()
+        if val_lower in DISTRICT_NAME_MAP:
+            return DISTRICT_CODE_MAP[DISTRICT_NAME_MAP[val_lower]]
+        return val
 
     match = re.search(r'([A-Za-z\s]+?)\s+district\b', cleaned, re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        val = match.group(1).strip()
+        val_lower = val.lower()
+        if val_lower in DISTRICT_NAME_MAP:
+            return DISTRICT_CODE_MAP[DISTRICT_NAME_MAP[val_lower]]
+        return val
+
+    # 3. Direct district name lookup from 38 districts dictionary
+    for d_name in DISTRICT_CODE_MAP.values():
+        if re.search(r'\b' + re.escape(d_name) + r'\b', cleaned, re.IGNORECASE):
+            return d_name
 
     return None
+
+
+def extract_date_range(message: str) -> Tuple[Optional[date], Optional[date]]:
+    """
+    Extract start_date and end_date from natural language queries.
+    Supports ISO dates (YYYY-MM-DD), standard dates (DD/MM/YYYY, DD-MM-YYYY),
+    relative date phrases (this week, next week, this month, next month, next 7/15/30 days),
+    and phrases like "between <date1> and <date2>", "from <date1> to <date2>".
+    """
+    cleaned = clean_message(message).lower()
+    today = date.today()
+
+    # 1. ISO format date pattern (YYYY-MM-DD)
+    iso_dates = []
+    for d in re.findall(r'\b\d{4}-\d{2}-\d{2}\b', cleaned):
+        try:
+            iso_dates.append(datetime.strptime(d, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+    if len(iso_dates) >= 2:
+        iso_dates.sort()
+        return iso_dates[0], iso_dates[-1]
+    elif len(iso_dates) == 1:
+        return iso_dates[0], iso_dates[0]
+
+    # 2. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    std_dates = []
+    for m in re.finditer(r'\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b', cleaned):
+        try:
+            day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            std_dates.append(date(year, month, day))
+        except ValueError:
+            pass
+    if len(std_dates) >= 2:
+        std_dates.sort()
+        return std_dates[0], std_dates[-1]
+    elif len(std_dates) == 1:
+        return std_dates[0], std_dates[0]
+
+    # 3. Relative phrases
+    if any(w in cleaned for w in ["this week", "இந்த வாரம்"]):
+        start_w = today - timedelta(days=today.weekday())
+        end_w = start_w + timedelta(days=6)
+        return start_w, end_w
+
+    if any(w in cleaned for w in ["next week", "அடுத்த வாரம்"]):
+        start_w = today + timedelta(days=(7 - today.weekday()))
+        end_w = start_w + timedelta(days=6)
+        return start_w, end_w
+
+    if any(w in cleaned for w in ["this month", "இந்த மாதம்"]):
+        start_m = today.replace(day=1)
+        _, last_day = calendar.monthrange(today.year, today.month)
+        end_m = today.replace(day=last_day)
+        return start_m, end_m
+
+    if any(w in cleaned for w in ["next month", "அடுத்த மாதம்"]):
+        if today.month == 12:
+            start_m = date(today.year + 1, 1, 1)
+        else:
+            start_m = date(today.year, today.month + 1, 1)
+        _, last_day = calendar.monthrange(start_m.year, start_m.month)
+        end_m = start_m.replace(day=last_day)
+        return start_m, end_m
+
+    days_match = re.search(r'\b(?:next|coming|last|past)\s+(\d+)\s+days?\b', cleaned)
+    if days_match:
+        n_days = int(days_match.group(1))
+        if any(w in cleaned for w in ["last", "past"]):
+            return today - timedelta(days=n_days), today
+        else:
+            return today, today + timedelta(days=n_days)
+
+    return None, None
 

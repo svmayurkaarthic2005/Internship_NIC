@@ -4,10 +4,12 @@ Main chatbot service - RAG orchestration
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta, date
+import asyncio
 import time
 import re
 from difflib import SequenceMatcher
 
+from backend.config import DISTRICT_NAME_MAP
 from backend.schemas import OfficerContext
 from backend.services.rag import (
     detect_language,
@@ -49,54 +51,21 @@ from sqlalchemy import select, and_, func
 logger = get_logger(__name__)
 
 
+from backend.utils.fuzzy import extract_month_from_text, extract_tokens, is_token_typo_match, normalize_text
+
+
 def extract_month_from_query(message: str) -> Optional[int]:
     """
     Extract month from message for filtering applications by submission month.
-    Handles English and Tamil month names with fuzzy matching for spelling mistakes.
-    
+    Handles English and Tamil month names with token-boundary fuzzy matching for spelling mistakes.
+
     Returns:
         Month number (1-12) if found, None otherwise
     """
-    # Month mappings with common variations and misspellings
-    month_patterns = {
-        1: ["january", "jan", "ஜனவரி", "januvary", "janaury", "jenuary"],
-        2: ["february", "feb", "பிப்ரவரி", "feburary", "febuary", "februry"],
-        3: ["march", "mar", "மார்ச்", "மார்ச", "marh"],
-        4: ["april", "apr", "ஏப்ரல்", "aprill", "aprl"],
-        5: ["may", "மே", "மேமாதம்"],
-        6: ["june", "jun", "ஜூன்", "joon", "juun"],
-        7: ["july", "jul", "ஜூலை", "jully", "julai"],
-        8: ["august", "aug", "ஆகஸ்ட்", "agust", "augest"],
-        9: ["september", "sep", "sept", "செப்டம்பர்", "septembar", "septmber"],
-        10: ["october", "oct", "அக்டோபர்", "octobr", "octobar"],
-        11: ["november", "nov", "நவம்பர்", "novembar", "novembr"],
-        12: ["december", "dec", "டிசம்பர்", "decembr", "desember"]
-    }
-    
-    msg_lower = message.lower()
-    
-    # Direct exact match first
-    for month_num, patterns in month_patterns.items():
-        for pattern in patterns:
-            if pattern in msg_lower:
-                logger.info(f"Month extracted: {month_num} (matched '{pattern}')")
-                return month_num
-    
-    # Fuzzy matching for spelling mistakes (threshold 0.75 = 75% similarity)
-    words = msg_lower.split()
-    for word in words:
-        if len(word) < 3:  # Skip very short words
-            continue
-        for month_num, patterns in month_patterns.items():
-            for pattern in patterns:
-                if len(pattern) < 3:
-                    continue
-                similarity = SequenceMatcher(None, word, pattern).ratio()
-                if similarity >= 0.75:
-                    logger.info(f"Month extracted (fuzzy): {month_num} (word '{word}' ~= '{pattern}', similarity={similarity:.2f})")
-                    return month_num
-    
-    return None
+    month_num = extract_month_from_text(message)
+    if month_num:
+        logger.info(f"Month extracted: {month_num} from query '{message[:40]}'")
+    return month_num
 
 
 def _extract_app_number_from_context(message: str, chat_history: list = None, allow_implicit_continuation: bool = False) -> str:
@@ -164,52 +133,30 @@ def _extract_app_number_from_context(message: str, chat_history: list = None, al
 
 def _fuzzy_match_keywords(message_lower: str, keywords: Dict[str, tuple], threshold: float = 0.75) -> Optional[tuple]:
     """
-    Fuzzy match keywords with spelling error tolerance.
-    
-    Args:
-        message_lower: Lowercased user message
-        keywords: Dictionary mapping keywords to (field_key, field_label) tuples
-        threshold: Similarity threshold (0.0 to 1.0), default 0.75 for good balance
-    
-    Returns:
-        (field_key, field_label, matched_keyword) tuple if match found, None otherwise
+    Match field keywords with strict word-boundary token precision and Damerau-Levenshtein typo tolerance.
+    Does NOT match substring fragments across token boundaries (preventing false hits like 'mar' in 'smart').
     """
-    # First try exact substring match (fastest)
-    for kw, (field_key, field_label) in keywords.items():
-        if kw in message_lower:
-            return (field_key, field_label, kw)
-    
-    # If no exact match, try fuzzy matching for spelling errors
-    # Split message into words for better matching
-    message_words = message_lower.split()
-    
-    best_match = None
-    best_ratio = threshold
-    
-    for kw in keywords.keys():
-        # Check against each word in the message
-        for word in message_words:
-            # Skip very short words to avoid false matches
-            if len(word) < 3:
-                continue
-            
-            # Calculate similarity ratio
-            ratio = SequenceMatcher(None, kw.lower(), word).ratio()
-            
-            # Also check if keyword is a substring (for partial matches)
-            if kw in word or word in kw:
-                ratio = max(ratio, 0.8)  # Boost partial matches
-            
-            # Update best match if this is better
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_match = kw
-    
-    if best_match:
-        field_key, field_label = keywords[best_match]
-        logger.info(f"Fuzzy matched '{best_match}' (ratio: {best_ratio:.2f}) from message")
-        return (field_key, field_label, best_match)
-    
+    msg_tokens = extract_tokens(message_lower)
+    if not msg_tokens:
+        return None
+
+    # First pass: Exact token match
+    for token in msg_tokens:
+        for kw, (field_key, field_label) in keywords.items():
+            kw_norm = normalize_text(kw)
+            if token == kw_norm:
+                return (field_key, field_label, kw)
+
+    # Second pass: Typo match for tokens with length >= 4
+    for token in msg_tokens:
+        if len(token) < 4:
+            continue
+        for kw, (field_key, field_label) in keywords.items():
+            kw_norm = normalize_text(kw)
+            if len(kw_norm) >= 4 and is_token_typo_match(token, kw_norm):
+                logger.info(f"Fuzzy matched token '{token}' to keyword '{kw}'")
+                return (field_key, field_label, kw)
+
     return None
 
 
@@ -249,10 +196,45 @@ async def process_chat(
         # Step 1: Detect language
         language = detect_language(message)
         logger.info(f"Detected language: {language}")
+
+        # Direct Handler for District Code reference queries (bypasses jurisdiction checks)
+        _msg_lower_dc = message.lower()
+        if any(w in _msg_lower_dc for w in ["district code", "code of", "district_code", "குறியீடு", "மாவட்டம் கோடு"]) or ("code" in _msg_lower_dc and any(d in _msg_lower_dc for d in DISTRICT_NAME_MAP)):
+            matched_dist = None
+            for d_name, d_code in DISTRICT_NAME_MAP.items():
+                if d_name in _msg_lower_dc:
+                    matched_dist = (d_name.title(), d_code)
+                    break
+            
+            if matched_dist:
+                d_title, d_code = matched_dist
+                is_ta = language == "ta" or any(w in _msg_lower_dc for w in ["enapa", "enna", "oda", "sollo", "kudunga", "குறியீடு"])
+                if is_ta:
+                    res_txt = f"{d_title} மாவட்டத்தின் அதிகாரப்பூர்வ குறியீடு (District Code): **{d_code}**."
+                else:
+                    res_txt = f"The official district code for **{d_title}** is **{d_code}**."
+                
+                await save_chat_messages(
+                    db=db, session_id=session_id, user_message=message,
+                    assistant_message=res_txt, language=language,
+                    response_time_ms=int((time.time() - start_time) * 1000)
+                )
+                return {
+                    "response": res_txt,
+                    "language": language,
+                    "intent": "district_code",
+                    "sources": [],
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "context_used": True,
+                    "response_time_ms": int((time.time() - start_time) * 1000),
+                    "table_data": None
+                }
         
         # Step 2: Parse intent to determine which DB query to run
         intent = parse_intent(message)
         logger.info(f"Parsed intent: {intent}")
+
+
 
         # ── Step 2b: Jurisdiction access check ──────────────────────────────
         # Block-level officers cannot query ward/taluk/district level data.
@@ -287,9 +269,11 @@ async def process_chat(
             "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts",
             "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
             "sd_forward_check", "sd_remarks", "application_status", "isd_processing",
-            "officer_workload", "field_visits",
+            "officer_workload", "field_visits", "general_query", "rag", "greeting",
+            "help", "district_code"
         }
-        _skip_keyword_check = intent in _FIELD_VISIT_INTENTS
+        _is_code_reference_query = any(w in _msg_lower_jur for w in ["code", "கோடு", "service code", "district code"])
+        _skip_keyword_check = (intent in _FIELD_VISIT_INTENTS) or _is_code_reference_query
 
         if _officer_level == 0 and not _skip_keyword_check:  # block officer
             if any(w in _msg_lower_jur for w in ["ward", "வார்டு"]):
@@ -374,7 +358,6 @@ async def process_chat(
                 else:
                     response_text = "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
 
-            from backend.services.chatbot import save_chat_messages
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=message, assistant_message=response_text,
@@ -413,8 +396,9 @@ async def process_chat(
             # Extract month from message (handles English/Tamil with fuzzy matching)
             submission_month = extract_month_from_query(message)
                 
-            # For MERGE apps show all statuses; for others default to pending
-            if app_type == "MERGE":
+            if submission_year:
+                status_filter = None  # Show all statuses when querying by specific year (2025, etc.)
+            elif app_type == "MERGE":
                 status_filter = None
             else:
                 status_filter = "pending"
@@ -545,22 +529,49 @@ async def process_chat(
                 }
                 response_text = f"Error retrieving overdue field visits: {str(e)}"
             
-        elif intent == "field_visits":
-            # Check if asking for scheduled or unscheduled visits
+        elif intent in ["field_visits", "fv_between_dates"]:
+            from backend.services.rag import extract_date_range
+            from datetime import date as _dt_date
+            import calendar
+
             msg_lower = message.lower()
+            start_d, end_d = extract_date_range(message)
+
+            to_be_visited = any(w in msg_lower for w in [
+                "needed to be visited", "to be visited", "need to visit", "need to be visited",
+                "pending visit", "yet to visit", "upcoming"
+            ])
+
             status_filter = None
             if "unscheduled" in msg_lower or "not scheduled" in msg_lower or "yet to schedule" in msg_lower:
                 status_filter = "unscheduled"
                 query_type = "Unscheduled Field Visits"
+            elif intent == "fv_between_dates" or start_d or end_d or "between" in msg_lower or to_be_visited:
+                if not start_d and not end_d:
+                    today = _dt_date.today()
+                    start_d = today.replace(day=1)
+                    _, last_day = calendar.monthrange(today.year, today.month)
+                    end_d = today.replace(day=last_day)
+                query_type = "Field Visits Needed To Be Visited" if to_be_visited else "Field Visits Between Dates"
             elif "scheduled" in msg_lower or "visit date" in msg_lower or "when" in msg_lower or "schedule" in msg_lower:
                 status_filter = "scheduled"
                 query_type = "Scheduled Field Visits"
             else:
-                # Default to all field visits
                 query_type = "Field Visits Summary"
-                
-            structured_data = await get_field_visits(db, officer, status_filter=status_filter)
+
+            structured_data = await get_field_visits(
+                db, officer,
+                status_filter=status_filter,
+                start_date=start_d,
+                end_date=end_d,
+                to_be_visited_only=to_be_visited
+            )
             structured_data["query_type"] = query_type
+            if start_d:
+                structured_data["start_date"] = start_d.isoformat()
+            if end_d:
+                structured_data["end_date"] = end_d.isoformat()
+            structured_data["to_be_visited_only"] = to_be_visited
             
         elif intent == "active_applications_taluks":
             from backend.models import SurveyNumber, Block, Ward, Town, Taluk
@@ -577,6 +588,7 @@ async def process_chat(
             ).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             )
@@ -591,67 +603,33 @@ async def process_chat(
             }
 
         elif intent == "highest_priority_applications":
-            # Return applications in table format, not just app numbers
-            structured_data = await get_pending_applications(
-                db, officer, 
-                status=["pending", "in_progress"]
-            )
+            # Use the dedicated high priority query function
+            # This returns applications with is_overdue=True OR priority_flag=True
+            from backend.services.postgres import get_highest_priority_applications
             
-            # SIS officers should only see priority apps in SIS stage
-            # They don't handle DIS, SD, or Tahsildar stage applications
-            # Auto-filter by officer's stage jurisdiction
-            officer_stage = getattr(officer, "current_stage", None) or "SIS"  # Default to SIS if not set
-            
-            # Extract explicit stage filter from message if specified (optional override)
+            # Extract application type if mentioned
+            app_type = None
             message_lower = message.lower()
-            stage_filter = None
-            if "all stages" in message_lower or "all stage" in message_lower:
-                stage_filter = None  # Show all stages if explicitly requested
-            elif "sis" in message_lower and "stage" in message_lower:
-                stage_filter = "SIS"
-            elif "sd" in message_lower and "stage" in message_lower:
-                stage_filter = "SD"
-            elif "dis" in message_lower and "stage" in message_lower:
-                stage_filter = "DIS"
-            elif "tahsildar" in message_lower:
-                stage_filter = "TAHSILDAR"
-            else:
-                # Default: auto-filter by officer's stage
-                stage_filter = officer_stage
+            if "isd" in message_lower:
+                app_type = "ISD"
+            elif "nisd" in message_lower:
+                app_type = "NISD"
+            elif "merge" in message_lower:
+                app_type = "MERGE"
             
-            # Filter to only priority applications
-            # Priority = manual flag OR overdue OR status contains warning
-            if structured_data and structured_data.get("applications"):
-                priority_apps = []
-                for app in structured_data["applications"]:
-                    is_priority = (
-                        app.get("priority_flag") == True or
-                        app.get("is_overdue") == True or
-                        "⚠" in str(app.get("status", "")) or
-                        "⚠" in str(app.get("stage", ""))
-                    )
-                    # Apply stage filter if specified
-                    if stage_filter:
-                        matches_stage = app.get("stage") == stage_filter or app.get("current_stage") == stage_filter
-                        is_priority = is_priority and matches_stage
-                    
-                    if is_priority:
-                        priority_apps.append(app)
-                
-                structured_data["applications"] = priority_apps
-                structured_data["count"] = len(priority_apps)
+            structured_data = await get_highest_priority_applications(db, officer, application_type=app_type)
+            structured_data["query_type"] = "High Priority Applications"
             
-            # Update query type to reflect stage filter
-            if stage_filter:
-                structured_data["query_type"] = f"High Priority Applications — {stage_filter} Stage"
-            else:
-                structured_data["query_type"] = "High Priority Applications — All Stages"
+            # Log for debugging
+            logger.info(f"🔥 High priority applications query: found {structured_data.get('count', 0)} applications")
+            logger.info(f"   Applications: {[app['application_number'] for app in structured_data.get('applications', [])]}")
 
         elif intent == "assigned_today":
             today = date.today()
             query = select(func.count(Application.id)).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.submission_date == today
                 )
             )
@@ -672,6 +650,7 @@ async def process_chat(
             ).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             ).order_by(Application.submission_date.asc())
@@ -786,6 +765,7 @@ async def process_chat(
             query = select(Application).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             ).order_by(Application.submission_date.asc())
@@ -918,7 +898,6 @@ async def process_chat(
             if intent == "fv_scheduled_this_week" and not app_number:
                 _handled_week_query = True
                 from backend.models import OfficerJurisdiction, Taluk, Town, Ward, Block, SurveyNumber
-                from datetime import datetime, timedelta
 
                 # Resolve officer's taluk
                 jur_result = await db.execute(
@@ -1333,6 +1312,37 @@ async def process_chat(
             structured_data = await get_officer_applications(db, officer, application_type="NISD")
             structured_data["query_type"] = "NISD Applications"
 
+        elif intent == "both_applications":
+            import re as _re
+            _msg_l = message.lower()
+            _fetch_isd   = bool(_re.search(r'\bisd\b', _msg_l))
+            _fetch_nisd  = bool(_re.search(r'\bnisd\b', _msg_l))
+            _fetch_merge = bool(_re.search(r'\bmerge?\b', _msg_l))
+            # Default to ISD+NISD if nothing explicit detected
+            if not any([_fetch_isd, _fetch_nisd, _fetch_merge]):
+                _fetch_isd = _fetch_nisd = True
+            
+            _results, _labels = [], []
+            if _fetch_isd:
+                _res_isd = await get_officer_applications(db, officer, application_type="ISD")
+                _results.append(_res_isd)
+                _labels.append("ISD")
+            if _fetch_nisd:
+                _res_nisd = await get_officer_applications(db, officer, application_type="NISD")
+                _results.append(_res_nisd)
+                _labels.append("NISD")
+            if _fetch_merge:
+                _res_merge = await get_officer_applications(db, officer, application_type="MERGE")
+                _results.append(_res_merge)
+                _labels.append("MERGE")
+
+            _all_apps = [app for r in _results for app in r.get("applications", [])]
+            structured_data = {
+                "query_type": " & ".join(_labels) + " Applications",
+                "applications": _all_apps,
+                "count": sum(r.get("count", 0) for r in _results),
+            }
+
         elif intent == "merge_applications":
             structured_data = await get_officer_applications(db, officer, application_type="MERGE")
             structured_data["query_type"] = "MERGE Applications"
@@ -1509,6 +1519,8 @@ async def process_chat(
                 joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
             ).where(
                 and_(
+                    Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"]),
                     Town.name.ilike(f"%{town_name}%") if town_name else True
                 )
@@ -1553,6 +1565,8 @@ async def process_chat(
                 joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
             ).where(
                 and_(
+                    Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"]),
                     Block.block_number.ilike(f"%{block_no}%") if block_no else True
                 )
@@ -1874,9 +1888,23 @@ async def process_chat(
         _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
         _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
         _is_interrogative = _is_interrogative or _asking_specific_field
-        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info", "survey_detail")
+        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info")
+        _count_keywords = ["how many", "number of", "count", "total", "no of", "no.", "no ", "num", "எத்தனை", "எண்ணிக்கை", "தொகை"]
+        _asking_for_count = any(kw in _msg_lower for kw in _count_keywords)
 
-        html_response = "" if _bypass_html else build_html_response(structured_data, language)
+        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
+            count = structured_data.get("count", len(structured_data.get("applications", []))) if structured_data else 0
+            qtype = structured_data.get("query_type", "applications").lower() if structured_data else "applications"
+            is_tamil = language in ("ta", "tanglish")
+            if count == 0:
+                html_response = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype} in your jurisdiction."
+            elif count == 1:
+                html_response = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')} in your jurisdiction."
+            else:
+                html_response = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype} in your jurisdiction."
+        else:
+            html_response = "" if _bypass_html else build_html_response(structured_data, language)
+
         if html_response:
             response_text = html_response
             logger.info("Responded with direct HTML (LLM bypassed)")
@@ -2191,6 +2219,22 @@ async def process_chat(
         elif intent == "awaiting_field_visit":
             count = structured_data.get("count", 0)
             response_text = f"{count} applications are awaiting field inspection."
+        elif intent in ("isd_applications", "nisd_applications", "merge_applications"):
+            count = structured_data.get("count", 0) if structured_data else 0
+            qtype = structured_data.get("query_type", "Applications") if structured_data else "Applications"
+            if count == 0:
+                response_text = f"No {qtype} found in your jurisdiction."
+            elif count == 1:
+                response_text = f"There is 1 {qtype.rstrip('s')} in your jurisdiction."
+            else:
+                response_text = f"There are {count} {qtype} in your jurisdiction."
+        elif intent == "both_applications":
+            total = structured_data.get("count", 0) if structured_data else 0
+            qtype = structured_data.get("query_type", "Applications") if structured_data else "Applications"
+            if total == 0:
+                response_text = f"No {qtype} found in your jurisdiction."
+            else:
+                response_text = f"Found {total} application(s) — see the table below."
         elif intent == "workload_by_type":
             isd = structured_data.get("ISD", 0)
             nisd = structured_data.get("NISD", 0)
@@ -2218,7 +2262,7 @@ async def process_chat(
                 response_text = "No pending applications."
         elif intent == "is_nisd_or_isd":
             if not structured_data or not structured_data.get("found", True):
-                response_text = f"Application not found."
+                response_text = structured_data.get("message", "Please specify an application number (e.g., APP-2024-000001) to check if it is NISD or ISD.") if structured_data else "Please specify an application number (e.g., APP-2024-000001) to check if it is NISD or ISD."
             else:
                 app_type = structured_data.get("type", "ISD")
                 survey_no = structured_data.get("survey_no", "145")
@@ -2361,6 +2405,19 @@ async def process_chat(
                 block = structured_data.get("block_number", "N/A")
                 response_text = f"{count} applications are located within the same Ward {ward} and Block {block}."
                 
+        elif intent == "fv_between_dates":
+            count = structured_data.get("count", 0)
+            to_visit = structured_data.get("to_be_visited_count", count)
+            s_date = structured_data.get("start_date")
+            e_date = structured_data.get("end_date")
+            date_range = f" ({s_date} to {e_date})" if (s_date and e_date) else ""
+            if to_visit == 0:
+                response_text = f"There are no field visits needed to be visited{date_range}."
+            elif to_visit == 1:
+                response_text = f"There is 1 field visit needed to be visited{date_range}."
+            else:
+                response_text = f"There are {to_visit} field visits needed to be visited{date_range}."
+
         elif intent == "fv_scheduled_this_week":
             count = structured_data.get("taluk_scheduled_count", 0)
             taluk = structured_data.get("taluk_name", "N/A")
@@ -2664,7 +2721,9 @@ async def process_chat_stream(
         intent = parse_intent(message)
         logger.info(f"Parsed intent: {intent}")
 
-        # Step 2c: Direct greeting response handling (STREAMING)
+
+
+        # Step 2d: Direct greeting response handling (STREAMING)
         if intent == "greeting":
             import json as _json_greeting
             msg_lower = message.lower().strip()
@@ -2718,9 +2777,11 @@ async def process_chat_stream(
             "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
             "sd_forward_check", "sd_remarks", "application_status", "isd_processing",
             "pending_applications", "officer_workload", "field_visits",
+            "general_query", "rag", "greeting", "help", "district_code"
         }
-        _skip_keyword_check_s = intent in _FIELD_VISIT_INTENTS_S
         _msg_lower_jur = message.lower()
+        _is_code_reference_query_s = any(w in _msg_lower_jur for w in ["code", "கோடு", "service code", "district code"])
+        _skip_keyword_check_s = (intent in _FIELD_VISIT_INTENTS_S) or _is_code_reference_query_s
         _requested_broader = False
         _broader_reason = ""
         if _officer_level == 0 and not _skip_keyword_check_s:
@@ -2894,61 +2955,26 @@ async def process_chat_stream(
             }
 
         elif intent == "highest_priority_applications":
-            # Return applications in table format, not just app numbers
-            structured_data = await get_pending_applications(
-                db, officer, 
-                status=["pending", "in_progress"]
-            )
+            # Use the dedicated high priority query function
+            # This returns applications with is_overdue=True OR priority_flag=True
+            from backend.services.postgres import get_highest_priority_applications
             
-            # SIS officers should only see priority apps in SIS stage
-            # They don't handle DIS, SD, or Tahsildar stage applications
-            # Auto-filter by officer's stage jurisdiction
-            officer_stage = getattr(officer, "current_stage", None) or "SIS"  # Default to SIS if not set
-            
-            # Extract explicit stage filter from message if specified (optional override)
+            # Extract application type if mentioned
+            app_type = None
             message_lower = message.lower()
-            stage_filter = None
-            if "all stages" in message_lower or "all stage" in message_lower:
-                stage_filter = None  # Show all stages if explicitly requested
-            elif "sis" in message_lower and "stage" in message_lower:
-                stage_filter = "SIS"
-            elif "sd" in message_lower and "stage" in message_lower:
-                stage_filter = "SD"
-            elif "dis" in message_lower and "stage" in message_lower:
-                stage_filter = "DIS"
-            elif "tahsildar" in message_lower:
-                stage_filter = "TAHSILDAR"
-            else:
-                # Default: auto-filter by officer's stage
-                stage_filter = officer_stage
+            if "isd" in message_lower:
+                app_type = "ISD"
+            elif "nisd" in message_lower:
+                app_type = "NISD"
+            elif "merge" in message_lower:
+                app_type = "MERGE"
             
-            # Filter to only priority applications
-            # Priority = manual flag OR overdue OR status contains warning
-            if structured_data and structured_data.get("applications"):
-                priority_apps = []
-                for app in structured_data["applications"]:
-                    is_priority = (
-                        app.get("priority_flag") == True or
-                        app.get("is_overdue") == True or
-                        "⚠" in str(app.get("status", "")) or
-                        "⚠" in str(app.get("stage", ""))
-                    )
-                    # Apply stage filter if specified
-                    if stage_filter:
-                        matches_stage = app.get("stage") == stage_filter or app.get("current_stage") == stage_filter
-                        is_priority = is_priority and matches_stage
-                    
-                    if is_priority:
-                        priority_apps.append(app)
-                
-                structured_data["applications"] = priority_apps
-                structured_data["count"] = len(priority_apps)
+            structured_data = await get_highest_priority_applications(db, officer, application_type=app_type)
+            structured_data["query_type"] = "High Priority Applications"
             
-            # Update query type to reflect stage filter
-            if stage_filter:
-                structured_data["query_type"] = f"High Priority Applications — {stage_filter} Stage"
-            else:
-                structured_data["query_type"] = "High Priority Applications — All Stages"
+            # Log for debugging
+            logger.info(f"🔥 High priority applications query: found {structured_data.get('count', 0)} applications")
+            logger.info(f"   Applications: {[app['application_number'] for app in structured_data.get('applications', [])]}")
 
         elif intent == "assigned_today":
             today = date.today()
@@ -3217,6 +3243,37 @@ async def process_chat_stream(
         elif intent == "nisd_applications":
             structured_data = await get_officer_applications(db, officer, application_type="NISD")
             structured_data["query_type"] = "NISD Applications"
+
+        elif intent == "both_applications":
+            import re as _re
+            _msg_l = message.lower()
+            _fetch_isd   = bool(_re.search(r'\bisd\b', _msg_l))
+            _fetch_nisd  = bool(_re.search(r'\bnisd\b', _msg_l))
+            _fetch_merge = bool(_re.search(r'\bmerge?\b', _msg_l))
+            # Default to ISD+NISD if nothing explicit detected
+            if not any([_fetch_isd, _fetch_nisd, _fetch_merge]):
+                _fetch_isd = _fetch_nisd = True
+            
+            _results, _labels = [], []
+            if _fetch_isd:
+                _res_isd = await get_officer_applications(db, officer, application_type="ISD")
+                _results.append(_res_isd)
+                _labels.append("ISD")
+            if _fetch_nisd:
+                _res_nisd = await get_officer_applications(db, officer, application_type="NISD")
+                _results.append(_res_nisd)
+                _labels.append("NISD")
+            if _fetch_merge:
+                _res_merge = await get_officer_applications(db, officer, application_type="MERGE")
+                _results.append(_res_merge)
+                _labels.append("MERGE")
+
+            _all_apps = [app for r in _results for app in r.get("applications", [])]
+            structured_data = {
+                "query_type": " & ".join(_labels) + " Applications",
+                "applications": _all_apps,
+                "count": sum(r.get("count", 0) for r in _results),
+            }
 
         elif intent == "merge_applications":
             structured_data = await get_officer_applications(db, officer, application_type="MERGE")
@@ -3585,9 +3642,22 @@ async def process_chat_stream(
         _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
         _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
         _is_interrogative = _is_interrogative or _asking_specific_field
-        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info", "survey_detail")
+        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info")
+        _count_keywords = ["how many", "number of", "count", "total", "no of", "no.", "no ", "num", "எத்தனை", "எண்ணிக்கை", "தொகை"]
+        _asking_for_count = any(kw in _msg_lower for kw in _count_keywords)
 
-        html_response = "" if _bypass_html else build_html_response(structured_data, language)
+        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
+            count = structured_data.get("count", len(structured_data.get("applications", []))) if structured_data else 0
+            qtype = structured_data.get("query_type", "applications").lower() if structured_data else "applications"
+            is_tamil = language in ("ta", "tanglish")
+            if count == 0:
+                html_response = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype} in your jurisdiction."
+            elif count == 1:
+                html_response = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')} in your jurisdiction."
+            else:
+                html_response = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype} in your jurisdiction."
+        else:
+            html_response = "" if _bypass_html else build_html_response(structured_data, language)
         import json
 
         # Only emit table_data when there's no direct HTML response AND we are
@@ -3972,7 +4042,7 @@ async def process_chat_stream(
             yield sse_data.encode('utf-8')
         elif intent == "is_nisd_or_isd":
             if not structured_data or not structured_data.get("found", True):
-                chunk = "Application not found."
+                chunk = structured_data.get("message", "Please specify an application number (e.g., APP-2024-000001) to check if it is NISD or ISD.") if structured_data else "Please specify an application number (e.g., APP-2024-000001) to check if it is NISD or ISD."
             else:
                 app_type = structured_data.get("type", "ISD")
                 survey_no = structured_data.get("survey_no", "145")
@@ -4230,7 +4300,9 @@ async def process_chat_stream(
                         "survey_detail", "survey_owners", "next_subdivision",
                         "jurisdiction_summary", "rejection_info", "taluk_summary",
                         "litigation_check", "highest_priority_applications",
-                        "merge_info", "town_applications", "block_applications"):
+                        "merge_info", "town_applications", "block_applications",
+                        "isd_applications", "nisd_applications", "merge_applications",
+                        "both_applications"):
             # Table is rendered on the frontend. Just emit a short natural intro.
             found = structured_data.get("found", True) if structured_data else False
             if not found:
@@ -4564,8 +4636,11 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
             }
         }
         
-    # 2. Pending applications
-    elif intent_lower in ["pending_applications", "town_applications", "block_applications", "immediate_action"] or (intent_lower == "workload" and "applications" in structured_data):
+    # 2. Pending / typed application lists
+    elif intent_lower in [
+        "pending_applications", "town_applications", "block_applications", "immediate_action",
+        "isd_applications", "nisd_applications", "merge_applications"
+    ] or (intent_lower == "workload" and "applications" in structured_data):
         apps = []
         for app in structured_data.get("applications", []):
             apps.append({
@@ -4579,6 +4654,24 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
             })
         return {
             "query_type": structured_data.get("query_type", "Pending Applications"),
+            "applications": apps
+        }
+
+    # 2b. Both / mixed type applications combined (isd+nisd, isd+merge, all, etc.)
+    elif intent_lower == "both_applications":
+        apps = []
+        for app in structured_data.get("applications", []):
+            apps.append({
+                "application_number": app.get("application_number"),
+                "type": app.get("type"),
+                "town_name": app.get("town_name") or "N/A",
+                "ward_number": app.get("ward_number") or "N/A",
+                "status": app.get("status") or "Pending",
+                "current_stage": app.get("stage") or app.get("current_stage"),
+                "submission_date": app.get("submission_date")
+            })
+        return {
+            "query_type": structured_data.get("query_type", "Combined Applications"),
             "applications": apps
         }
         
@@ -4757,3 +4850,6 @@ async def handle_chat(
 ) -> Dict[str, Any]:
     """Alias/wrapper for process_chat to comply with prompt signature specifications"""
     return await process_chat(message, session_id, officer, db)
+
+
+

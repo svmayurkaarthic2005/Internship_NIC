@@ -455,6 +455,8 @@ async function sendMessage() {
         return;
     }
     
+
+    
     if (isTyping) {
         console.warn('❌ Cannot send: Already typing');
         showToast('Please wait for the current response', 'warning');
@@ -473,7 +475,7 @@ async function sendMessage() {
         setTimeout(() => { window.location.href = 'login.html'; }, 2000);
         return;
     }
-    
+
     console.log('✓ All checks passed, sending message...');
     
     // Hide quick suggestions
@@ -608,6 +610,7 @@ async function sendMessage() {
                 if (line.startsWith('data: ')) {
                     try {
                         const parsed = JSON.parse(line.slice(6));
+
                         // Capture table/structured data from first SSE event
                         if (parsed.table_data) {
                             capturedTableData = parsed.table_data;
@@ -632,6 +635,7 @@ async function sendMessage() {
             if (line.startsWith('data: ')) {
                 try {
                     const parsed = JSON.parse(line.slice(6));
+
                     if (parsed.table_data) capturedTableData = parsed.table_data;
                     else if (parsed.structured_data && !capturedTableData) capturedTableData = parsed.structured_data;
                     if (parsed.content) {
@@ -645,7 +649,7 @@ async function sendMessage() {
         }
         
         // Check if we got any response
-        if (!aiResponse) {
+        if (!aiResponse && messageDiv && messageDiv.parentNode) {
             console.error('No content received from stream!');
             contentDiv.innerHTML = '<span style="color: orange;">⚠️ No response received. Please try again.</span>';
         }
@@ -1047,28 +1051,21 @@ function renderSessionHistory(sessions) {
  * Handle new chat
  */
 async function handleNewChat() {
-    // Clear current chat UI
     chatMessages.innerHTML = '';
     messageHistory = [];
     
-    // Clear localStorage chat history and old session ID
     if (window.chatStorage) {
         window.chatStorage.clear();
-        console.log('🗑️ Cleared chat history from localStorage');
     }
     
-    // Create new session
     await createNewSession();
     
-    // Persist new session ID to localStorage
     if (window.chatStorage && currentSessionId) {
         window.chatStorage.saveSessionId(currentSessionId);
     }
     
-    // Show welcome message
     renderWelcomeMessage();
     
-    // Show quick suggestions
     if (quickSuggestions) {
         quickSuggestions.style.display = 'block';
     }

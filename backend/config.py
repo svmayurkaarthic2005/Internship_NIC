@@ -60,3 +60,47 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Official Tamil Nadu 38 District Codes & Names Mapping
+DISTRICT_CODE_MAP = {
+    "01": "Tiruvallur",
+    "02": "Chennai",
+    "03": "Kancheepuram",
+    "04": "Vellore",
+    "05": "Dharmapuri",
+    "06": "Tiruvannamalai",
+    "07": "Viluppuram",
+    "08": "Salem",
+    "09": "Namakkal",
+    "10": "Erode",
+    "11": "Nilgiris",
+    "12": "Coimbatore",
+    "13": "Dindigul",
+    "14": "Karur",
+    "15": "Tiruchirappalli",
+    "16": "Perambalur",
+    "17": "Ariyalur",
+    "18": "Cuddalore",
+    "19": "Nagapattinam",
+    "20": "Tiruvarur",
+    "21": "Thanjavur",
+    "22": "Pudukkottai",
+    "23": "Sivagangai",
+    "24": "Madurai",
+    "25": "Theni",
+    "26": "Virudhunagar",
+    "27": "Ramanathapuram",
+    "28": "Thoothukudi",
+    "29": "Tirunelveli",
+    "30": "Kanniyakumari",
+    "31": "Krishnagiri",
+    "32": "Tiruppur",
+    "33": "Kallakurichi",
+    "34": "Chengalpattu",
+    "35": "Ranipet",
+    "36": "Tirupathur",
+    "37": "Tenkasi",
+    "38": "Mayiladuthurai"
+}
+
+DISTRICT_NAME_MAP = {name.lower(): code for code, name in DISTRICT_CODE_MAP.items()}

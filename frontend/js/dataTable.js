@@ -86,21 +86,27 @@ function prepareSurveyTable(data) {
  * Prepare applications table configuration
  */
 function prepareApplicationsTable(data) {
-    const rows = data.applications.map(app => ({
-        'Number': app.application_number || 'N/A',
-        'Type': app.type || 'N/A',
-        'Town': app.town_name || 'N/A',
-        'Ward': app.ward_number || 'N/A',
-        'Status': app.status || app.current_status || 'N/A',
-        'Stage': app.stage || app.current_stage || 'N/A',
-        'Date': app.submission_date
-            ? new Date(app.submission_date).toLocaleDateString()
-            : 'N/A'
-    }));
+    const rows = data.applications.map(app => {
+        const jur = app.jurisdiction || {};
+        return {
+            'Number': app.application_number || 'N/A',
+            'Type': app.type || 'N/A',
+            'District': jur.district || app.district_name || 'N/A',
+            'Taluk': jur.taluk || app.taluk_name || 'N/A',
+            'Town': jur.town || app.town_name || 'N/A',
+            'Ward': jur.ward || app.ward_number || 'N/A',
+            'Block': jur.block || app.block_number || 'N/A',
+            'Status': app.status || app.current_status || 'N/A',
+            'Stage': app.stage || app.current_stage || 'N/A',
+            'Date': app.submission_date
+                ? new Date(app.submission_date).toLocaleDateString()
+                : 'N/A'
+        };
+    });
 
     return {
         title: data.query_type || 'Applications',
-        columns: ['Number', 'Type', 'Town', 'Ward', 'Status', 'Stage', 'Date'],
+        columns: ['Number', 'Type', 'District', 'Taluk', 'Town', 'Ward', 'Block', 'Status', 'Stage', 'Date'],
         rows: rows,
         icon: '📄'
     };

@@ -197,12 +197,12 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
                 cur.execute(
                     """
                     INSERT INTO knowledge_embeddings
-                        (chunk_id, content, embedding,
-                         source, category, section, language, page)
+                        (id, chunk_id, content, embedding,
+                         source, category, section, language, page, created_at, updated_at)
                     VALUES
-                        (%(chunk_id)s, %(content)s, %(embedding)s,
+                        (gen_random_uuid(), %(chunk_id)s, %(content)s, %(embedding)s,
                          %(source)s,   %(category)s, %(section)s,
-                         %(language)s, %(page)s)
+                         %(language)s, %(page)s, now(), now())
                     ON CONFLICT (chunk_id) DO UPDATE SET
                         content   = EXCLUDED.content,
                         embedding = EXCLUDED.embedding,

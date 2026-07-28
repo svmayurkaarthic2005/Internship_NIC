@@ -7,6 +7,64 @@
 const tableStates = new Map();
 
 /**
+ * 38 Official Tamil Nadu District Codes & Names Mapping
+ */
+const DISTRICT_CODES = {
+    "01": "Tiruvallur",
+    "02": "Chennai",
+    "03": "Kancheepuram",
+    "04": "Vellore",
+    "05": "Dharmapuri",
+    "06": "Tiruvannamalai",
+    "07": "Viluppuram",
+    "08": "Salem",
+    "09": "Namakkal",
+    "10": "Erode",
+    "11": "Nilgiris",
+    "12": "Coimbatore",
+    "13": "Dindigul",
+    "14": "Karur",
+    "15": "Tiruchirappalli",
+    "16": "Perambalur",
+    "17": "Ariyalur",
+    "18": "Cuddalore",
+    "19": "Nagapattinam",
+    "20": "Tiruvarur",
+    "21": "Thanjavur",
+    "22": "Pudukkottai",
+    "23": "Sivagangai",
+    "24": "Madurai",
+    "25": "Theni",
+    "26": "Virudhunagar",
+    "27": "Ramanathapuram",
+    "28": "Thoothukudi",
+    "29": "Tirunelveli",
+    "30": "Kanniyakumari",
+    "31": "Krishnagiri",
+    "32": "Tiruppur",
+    "33": "Kallakurichi",
+    "34": "Chengalpattu",
+    "35": "Ranipet",
+    "36": "Tirupathur",
+    "37": "Tenkasi",
+    "38": "Mayiladuthurai"
+};
+
+function getDistrictName(codeOrName) {
+    if (!codeOrName) return 'N/A';
+    const clean = String(codeOrName).trim();
+    const formattedCode = clean.padStart(2, '0');
+    if (DISTRICT_CODES[formattedCode]) {
+        return DISTRICT_CODES[formattedCode];
+    }
+    if (DISTRICT_CODES[clean]) {
+        return DISTRICT_CODES[clean];
+    }
+    return clean;
+}
+
+
+/**
  * Tamil column header translations.
  * Used when data.language === 'ta'.
  */
@@ -264,14 +322,18 @@ function prepareApplicationsTable(data, isTamil = false) {
     }
 
     // Standard style
-    const engCols = ['Application Number', 'Type', 'Town', 'Ward', 'Status', 'Stage', 'Submitted Date'];
+    const engCols = ['Application Number', 'Type', 'District', 'Taluk', 'Town', 'Ward', 'Block', 'Status', 'Stage', 'Submitted Date'];
     const tamCols = _translateCols(engCols, isTamil);
     const rows = apps.map(app => {
+        const jur = app.jurisdiction || {};
         const r = {
             'Application Number': app.application_number || 'N/A',
             'Type':               app.type || 'N/A',
-            'Town':               app.town_name || 'N/A',
-            'Ward':               app.ward_number ? `Ward ${app.ward_number}` : 'N/A',
+            'District':           jur.district || app.district_name || 'N/A',
+            'Taluk':              jur.taluk || app.taluk_name || 'N/A',
+            'Town':               jur.town || app.town_name || 'N/A',
+            'Ward':               jur.ward || (app.ward_number ? `Ward ${app.ward_number}` : 'N/A'),
+            'Block':              jur.block || (app.block_number ? `Block ${app.block_number}` : 'N/A'),
             'Status':             app.status || 'Pending',
             'Stage':              app.current_stage || app.stage || 'N/A',
             'Submitted Date':     app.submission_date ? new Date(app.submission_date).toLocaleDateString() : 'N/A'
@@ -345,6 +407,9 @@ function prepareOwnersTable(data, isTamil = false) {
 function prepareJurisdictionTable(data, isTamil = false) {
     const j = data.jurisdiction || {};
     const district = j.district || {};
+    const districtObj = typeof district === 'object' ? district : { name: district, code: '' };
+    const distCode = districtObj.code || j.district_code || 'N/A';
+    const distName = getDistrictName(districtObj.name || distCode);
     const taluk = j.taluk || {};
     const towns = j.towns || [];
 
@@ -353,8 +418,8 @@ function prepareJurisdictionTable(data, isTamil = false) {
     if (!towns.length) {
         rows.push({
             'Level': 'District',
-            'Code / Number': district.code || 'N/A',
-            'Name': district.name || 'N/A',
+            'Code / Number': distCode,
+            'Name': distName,
             'Count': '—'
         });
         rows.push({
@@ -366,8 +431,8 @@ function prepareJurisdictionTable(data, isTamil = false) {
     } else {
         rows.push({
             'Level': 'District',
-            'Code / Number': district.code || 'N/A',
-            'Name': district.name || 'N/A',
+            'Code / Number': distCode,
+            'Name': distName,
             'Count': '—'
         });
         rows.push({

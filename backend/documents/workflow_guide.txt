@@ -14,9 +14,10 @@ Application Status Definitions:
 - Completed statuses: "approved", "rejected"
 - Once an application reaches a completed status, a new application can be submitted for that survey number
 
-=== ISD WORKFLOW (Involving Sub-Division) ===
+=== ISD WORKFLOW (Involving Sub-Division - Service Code: 0154) ===
 
 Step 1: Application Submission
+- Service Code: 0154 (ISD - Involving Sub-Division)
 - Applications can be submitted through CSC centers, Sub-Registrar offices, or directly by citizens
 - Application receives a unique tracking number (format: ISD/DISTRICT_CODE/YEAR/SEQUENCE)
 - All required documents must be uploaded at the time of submission
@@ -60,9 +61,10 @@ Step 7: Patta Transfer Order Generation
 
 Total Timeline: Approximately 30-35 working days from submission to completion
 
-=== NISD WORKFLOW (Not Involving Sub-Division) ===
+=== NISD WORKFLOW (Not Involving Sub-Division - Service Code: 0153) ===
 
 Step 1: Application Submission
+- Service Code: 0153 (NISD - Not Involving Sub-Division)
 - Application submitted through CSC, Sub-Registrar, or citizen portal
 - Application number format: NISD/DISTRICT_CODE/YEAR/SEQUENCE
 - No new sub-divisions are created, only ownership transfer

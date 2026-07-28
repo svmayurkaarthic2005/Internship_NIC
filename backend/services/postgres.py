@@ -5,7 +5,7 @@ from sqlalchemy import select, func, and_, or_, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from backend.models import (
@@ -92,16 +92,19 @@ async def get_officer_applications(
         # Get the officer's stage (SIS/DIS/SD/Tahsildar)
         officer_stage = officer.officer_stage
         
+        where_clauses = [Application.assigned_officer_id == officer.officer_id]
+        is_historical = (
+            (isinstance(status, list) and any(s in ["approved", "rejected", "closed"] for s in status))
+            or (isinstance(status, str) and status in ["approved", "rejected", "closed"])
+        )
+        if not is_historical:
+            where_clauses.append(Application.current_stage == officer_stage)
+
         query = select(Application).options(
             selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
             selectinload(Application.application_sub_divisions).selectinload(ApplicationSubDivision.sub_division)
-        ).where(
-            and_(
-                Application.assigned_officer_id == officer.officer_id,
-                Application.current_stage == officer_stage  # CRITICAL FIX: Filter by stage
-            )
-        )
-        
+        ).where(and_(*where_clauses))
+
         if status:
             if isinstance(status, list):
                 query = query.where(Application.current_status.in_(status))
@@ -141,6 +144,16 @@ async def get_officer_applications(
             elif not town:
                 logger.warning(f"Ward {ward.ward_number} (app {app.application_number}) missing town relationship")
             
+            taluk = town.taluk if town else None
+            district = taluk.district if taluk else None
+            jur_dict = {
+                "district": district.name if district else "N/A",
+                "taluk": taluk.name if taluk else "N/A",
+                "town": town.name if town else "N/A",
+                "ward": ward.ward_number if ward else "N/A",
+                "block": block.block_number if block else "N/A"
+            }
+            
             # Build merge-specific fields if this is a MERGE application
             if app.application_type == "MERGE":
                 subdivisions_being_merged = []
@@ -157,9 +170,6 @@ async def get_officer_applications(
                             "area_sqm": area
                         })
                 
-                taluk = town.taluk if town else None
-                district = taluk.district if taluk else None
-                
                 app_rows.append({
                     "application_number": app.application_number,
                     "type": app.application_type,
@@ -170,13 +180,12 @@ async def get_officer_applications(
                     "survey_no": sn.survey_no if sn else "N/A",
                     "subdivisions_being_merged": subdivisions_being_merged,
                     "total_merge_area_sqm": total_area if total_area > 0 else None,
-                    "jurisdiction": {
-                        "district": district.name if district else "N/A",
-                        "taluk": taluk.name if taluk else "N/A",
-                        "town": town.name if town else "N/A",
-                        "ward": ward.ward_number if ward else "N/A",
-                        "block": block.block_number if block else "N/A"
-                    }
+                    "district_name": district.name if district else "N/A",
+                    "taluk_name": taluk.name if taluk else "N/A",
+                    "town_name": town.name if town else "N/A",
+                    "ward_number": ward.ward_number if ward else "N/A",
+                    "block_number": block.block_number if block else "N/A",
+                    "jurisdiction": jur_dict
                 })
             else:
                 app_rows.append({
@@ -186,9 +195,12 @@ async def get_officer_applications(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
                     "is_overdue": app.is_overdue,
+                    "district_name": district.name if district else "N/A",
+                    "taluk_name": taluk.name if taluk else "N/A",
                     "town_name": town.name if town else "N/A",
                     "ward_number": ward.ward_number if ward else "N/A",
                     "block_number": block.block_number if block else "N/A",
+                    "jurisdiction": jur_dict,
                     "included_subdivisions": ", ".join([
                         assoc.sub_division.sub_division_no
                         for assoc in app.application_sub_divisions
@@ -198,7 +210,8 @@ async def get_officer_applications(
         
         return {
             "count": len(app_rows),
-            "applications": app_rows
+            "applications": app_rows,
+            "jurisdiction_type": officer.jurisdiction_type
         }
     except Exception as e:
         logger.error(f"Error getting officer applications: {e}")
@@ -220,7 +233,7 @@ async def get_pending_applications(
     Pass submission_year to filter by year (e.g., 2025).
     Pass submission_month to filter by month (1-12).
     """
-    if status is None:
+    if status is None and not submission_year:
         status = ["pending", "in_progress"]
     return await get_officer_applications(
         db, officer, 
@@ -280,6 +293,7 @@ async def get_overdue_applications(
         
         return {
             "count": len(applications),
+            "jurisdiction_type": officer.jurisdiction_type,
             "applications": [
                 {
                     "application_number": app.application_number,
@@ -295,6 +309,81 @@ async def get_overdue_applications(
         }
     except Exception as e:
         logger.error(f"Error getting overdue applications: {e}")
+        return {"count": 0, "applications": [], "error": str(e)}
+
+
+async def get_highest_priority_applications(
+    db: AsyncSession,
+    officer: OfficerContext,
+    application_type: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get highest priority applications (overdue OR priority flagged) within officer's jurisdiction AND stage
+    """
+    try:
+        # Get jurisdiction filters
+        jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+        
+        if not jurisdiction_filters:
+            return {"count": 0, "applications": [], "message": "No jurisdiction assigned"}
+        
+        # Get the officer's stage
+        officer_stage = officer.officer_stage
+        
+        query = select(Application).join(
+            SurveyNumber, Application.survey_number_id == SurveyNumber.id
+        ).join(
+            Block, SurveyNumber.block_id == Block.id
+        ).join(
+            Ward, Block.ward_id == Ward.id
+        ).join(
+            Town, Ward.town_id == Town.id
+        ).join(
+            Taluk, Town.taluk_id == Taluk.id
+        ).join(
+            District, Taluk.district_id == District.id
+        ).where(
+            and_(
+                or_(*jurisdiction_filters),
+                Application.current_stage == officer_stage,
+                Application.current_status != 'rejected',  # Exclude rejected apps
+                or_(
+                    Application.is_overdue == True,
+                    Application.priority_flag == True
+                )
+            )
+        )
+        
+        if application_type:
+            if application_type == "ISD":
+                query = query.where(Application.application_type.in_(["ISD", "MERGE"]))
+            else:
+                query = query.where(Application.application_type == application_type)
+            
+        result = await db.execute(query)
+        applications = result.scalars().all()
+        
+        return {
+            "count": len(applications),
+            "jurisdiction_type": officer.jurisdiction_type,
+            "applications": [
+                {
+                    "application_number": app.application_number,
+                    "type": app.application_type,
+                    "status": app.current_status,
+                    "stage": app.current_stage,
+                    "submission_date": app.submission_date.isoformat(),
+                    "is_overdue": app.is_overdue,
+                    "priority_flag": app.priority_flag,
+                    "field_visit_scheduled": app.field_visit_scheduled,
+                    "field_visit_date": app.field_visit_date.isoformat() if app.field_visit_date else None,
+                    "days_pending": (datetime.now().date() - app.submission_date).days
+                }
+                for app in applications
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting highest priority applications: {e}")
         return {"count": 0, "applications": [], "error": str(e)}
 
 
@@ -583,8 +672,11 @@ async def get_survey_detail(
     """
     Get details about a survey number including full jurisdiction chain.
     If officer is provided, verifies they have jurisdiction access.
+    Handles subdivisions like "145/1A" by resolving base survey "145".
     """
     try:
+        base_survey_no = survey_no.split('/')[0] if '/' in survey_no else survey_no
+
         # Get survey with all related jurisdiction data
         query = select(
             SurveyNumber,
@@ -604,7 +696,10 @@ async def get_survey_detail(
         ).join(
             District, Taluk.district_id == District.id
         ).where(
-            SurveyNumber.survey_no == survey_no
+            or_(
+                SurveyNumber.survey_no == survey_no,
+                SurveyNumber.survey_no == base_survey_no
+            )
         )
         
         # If officer provided, verify jurisdiction access
@@ -633,7 +728,8 @@ async def get_survey_detail(
         
         return {
             "found": True,
-            "survey_no": survey.survey_no,
+            "survey_no": survey_no,
+            "base_survey_no": survey.survey_no,
             "total_area_sqm": float(survey.total_area_sqm),
             "land_type": survey.land_type,
             "patta_number": survey.patta_number,
@@ -668,8 +764,11 @@ async def get_survey_owners(
 ) -> Dict[str, Any]:
     """
     Get ownership information for a survey number, including per-subdivision owners.
+    Handles subdivisions like "145/1A" by resolving base survey "145".
     """
     try:
+        base_survey_no = survey_no.split('/')[0] if '/' in survey_no else survey_no
+
         # First get survey with jurisdiction check
         survey_query = select(
             SurveyNumber,
@@ -689,7 +788,10 @@ async def get_survey_owners(
         ).join(
             District, Taluk.district_id == District.id
         ).where(
-            SurveyNumber.survey_no == survey_no
+            or_(
+                SurveyNumber.survey_no == survey_no,
+                SurveyNumber.survey_no == base_survey_no
+            )
         )
         
         # If officer provided, verify jurisdiction access
@@ -722,14 +824,30 @@ async def get_survey_owners(
         # Group by sub-division (None = survey-level)
         owners_list = []
         for ownership, owner, subdivision in ownerships:
+            sd_no = subdivision.sub_division_no if subdivision else "Survey Level"
+            # Filter if a specific subdivision was requested
+            if '/' in survey_no and sd_no != "Survey Level" and sd_no.lower() != survey_no.lower():
+                continue
             owners_list.append({
                 "name": owner.name,
                 "name_tamil": owner.name_tamil,
-                "sub_division": subdivision.sub_division_no if subdivision else "Survey Level",
+                "sub_division": sd_no,
                 "ownership_share": float(ownership.ownership_share) if ownership.ownership_share else None,
                 "ownership_type": ownership.ownership_type,
                 "is_joint_owner": ownership.is_joint_owner
             })
+        
+        # Fallback to all owners if filtering resulted in empty list
+        if not owners_list and ownerships:
+            for ownership, owner, subdivision in ownerships:
+                owners_list.append({
+                    "name": owner.name,
+                    "name_tamil": owner.name_tamil,
+                    "sub_division": subdivision.sub_division_no if subdivision else "Survey Level",
+                    "ownership_share": float(ownership.ownership_share) if ownership.ownership_share else None,
+                    "ownership_type": ownership.ownership_type,
+                    "is_joint_owner": ownership.is_joint_owner
+                })
         
         return {
             "found": True,
@@ -803,17 +921,24 @@ async def get_unscheduled_visits(
 async def get_field_visits(
     db: AsyncSession,
     officer: OfficerContext,
-    status_filter: Optional[str] = None
+    status_filter: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    to_be_visited_only: bool = False
 ) -> Dict[str, Any]:
     """
-    Get field visits for the officer with optional scheduled/unscheduled filtering
+    Get field visits for the officer with optional status, date range (start_date to end_date),
+    and to-be-visited filtering.
     """
     try:
         from sqlalchemy.orm import joinedload
+        from sqlalchemy import or_
+        from datetime import date as _dt_date
+        
+        today = _dt_date.today()
         
         # Get officer's jurisdiction filter (block/ward/taluk)
         jurisdiction_filter = await get_jurisdiction_filter(db, officer)
-        # jurisdiction_filter returns a list, we need to unpack it
         jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
         
         query = select(FieldVisit).options(
@@ -822,24 +947,39 @@ async def get_field_visits(
             Application, FieldVisit.application_id == Application.id
         ).join(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
+        ).join(
+            Block, SurveyNumber.block_id == Block.id
         ).where(
             and_(
                 FieldVisit.officer_id == officer.officer_id,
+                Application.current_stage == officer.officer_stage,
                 Application.current_status != 'rejected',  # Exclude field visits for rejected applications
-                *jur_conditions  # Unpack list of conditions
+                *jur_conditions
             )
         )
         
         if status_filter:
             query = query.where(FieldVisit.status == status_filter)
+
+        if to_be_visited_only:
+            query = query.where(FieldVisit.status.in_(["scheduled", "rescheduled", "pending", "overdue", "unscheduled"]))
+
+        if start_date:
+            query = query.where(FieldVisit.scheduled_date >= start_date)
+
+        if end_date:
+            query = query.where(FieldVisit.scheduled_date <= end_date)
             
+        query = query.order_by(FieldVisit.scheduled_date.asc())
+
         result = await db.execute(query)
         visits = result.scalars().all()
         
         field_visits = []
-        from datetime import date
-        today = date.today()
-        
+        to_be_visited_count = 0
+        completed_count = 0
+        overdue_count = 0
+
         for visit in visits:
             app = visit.application
             survey = app.survey_number if app else None
@@ -850,6 +990,14 @@ async def get_field_visits(
             if visit.scheduled_date and visit.status in ["scheduled", "rescheduled", "overdue"]:
                 is_overdue = visit.scheduled_date < today
             
+            if is_overdue or visit.status == "overdue":
+                overdue_count += 1
+
+            if visit.status in ["completed"]:
+                completed_count += 1
+            else:
+                to_be_visited_count += 1
+
             field_visits.append({
                 "application_number": app.application_number if app else "N/A",
                 "survey_no": survey.survey_no if survey else "N/A",
@@ -862,11 +1010,16 @@ async def get_field_visits(
         
         return {
             "count": len(field_visits),
+            "to_be_visited_count": to_be_visited_count,
+            "completed_count": completed_count,
+            "overdue_count": overdue_count,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
             "field_visits": field_visits
         }
     except Exception as e:
         logger.error(f"Error getting field visits: {e}")
-        return {"count": 0, "field_visits": [], "error": str(e)}
+        return {"count": 0, "to_be_visited_count": 0, "completed_count": 0, "field_visits": [], "error": str(e)}
 
 
 async def get_next_subdivision_number(
@@ -877,8 +1030,11 @@ async def get_next_subdivision_number(
     """
     Get the next available sub-division number for a survey.
     If officer is provided, verifies they have jurisdiction access.
+    Handles subdivisions like "145/1A" by resolving base survey "145".
     """
     try:
+        base_survey_no = survey_no.split('/')[0] if '/' in survey_no else survey_no
+
         # Get survey with jurisdiction check
         survey_query = select(
             SurveyNumber,
@@ -898,7 +1054,10 @@ async def get_next_subdivision_number(
         ).join(
             District, Taluk.district_id == District.id
         ).where(
-            SurveyNumber.survey_no == survey_no
+            or_(
+                SurveyNumber.survey_no == survey_no,
+                SurveyNumber.survey_no == base_survey_no
+            )
         )
         
         # If officer provided, verify jurisdiction access
@@ -1376,3 +1535,35 @@ async def get_all_surveys_in_jurisdiction(
             "surveys": [],
             "error": str(e)
         }
+
+
+async def check_existing_pending_application_for_survey(
+    db: AsyncSession,
+    survey_number_id: Any
+) -> Dict[str, Any]:
+    """
+    Check if a pending/active application already exists for the given survey number.
+    If one application of a survey number in a block is pending, another application cannot be applied.
+    """
+    try:
+        query = select(Application).where(
+            and_(
+                Application.survey_number_id == survey_number_id,
+                Application.current_status.in_(["pending", "in_progress"])
+            )
+        )
+        res = await db.execute(query)
+        existing_app = res.scalars().first()
+
+        if existing_app:
+            return {
+                "can_apply": False,
+                "existing_application_number": existing_app.application_number,
+                "status": existing_app.current_status,
+                "stage": existing_app.current_stage,
+                "message": f"Application {existing_app.application_number} is already pending for this survey number. Another application cannot be submitted until the pending application is resolved."
+            }
+        return {"can_apply": True, "message": "No pending application for this survey number."}
+    except Exception as e:
+        logger.error(f"Error checking pending application for survey: {e}")
+        return {"can_apply": True, "error": str(e)}

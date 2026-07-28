@@ -23,7 +23,10 @@ A: Each sub-division's area is displayed individually, for example 145/1A - 600 
 === APPLICATION INTAKE & CLASSIFICATION ===
 
 Q: Is this application NISD or ISD?
-A: The system determines if an application is ISD (Involving Sub-Division) when it declares sub-division into multiple plots, or NISD (Not Involving Sub-Division) for simple patta transfers without creating new sub-divisions.
+A: The system determines if an application is ISD (Involving Sub-Division, Service Code 0154) when it declares sub-division into multiple plots, or NISD (Not Involving Sub-Division, Service Code 0153) for simple patta transfers without creating new sub-divisions.
+
+Q: What are the service codes for NISD and ISD applications?
+A: The service code for NISD (Not Involving Sub-Division) is 0153, and the service code for ISD (Involving Sub-Division) is 0154.
 
 Q: Does this application have all required documents before scheduling a visit?
 A: The system checks for all required documents and lists any missing documents such as Sale Deed, EC, Survey Sketch, or Photo IDs that must be uploaded before scheduling the field visit.
