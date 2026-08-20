@@ -15,7 +15,7 @@ Fixes applied (2025-07):
 """
 from sqlalchemy import (
     Column, String, Integer, Boolean, Date, Numeric, Text,
-    ForeignKey, CheckConstraint, UniqueConstraint, Index, CHAR, TIMESTAMP
+    ForeignKey, CheckConstraint, UniqueConstraint, Index, CHAR, TIMESTAMP, text
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -192,6 +192,14 @@ class SurveyOwnership(Base):
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
+    __table_args__ = (
+        # FIX #12: joint_owner_check is a top-priority intent and looked up by
+        # survey/sub-division on every call — neither column was indexed.
+        Index('idx_ownership_survey', 'survey_number_id'),
+        Index('idx_ownership_sub_division', 'sub_division_id'),
+        Index('idx_ownership_owner', 'owner_id'),
+    )
+
     survey_number = relationship("SurveyNumber", back_populates="survey_ownerships")
     sub_division = relationship("SubDivision", back_populates="survey_ownerships")
     owner = relationship("Owner", back_populates="survey_ownerships")
@@ -244,6 +252,13 @@ class OfficerJurisdiction(Base):
             "district_id IS NOT NULL OR taluk_id IS NOT NULL OR town_id IS NOT NULL "
             "OR ward_id IS NOT NULL OR block_id IS NOT NULL",
             name='ck_jurisdiction_not_empty'
+        ),
+        # FIX #11: jurisdiction_type drives every access check in chatbot.py
+        # (_JUR_LEVELS lookup) — enforce the allowed values at DB level so a bad
+        # value can never silently degrade an officer to block-level access.
+        CheckConstraint(
+            "jurisdiction_type IN ('district','taluk','town','ward','block')",
+            name='ck_jurisdiction_type'
         ),
         # FIX #7: composite indexes for chatbot jurisdiction queries
         Index('idx_officer_jurisdiction', 'officer_id'),
@@ -323,6 +338,15 @@ class Application(Base):
         Index('idx_app_officer_status', 'assigned_officer_id', 'current_status'),
         Index('idx_app_officer_overdue', 'assigned_officer_id', 'is_overdue'),
         Index('idx_app_officer_type', 'assigned_officer_id', 'application_type'),
+        # FIX #10: only one *active* application per survey number.
+        # This partial unique index is the constraint verify_no_duplicates.py checks
+        # for; it was documented but never declared, so create_all() never built it.
+        Index(
+            'idx_unique_active_app_per_survey',
+            'survey_number_id',
+            unique=True,
+            postgresql_where=text("current_status IN ('pending','in_progress','escalated')"),
+        ),
     )
 
     applicant = relationship("Applicant", back_populates="applications")

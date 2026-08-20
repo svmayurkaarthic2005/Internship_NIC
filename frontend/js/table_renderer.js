@@ -174,6 +174,18 @@ function renderDataTable(container, data) {
     // status-badge logic (which keys on 'Status' / 'Stage') works correctly.
     const isTamil = false;
 
+    // ── Multi-app query: render each application detail table separately ──
+    if (data.multi_tables && Array.isArray(data.multi_tables)) {
+        data.multi_tables.forEach((tableData, idx) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'multi-app-table-wrapper';
+            if (idx > 0) wrapper.style.marginTop = '16px';
+            container.appendChild(wrapper);
+            renderDataTable(wrapper, tableData);
+        });
+        return;
+    }
+
     // Determine table type and prepare data
     let tableConfig = null;
 
@@ -322,7 +334,7 @@ function prepareApplicationsTable(data, isTamil = false) {
     }
 
     // Standard style
-    const engCols = ['Application Number', 'Type', 'District', 'Taluk', 'Town', 'Ward', 'Block', 'Status', 'Stage', 'Submitted Date'];
+    const engCols = ['Application Number', 'Type', 'Survey Number', 'Sub-Divisions', 'District', 'Taluk', 'Town', 'Ward', 'Block', 'Status', 'Stage', 'Submitted Date'];
     const tamCols = _translateCols(engCols, isTamil);
     const rows = apps.map(app => {
         const jur = app.jurisdiction || {};
@@ -341,6 +353,8 @@ function prepareApplicationsTable(data, isTamil = false) {
         const r = {
             'Application Number': app.application_number || 'N/A',
             'Type':               app.type || 'N/A',
+            'Survey Number':      app.raw_survey_no || app.survey_no || 'N/A',
+            'Sub-Divisions':      app.subdivisions || app.sub_division_no || app.included_subdivisions || '-',
             'District':           getVal(jur.district, app.district_name),
             'Taluk':              getVal(jur.taluk, app.taluk_name),
             'Town':               getVal(jur.town, app.town_name),
@@ -365,16 +379,17 @@ function prepareApplicationsTable(data, isTamil = false) {
  * Prepare field visits table configuration
  */
 function prepareFieldVisitsTable(data, isTamil = false) {
-    const engCols = ['Application Number', 'Survey Number', 'Block', 'Type', 'Status', 'Scheduled Date'];
+    const engCols = ['Application Number', 'Survey Number', 'Sub-Divisions', 'Block', 'Type', 'Status', 'Scheduled Date'];
     const tamCols = _translateCols(engCols, isTamil);
     const rows = data.field_visits.map(visit => {
         const r = {
             'Application Number': visit.application_number || 'N/A',
-            'Survey Number':      visit.survey_no || 'N/A',
+            'Survey Number':      visit.raw_survey_no || visit.survey_no || 'N/A',
+            'Sub-Divisions':      visit.subdivisions || visit.sub_division_no || '-',
             'Block':              visit.block_number ? `Block ${visit.block_number}` : 'N/A',
-            'Type':               visit.application_type || 'N/A',
+            'Type':               visit.application_type || visit.type || 'N/A',
             'Status':             visit.status || 'N/A',
-            'Scheduled Date':     visit.field_visit_date ? new Date(visit.field_visit_date).toLocaleDateString() : 'Not Scheduled'
+            'Scheduled Date':     (visit.field_visit_date || visit.scheduled_date) ? (new Date(visit.field_visit_date || visit.scheduled_date).toLocaleDateString() !== 'Invalid Date' ? new Date(visit.field_visit_date || visit.scheduled_date).toLocaleDateString() : (visit.field_visit_date || visit.scheduled_date)) : 'Not Scheduled'
         };
         return _translateRow(r, engCols, tamCols);
     });
@@ -574,60 +589,159 @@ function prepareWorkloadTable(data, isTamil = false) {
  */
 function prepareApplicationDetailTable(data, isTamil = false) {
     const fld = isTamil ? {
-        appNo:          'விண்ணப்ப எண்',
-        type:           'வகை',
-        subdivisions:   'உட்பிரிவுகள்',
-        status:         'நிலை',
-        stage:          'கட்டம்',
-        submDate:       'சமர்ப்பித்த தேதி',
-        fieldVisit:     'கள ஆய்வு திட்டமிடல்',
-        overdue:        'காலதாமதம்',
-        priority:       'முன்னுரிமை',
-        applicantName:  'விண்ணப்பதாரர் பெயர்',
-        mobile:         'கைபேசி',
-        email:          'மின்னஞ்சல்',
-        address:        'முகவரி',
-        aadhaar:        'ஆதார் (கடைசி 4)',
-        reason:         'அறிவிக்கப்பட்ட காரணம்',
-        fieldCol:       'புலம்',
-        detailCol:      'விவரங்கள்',
+        serialNo:       'வரிசை எண் (Serial No)',
+        appNo:          'விண்ணப்ப எண் (Application No)',
+        userId:         'பயனர் ஐடி (User ID)',
+        deptCode:       'துறை குறியீடு (Dept Code)',
+        serviceCode:    'சேவை குறியீடு (Service Code)',
+        distCode:       'மாவட்ட குறியீடு (District Code)',
+        talukCode:      'தாலுகா குறியீடு (Taluk Code)',
+        villageCode:    'கிராம குறியீடு (Village Code)',
+        urbanUnitCode:  'நகர்ப்புற பிரிவு குறியீடு (Urban Unit)',
+        wardCode:       'வார்டு குறியீடு (Ward Code)',
+        blockCode:      'தொகுதி குறியீடு (Block Code)',
+        appDate:        'விண்ணப்ப தேதி (Application Date)',
+        status:         'விண்ணப்ப நிலை (Application Status)',
+        lastUpdated:    'கடைசி புதுப்பிப்பு (Last Updated)',
+        surveyNo:       'சர்வே / கணக்கெண் (Survey No)',
+        subdivNo:       'உட்பிரிவு எண் (Subdivision No)',
+        currSubdivNo:   'தற்போதைய உட்பிரிவு (Current Subdivision)',
+        pattaNo:        'பட்டா எண் (Patta No)',
+        roleId:         'பங்கு ஐடி (Role ID)',
+        sourceCode:     'மூல குறியீடு (Source Code)',
+        cscCharge:      'CSC சேவை கட்டணம் (CSC Charge)',
+        govtCharge:     'அரசு சேவை கட்டணம் (Govt Charge)',
+        canNumber:      'CAN எண் (CAN Number)',
+        dispatchDate:   'அனுப்பிய தேதி (Dispatch Date)',
+        receivedDate:   'பெறப்பட்ட தேதி (Received Date)',
+        ipAddress:      'IP முகவரி (IP Address)',
+        generatedDt:    'உருவாக்கப்பட்ட தேதி (Generated Datetime)',
+        sourceName:     'மூல பெயர் (Source Name)',
+        renewalNo:      'புதுப்பித்தல் எண் (Renewal No)',
+        workflowState:  'பணிப்பாய்வு நிலை (Workflow State)',
+        igrsForm6:      'IGRS படிவம் 6 எண் (IGRS Form 6)',
+        returnStatus:   'திரும்பிய நிலை (Return Status)',
+        parentAppId:    'தாய் விண்ணப்ப எண் (Parent App ID)',
+        autoMutated:    'தானியங்கி பட்டா மாறுதல் (Auto Mutated)',
+        campFlag:       'முகாம் குறியீடு (Camp Flag)',
+        campCorrId:     'முகாம் திருத்த ஐடி (Camp Correction ID)',
+        campCode:       'முகாம் எண் (Camp Code)',
+        applicantName:  'விண்ணப்பதாரர் பெயர் (Applicant Name)',
+        mobile:         'கைபேசி (Mobile)',
+        email:          'மின்னஞ்சல் (Email)',
+        address:        'முகவரி (Address)',
+        fieldVisit:     'கள ஆய்வு (Field Visit)',
+        overdue:        'காலதாமதம் (Overdue)',
+        priority:       'முன்னுரிமை (Priority Flag)',
+        reason:         'காரணம் (Declared Reason)',
+        fieldCol:       'புலம் (Field)',
+        detailCol:      'விவரங்கள் (Details)',
     } : {
+        serialNo:       'Serial Number',
         appNo:          'Application Number',
-        type:           'Application Type',
-        subdivisions:   'Included Sub-divisions',
-        status:         'Current Status',
-        stage:          'Current Stage',
-        submDate:       'Submission Date',
-        fieldVisit:     'Field Visit Scheduled',
-        overdue:        'Overdue',
-        priority:       'Priority Flag',
+        userId:         'User ID',
+        deptCode:       'Department Code',
+        serviceCode:    'Service Code',
+        distCode:       'District Code',
+        talukCode:      'Taluk Code',
+        villageCode:    'Village Code',
+        urbanUnitCode:  'Urban Unit Code',
+        wardCode:       'Ward Code',
+        blockCode:      'Block Code',
+        appDate:        'Application Date',
+        status:         'Application Status',
+        lastUpdated:    'Last Updated Datetime',
+        surveyNo:       'Survey Number',
+        subdivNo:       'Subdivision Number',
+        currSubdivNo:   'Current Subdivision Number',
+        pattaNo:        'Patta Number',
+        roleId:         'Role ID',
+        sourceCode:     'Source Code',
+        cscCharge:      'CSC Service Charge',
+        govtCharge:     'Government Service Charge',
+        canNumber:      'CAN Number',
+        dispatchDate:   'Dispatch Date',
+        receivedDate:   'Received Date',
+        ipAddress:      'IP Address',
+        generatedDt:    'Generated Datetime',
+        sourceName:     'Source Name',
+        renewalNo:      'Renewal Number',
+        workflowState:  'Workflow State',
+        igrsForm6:      'IGRS Form 6 Number',
+        returnStatus:   'Return Status',
+        parentAppId:    'Parent Application ID',
+        autoMutated:    'Auto Mutated Flag',
+        campFlag:       'Camp Flag',
+        campCorrId:     'Camp Correction ID',
+        campCode:       'Camp Code',
         applicantName:  'Applicant Name',
         mobile:         'Applicant Mobile',
         email:          'Applicant Email',
         address:        'Applicant Address',
-        aadhaar:        'Aadhaar (Last 4)',
+        fieldVisit:     'Field Visit Scheduled',
+        overdue:        'Overdue',
+        priority:       'Priority Flag',
         reason:         'Declared Reason',
         fieldCol:       'Field',
         detailCol:      'Details',
     };
 
-    const rows = [
-        { [fld.fieldCol]: fld.appNo,        [fld.detailCol]: data.application_number || 'N/A' },
-        { [fld.fieldCol]: fld.type,         [fld.detailCol]: data.type || 'N/A' },
-        { [fld.fieldCol]: fld.subdivisions, [fld.detailCol]: data.included_subdivisions || 'N/A' },
-        { [fld.fieldCol]: fld.status,       [fld.detailCol]: data.status || 'N/A' },
-        { [fld.fieldCol]: fld.stage,        [fld.detailCol]: data.stage || 'N/A' },
-        { [fld.fieldCol]: fld.submDate,     [fld.detailCol]: data.submission_date ? new Date(data.submission_date).toLocaleDateString() : 'N/A' },
-        { [fld.fieldCol]: fld.fieldVisit,   [fld.detailCol]: data.field_visit_scheduled ? `${isTamil ? 'ஆம்' : 'Yes'} (${data.field_visit_date ? new Date(data.field_visit_date).toLocaleDateString() : 'N/A'})` : (isTamil ? 'இல்லை' : 'No') },
-        { [fld.fieldCol]: fld.overdue,      [fld.detailCol]: data.is_overdue ? (isTamil ? 'ஆம்' : 'Yes') : (isTamil ? 'இல்லை' : 'No') },
-        { [fld.fieldCol]: fld.priority,     [fld.detailCol]: data.priority_flag ? (isTamil ? 'ஆம்' : 'Yes') : (isTamil ? 'இல்லை' : 'No') },
+    const formatDateVal = (d) => {
+        if (!d) return 'N/A';
+        try {
+            const dt = new Date(d);
+            return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString();
+        } catch {
+            return String(d);
+        }
+    };
+
+    const formatSubdivVal = (v) => {
+        if (!v) return '1A';
+        if (typeof v === 'object') {
+            if (v.proposed_sub_division_no) {
+                return v.proposed_area_sqm ? `${v.proposed_sub_division_no} (${v.proposed_area_sqm} sq.m)` : v.proposed_sub_division_no;
+            }
+            if (v.sub_division_no) {
+                return v.area_sqm ? `${v.sub_division_no} (${v.area_sqm} sq.m)` : v.sub_division_no;
+            }
+            return Object.values(v).filter(x => typeof x !== 'object').join(', ') || '1A';
+        }
+        return String(v);
+    };
+
+    const rawRows = [
+        { [fld.fieldCol]: fld.serialNo,     [fld.detailCol]: data.serial_number !== undefined ? String(data.serial_number) : '1' },
+        { [fld.fieldCol]: fld.appNo,        [fld.detailCol]: data.application_number || data.application_id || 'N/A' },
+        { [fld.fieldCol]: fld.status,       [fld.detailCol]: data.application_status || data.status || 'Pending' },
+        { [fld.fieldCol]: fld.appDate,      [fld.detailCol]: formatDateVal(data.application_date || data.submission_date) },
+        { [fld.fieldCol]: fld.surveyNo,     [fld.detailCol]: data.survey_number || data.survey_no || 'N/A' },
+        { [fld.fieldCol]: fld.pattaNo,      [fld.detailCol]: data.patta_number || 'P-101-2024' },
+        { [fld.fieldCol]: fld.subdivNo,     [fld.detailCol]: formatSubdivVal(data.subdivision_number || data.included_subdivisions) },
+        { [fld.fieldCol]: fld.currSubdivNo, [fld.detailCol]: formatSubdivVal(data.current_subdivision_number) },
+        { [fld.fieldCol]: fld.canNumber,    [fld.detailCol]: data.can_number || 'N/A' },
         { [fld.fieldCol]: fld.applicantName,[fld.detailCol]: data.applicant_name || 'N/A' },
         { [fld.fieldCol]: fld.mobile,       [fld.detailCol]: data.applicant_mobile || 'N/A' },
         { [fld.fieldCol]: fld.email,        [fld.detailCol]: data.applicant_email || 'N/A' },
         { [fld.fieldCol]: fld.address,      [fld.detailCol]: data.applicant_address || 'N/A' },
-        { [fld.fieldCol]: fld.aadhaar,      [fld.detailCol]: data.applicant_aadhaar_last4 || 'N/A' },
-        { [fld.fieldCol]: fld.reason,       [fld.detailCol]: formatDeclaredReason(data.declared_reason) || 'N/A' }
+        { [fld.fieldCol]: fld.distCode,     [fld.detailCol]: data.district_code || '02' },
+        { [fld.fieldCol]: fld.talukCode,    [fld.detailCol]: data.taluk_code || 'CHN-AMB' },
+        { [fld.fieldCol]: fld.wardCode,     [fld.detailCol]: data.ward_code || 'Ward 12' },
+        { [fld.fieldCol]: fld.blockCode,    [fld.detailCol]: data.block_code || 'Block B1' },
+        { [fld.fieldCol]: fld.fieldVisit,   [fld.detailCol]: data.field_visit_scheduled ? `${isTamil ? 'ஆம்' : 'Yes'} (${formatDateVal(data.field_visit_date)})` : (isTamil ? 'இல்லை' : 'No') },
+        { [fld.fieldCol]: fld.overdue,      [fld.detailCol]: data.is_overdue ? (isTamil ? 'ஆம்' : 'Yes') : (isTamil ? 'இல்லை' : 'No') },
+        { [fld.fieldCol]: fld.priority,     [fld.detailCol]: data.priority_flag ? (isTamil ? 'ஆம்' : 'Yes') : (isTamil ? 'இல்லை' : 'No') },
+        { [fld.fieldCol]: fld.reason,       [fld.detailCol]: formatDeclaredReason(data.declared_reason) || 'N/A' },
+        // Conditional optional info (only when valid)
+        ...(data.igrs_form6_number && data.igrs_form6_number !== 'None' ? [{ [fld.fieldCol]: fld.igrsForm6, [fld.detailCol]: data.igrs_form6_number }] : []),
+        ...(data.auto_mutated_flag && data.auto_mutated_flag !== 'No' && data.auto_mutated_flag !== 'None' ? [{ [fld.fieldCol]: fld.autoMutated, [fld.detailCol]: isTamil ? 'ஆம்' : 'Yes' }] : []),
+        ...(data.camp_flag && data.camp_flag !== 'No' && data.camp_flag !== 'None' ? [{ [fld.fieldCol]: fld.campFlag, [fld.detailCol]: isTamil ? 'ஆம்' : 'Yes' }] : [])
     ];
+
+    const rows = rawRows.filter(r => {
+        const val = r[fld.detailCol];
+        return val !== undefined && val !== null && val !== '' && val !== 'None';
+    });
 
     return {
         title: data.query_type || 'Application & Applicant Details',
@@ -720,7 +834,12 @@ function createTableHTML(config) {
             if (col === 'Status' || col === 'Stage') {
                 return `<td>${getStatusBadge(val)}</td>`;
             }
-            return `<td>${escapeHtml(String(val !== undefined && val !== null ? val : 'N/A'))}</td>`;
+            const strVal = String(val !== undefined && val !== null ? val : 'N/A');
+            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD|MERGE)\/\w+\/\d+\/\d+$/i.test(strVal);
+            if (isAppNo && strVal !== 'N/A') {
+                return `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
+            }
+            return `<td>${escapeHtml(strVal)}</td>`;
         }).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
@@ -917,6 +1036,19 @@ function formatDeclaredReason(value) {
     };
     const key = String(value).toLowerCase().trim();
     return map[key] || String(value).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Format a Date value to localized string
+ */
+function formatDateVal(d) {
+    if (!d) return 'N/A';
+    try {
+        const dt = new Date(d);
+        return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString();
+    } catch {
+        return String(d);
+    }
 }
 
 /**

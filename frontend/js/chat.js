@@ -284,7 +284,7 @@ function renderMessagesFromHistory() {
     
     // Render each message
     messageHistory.forEach(msg => {
-        renderMessage(msg.role, msg.content, msg.timestamp, msg.language || 'auto', true);
+        renderMessage(msg.role, msg.content, msg.timestamp, msg.language || 'auto', true, msg.tableData || null);
     });
     
     // Scroll to bottom
@@ -483,6 +483,11 @@ async function sendMessage() {
         quickSuggestions.style.display = 'none';
     }
     
+    // Snapshot the conversation history BEFORE the current message is stored,
+    // otherwise the backend prompt repeats this question in both the
+    // CONVERSATION HISTORY block and the USER QUESTION block.
+    const chatHistory = window.chatStorage ? window.chatStorage.getForAPI(10) : [];
+
     // Save user message to localStorage before rendering
     const userTimestamp = new Date().toISOString();
     if (window.chatStorage) {
@@ -510,8 +515,7 @@ async function sendMessage() {
     }, 90000);
     
     try {
-        // Get chat history from sessionStorage for context (last 10 messages)
-        const chatHistory = window.chatStorage ? window.chatStorage.getForAPI(10) : [];
+        // chatHistory was snapshotted above, before the current message was stored
         console.log('=== CHAT HISTORY FOR CONTEXT ===');
         console.log(`📝 Including ${chatHistory.length} previous messages`);
         console.log('History:', JSON.stringify(chatHistory, null, 2));
@@ -671,7 +675,8 @@ async function sendMessage() {
         // Save assistant response to localStorage
         if (aiResponse) {
             if (window.chatStorage) {
-                window.chatStorage.addMessage('assistant', aiResponse, 'auto');
+                // Persist the table payload too, so tables survive a page refresh
+                window.chatStorage.addMessage('assistant', aiResponse, 'auto', capturedTableData);
             }
             messageHistory = window.chatStorage ? window.chatStorage.load() : [];
         }
@@ -711,16 +716,25 @@ async function sendMessage() {
  * Handle Application Chip Click
  */
 window.handleAppChipClick = function(element) {
-    const appNumber = element.getAttribute('data-app');
+    const appNumber = element.getAttribute('data-app') || element.innerText.trim();
     if (appNumber) {
-        const query = `What is the status of ${appNumber}?`;
-        if (messageInput) {
-            messageInput.value = query;
-            handleInputChange();
-            sendMessage();
-        }
+        window.handleAppClick(appNumber);
     }
-}
+};
+
+/**
+ * Handle Application Click from tables, links, or text
+ */
+window.handleAppClick = function(appNumber) {
+    if (!appNumber) return;
+    const cleanApp = String(appNumber).trim();
+    const query = `Show details for ${cleanApp}`;
+    if (messageInput) {
+        messageInput.value = query;
+        handleInputChange();
+        sendMessage();
+    }
+};
 
 /**
  * Render message in chat

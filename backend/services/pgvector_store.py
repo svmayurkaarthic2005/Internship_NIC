@@ -284,8 +284,7 @@ def similarity_search(
     # ── 2. Language normalisation (full words → ISO codes) ──────
     _lang_map = {"english": "en", "tamil": "ta"}
 
-    # ── 3. Build SQL with optional WHERE clause ──────────────────────────
-    params: Dict[str, Any] = {"vec": query_vec, "n": n_results}
+    params: Dict[str, Any] = {"vec": str(query_vec), "n": n_results}
     where_clauses: List[str] = []
 
     if where_filter:
@@ -306,10 +305,10 @@ def similarity_search(
             section,
             language,
             page,
-            embedding <=> %(vec)s  AS distance
+            embedding <=> %(vec)s::vector  AS distance
         FROM knowledge_embeddings
         {where_sql}
-        ORDER BY embedding <=> %(vec)s
+        ORDER BY embedding <=> %(vec)s::vector
         LIMIT %(n)s;
     """
 

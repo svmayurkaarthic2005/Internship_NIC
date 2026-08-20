@@ -69,13 +69,42 @@ async def get_jurisdiction_filter(db: AsyncSession, officer: OfficerContext):
         return []
 
 
+def format_survey_with_subdivisions(survey_no: Optional[str], subdiv_list: List[str]) -> str:
+    """Format survey number alongside its sub-division numbers (e.g. 155/1A, 155/1B or 154/1)."""
+    if not subdiv_list:
+        return "-"
+    base_survey = str(survey_no).strip() if survey_no and str(survey_no).upper() not in ("N/A", "NONE", "") else ""
+    formatted = []
+    for s in subdiv_list:
+        if not s or str(s).strip() in ("None", "N/A", "-", ""):
+            continue
+        s_str = str(s).strip()
+        if '/' in s_str:
+            formatted.append(s_str)
+        elif base_survey:
+            formatted.append(f"{base_survey}/{s_str}")
+        else:
+            formatted.append(s_str)
+    if formatted:
+        return ", ".join(formatted)
+    return "-"
+
+
 async def get_officer_applications(
     db: AsyncSession,
     officer: OfficerContext,
     status: Optional[Any] = None,
-    application_type: Optional[str] = None,
+    application_type: Optional[Any] = None,
     submission_year: Optional[int] = None,
-    submission_month: Optional[int] = None
+    submission_month: Optional[int] = None,
+    taluk_name: Optional[str] = None,
+    ward_number: Optional[str] = None,
+    block_number: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    is_overdue: Optional[bool] = None,
+    stage: Optional[str] = None,
+    exclude_date_range: bool = False
 ) -> Dict[str, Any]:
     """
     Get applications assigned to officer with optional filters.
@@ -90,9 +119,28 @@ async def get_officer_applications(
         from sqlalchemy.orm import selectinload
 
         # Get the officer's stage (SIS/DIS/SD/Tahsildar)
-        officer_stage = officer.officer_stage
+        officer_stage = stage or officer.officer_stage or "SIS"
         
-        where_clauses = [Application.assigned_officer_id == officer.officer_id]
+        if getattr(officer, 'jurisdiction_type', None) == "district":
+            # District officers see every application in their district (not just the ones
+            # assigned to them) — but still only inside their own jurisdiction.
+            where_clauses = []
+            jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+            if jurisdiction_filters:
+                jurisdiction_subquery = (
+                    select(SurveyNumber.id)
+                    .join(Block, SurveyNumber.block_id == Block.id)
+                    .join(Ward, Block.ward_id == Ward.id)
+                    .join(Town, Ward.town_id == Town.id)
+                    .join(Taluk, Town.taluk_id == Taluk.id)
+                    .join(District, Taluk.district_id == District.id)
+                    .where(or_(*jurisdiction_filters))
+                    .scalar_subquery()
+                )
+                where_clauses.append(Application.survey_number_id.in_(jurisdiction_subquery))
+        else:
+            where_clauses = [Application.assigned_officer_id == officer.officer_id]
+
         is_historical = (
             (isinstance(status, list) and any(s in ["approved", "rejected", "closed"] for s in status))
             or (isinstance(status, str) and status in ["approved", "rejected", "closed"])
@@ -102,8 +150,13 @@ async def get_officer_applications(
 
         query = select(Application).options(
             selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
-            selectinload(Application.application_sub_divisions).selectinload(ApplicationSubDivision.sub_division)
-        ).where(and_(*where_clauses))
+            selectinload(Application.survey_number).selectinload(SurveyNumber.sub_divisions),
+            selectinload(Application.application_sub_divisions).selectinload(ApplicationSubDivision.sub_division),
+            selectinload(Application.applicant)
+        ).where(and_(True, *where_clauses))
+
+        if is_overdue is not None:
+            query = query.where(Application.is_overdue == is_overdue)
 
         if status:
             if isinstance(status, list):
@@ -112,17 +165,42 @@ async def get_officer_applications(
                 query = query.where(Application.current_status == status)
         
         if application_type:
-            query = query.where(Application.application_type == application_type)
+            if isinstance(application_type, list):
+                query = query.where(Application.application_type.in_(application_type))
+            else:
+                query = query.where(Application.application_type == application_type)
         
-        # Filter by submission year if provided
-        if submission_year:
-            from sqlalchemy import extract
-            query = query.where(extract('year', Application.submission_date) == submission_year)
-        
-        # Filter by submission month if provided
-        if submission_month:
-            from sqlalchemy import extract
-            query = query.where(extract('month', Application.submission_date) == submission_month)
+        # Filter by date range if provided (takes precedence over year/month)
+        if start_date and end_date:
+            if exclude_date_range:
+                # NOT BETWEEN: applications OUTSIDE the given range
+                query = query.where(
+                    or_(
+                        Application.submission_date < start_date,
+                        Application.submission_date > end_date
+                    )
+                )
+            else:
+                query = query.where(
+                    and_(
+                        Application.submission_date >= start_date,
+                        Application.submission_date <= end_date
+                    )
+                )
+        elif start_date:
+            query = query.where(Application.submission_date >= start_date)
+        elif end_date:
+            query = query.where(Application.submission_date <= end_date)
+        else:
+            # Filter by submission year if provided (only when no date range)
+            if submission_year:
+                from sqlalchemy import extract
+                query = query.where(extract('year', Application.submission_date) == submission_year)
+            
+            # Filter by submission month if provided
+            if submission_month:
+                from sqlalchemy import extract
+                query = query.where(extract('month', Application.submission_date) == submission_month)
         
         result = await db.execute(query)
         applications = result.scalars().all()
@@ -133,6 +211,7 @@ async def get_officer_applications(
             block = sn.block if sn else None
             ward = block.ward if block else None
             town = ward.town if ward else None
+            applicant = app.applicant if app else None
             
             # VALIDATION: Log missing relationships for debugging
             if not sn:
@@ -154,6 +233,29 @@ async def get_officer_applications(
                 "block": block.block_number if block else "N/A"
             }
             
+            # Extract all sub-division numbers for this application
+            subdiv_list = []
+            if app.application_sub_divisions:
+                for assoc in app.application_sub_divisions:
+                    sd_val = assoc.proposed_sub_division_no or (assoc.sub_division.sub_division_no if assoc.sub_division else None)
+                    if sd_val:
+                        clean_sd = str(sd_val).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+            if not subdiv_list and sn and sn.sub_divisions:
+                for sd in sn.sub_divisions:
+                    if sd.sub_division_no:
+                        clean_sd = str(sd.sub_division_no).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+
+            base_survey_no = sn.survey_no if sn else "N/A"
+            subdivisions_str = format_survey_with_subdivisions(base_survey_no, subdiv_list)
+
             # Build merge-specific fields if this is a MERGE application
             if app.application_type == "MERGE":
                 subdivisions_being_merged = []
@@ -177,7 +279,10 @@ async def get_officer_applications(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
                     "is_overdue": app.is_overdue,
-                    "survey_no": sn.survey_no if sn else "N/A",
+                    "survey_no": base_survey_no,
+                    "raw_survey_no": base_survey_no,
+                    "subdivisions": subdivisions_str,
+                    "sub_division_no": subdivisions_str,
                     "subdivisions_being_merged": subdivisions_being_merged,
                     "total_merge_area_sqm": total_area if total_area > 0 else None,
                     "district_name": district.name if district else "N/A",
@@ -185,7 +290,11 @@ async def get_officer_applications(
                     "town_name": town.name if town else "N/A",
                     "ward_number": ward.ward_number if ward else "N/A",
                     "block_number": block.block_number if block else "N/A",
-                    "jurisdiction": jur_dict
+                    "jurisdiction": jur_dict,
+                    "applicant_name": applicant.name if applicant else "N/A",
+                    "applicant_email": applicant.email if applicant else "N/A",
+                    "applicant_mobile": applicant.mobile if applicant else "N/A",
+                    "applicant_address": applicant.address if applicant else "N/A"
                 })
             else:
                 app_rows.append({
@@ -195,19 +304,31 @@ async def get_officer_applications(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
                     "is_overdue": app.is_overdue,
+                    "survey_no": base_survey_no,
+                    "raw_survey_no": base_survey_no,
+                    "subdivisions": subdivisions_str,
+                    "sub_division_no": subdivisions_str,
                     "district_name": district.name if district else "N/A",
                     "taluk_name": taluk.name if taluk else "N/A",
                     "town_name": town.name if town else "N/A",
                     "ward_number": ward.ward_number if ward else "N/A",
                     "block_number": block.block_number if block else "N/A",
                     "jurisdiction": jur_dict,
-                    "included_subdivisions": ", ".join([
-                        assoc.sub_division.sub_division_no
-                        for assoc in app.application_sub_divisions
-                        if assoc.sub_division and assoc.sub_division.sub_division_no
-                    ]) or "None"
+                    "applicant_name": applicant.name if applicant else "N/A",
+                    "applicant_email": applicant.email if applicant else "N/A",
+                    "applicant_mobile": applicant.mobile if applicant else "N/A",
+                    "applicant_address": applicant.address if applicant else "N/A",
+                    "included_subdivisions": ", ".join(subdiv_list) or "None"
                 })
         
+        # Optional geography post-filtering
+        if taluk_name:
+            app_rows = [r for r in app_rows if taluk_name.lower() in r.get("taluk_name", "").lower()]
+        if ward_number:
+            app_rows = [r for r in app_rows if str(ward_number).lower() in r.get("ward_number", "").lower()]
+        if block_number:
+            app_rows = [r for r in app_rows if str(block_number).lower() in r.get("block_number", "").lower()]
+
         return {
             "count": len(app_rows),
             "applications": app_rows,
@@ -221,33 +342,50 @@ async def get_officer_applications(
 async def get_pending_applications(
     db: AsyncSession,
     officer: OfficerContext,
-    application_type: Optional[str] = None,
+    application_type: Optional[Any] = None,
     status: Optional[Any] = None,
     submission_year: Optional[int] = None,
-    submission_month: Optional[int] = None
+    submission_month: Optional[int] = None,
+    taluk_name: Optional[str] = None,
+    ward_number: Optional[str] = None,
+    block_number: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    is_overdue: Optional[bool] = None,
+    stage: Optional[str] = None,
+    exclude_date_range: bool = False
 ) -> Dict[str, Any]:
     """
-    Get applications for officer with optional status, year, and month filter.
+    Get applications for officer with optional status, year, month, date-range, and geography filters.
     By default, returns both 'pending' and 'in_progress' applications.
-    Pass a specific status string or list to filter differently.
-    Pass submission_year to filter by year (e.g., 2025).
-    Pass submission_month to filter by month (1-12).
+    When a date range (start_date/end_date) is provided, show all statuses within that range.
     """
-    if status is None and not submission_year:
+    if status is None and not submission_year and not start_date and not end_date and is_overdue is None:
         status = ["pending", "in_progress"]
     return await get_officer_applications(
         db, officer, 
         status=status, 
         application_type=application_type, 
         submission_year=submission_year,
-        submission_month=submission_month
+        submission_month=submission_month,
+        taluk_name=taluk_name,
+        ward_number=ward_number,
+        block_number=block_number,
+        start_date=start_date,
+        end_date=end_date,
+        is_overdue=is_overdue,
+        stage=stage,
+        exclude_date_range=exclude_date_range
     )
 
 
 async def get_overdue_applications(
     db: AsyncSession,
     officer: OfficerContext,
-    application_type: Optional[str] = None
+    application_type: Optional[str] = None,
+    min_days_overdue: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None
 ) -> Dict[str, Any]:
     """
     Get overdue applications within officer's jurisdiction AND stage
@@ -263,7 +401,10 @@ async def get_overdue_applications(
         officer_stage = officer.officer_stage
         
         query = select(Application).options(
-            selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district)
+            selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
+            selectinload(Application.survey_number).selectinload(SurveyNumber.sub_divisions),
+            selectinload(Application.application_sub_divisions).selectinload(ApplicationSubDivision.sub_division),
+            selectinload(Application.applicant)
         ).join(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
         ).join(
@@ -280,6 +421,7 @@ async def get_overdue_applications(
             and_(
                 or_(*jurisdiction_filters),
                 Application.current_stage == officer_stage,  # CRITICAL FIX: Filter by stage
+                Application.current_status != 'rejected',  # Exclude rejected apps (ghost data)
                 Application.is_overdue == True
             )
         )
@@ -289,10 +431,15 @@ async def get_overdue_applications(
                 query = query.where(Application.application_type.in_(["ISD", "MERGE"]))
             else:
                 query = query.where(Application.application_type == application_type)
+        if start_date:
+            query = query.where(Application.submission_date >= start_date)
+        if end_date:
+            query = query.where(Application.submission_date <= end_date)
             
         result = await db.execute(query)
         applications = result.scalars().all()
         
+        today = datetime.now().date()
         app_rows = []
         for app in applications:
             sn = app.survey_number
@@ -301,6 +448,7 @@ async def get_overdue_applications(
             town = ward.town if ward else None
             taluk = town.taluk if town else None
             district = taluk.district if taluk else None
+            applicant = app.applicant if app else None
             jur_dict = {
                 "district": district.name if district else "N/A",
                 "taluk": taluk.name if taluk else "N/A",
@@ -308,25 +456,110 @@ async def get_overdue_applications(
                 "ward": ward.ward_number if ward else "N/A",
                 "block": block.block_number if block else "N/A"
             }
-            app_rows.append({
-                "application_number": app.application_number,
-                "type": app.application_type,
-                "status": app.current_status,
-                "stage": app.current_stage,
-                "submission_date": app.submission_date.isoformat() if app.submission_date else None,
-                "days_overdue": (datetime.now().date() - app.submission_date).days - 15 if app.submission_date else 0,
-                "is_overdue": True,
-                "district_name": district.name if district else "N/A",
-                "taluk_name": taluk.name if taluk else "N/A",
-                "town_name": town.name if town else "N/A",
-                "ward_number": ward.ward_number if ward else "N/A",
-                "block_number": block.block_number if block else "N/A",
-                "jurisdiction": jur_dict
-            })
+
+            # Calculate accurate days overdue
+            if app.field_visit_date and app.field_visit_date < today:
+                calc_days_overdue = (today - app.field_visit_date).days
+            elif app.submission_date:
+                calc_days_overdue = max(1, (today - app.submission_date).days - 15)
+            else:
+                calc_days_overdue = 1
+
+            if min_days_overdue is not None and calc_days_overdue < min_days_overdue:
+                continue
+
+            subdiv_list = []
+            if app.application_sub_divisions:
+                for assoc in app.application_sub_divisions:
+                    sd_val = assoc.proposed_sub_division_no or (assoc.sub_division.sub_division_no if assoc.sub_division else None)
+                    if sd_val:
+                        clean_sd = str(sd_val).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+            if not subdiv_list and sn and sn.sub_divisions:
+                for sd in sn.sub_divisions:
+                    if sd.sub_division_no:
+                        clean_sd = str(sd.sub_division_no).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+
+            base_survey_no = sn.survey_no if sn else "N/A"
+            subdivisions_str = format_survey_with_subdivisions(base_survey_no, subdiv_list)
+
+            if app.application_type == "MERGE":
+                subdivisions_being_merged = []
+                total_area = 0.0
+                for assoc in app.application_sub_divisions:
+                    sd = assoc.sub_division
+                    if sd:
+                        raw_area = assoc.proposed_area_sqm or sd.area_sqm
+                        area = float(raw_area) if raw_area else None
+                        if area:
+                            total_area += area
+                        subdivisions_being_merged.append({
+                            "sub_division_no": sd.sub_division_no,
+                            "area_sqm": area
+                        })
+
+                app_rows.append({
+                    "application_number": app.application_number,
+                    "type": app.application_type,
+                    "status": app.current_status,
+                    "stage": app.current_stage,
+                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                    "days_overdue": calc_days_overdue,
+                    "is_overdue": True,
+                    "survey_no": base_survey_no,
+                    "raw_survey_no": base_survey_no,
+                    "subdivisions": subdivisions_str,
+                    "sub_division_no": subdivisions_str,
+                    "subdivisions_being_merged": subdivisions_being_merged,
+                    "total_merge_area_sqm": total_area if total_area > 0 else None,
+                    "district_name": district.name if district else "N/A",
+                    "taluk_name": taluk.name if taluk else "N/A",
+                    "town_name": town.name if town else "N/A",
+                    "ward_number": ward.ward_number if ward else "N/A",
+                    "block_number": block.block_number if block else "N/A",
+                    "jurisdiction": jur_dict,
+                    "applicant_name": applicant.name if applicant else "N/A",
+                    "applicant_email": applicant.email if applicant else "N/A",
+                    "applicant_mobile": applicant.mobile if applicant else "N/A",
+                    "applicant_address": applicant.address if applicant else "N/A"
+                })
+            else:
+                app_rows.append({
+                    "application_number": app.application_number,
+                    "type": app.application_type,
+                    "status": app.current_status,
+                    "stage": app.current_stage,
+                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                    "days_overdue": calc_days_overdue,
+                    "is_overdue": True,
+                    "survey_no": base_survey_no,
+                    "raw_survey_no": base_survey_no,
+                    "subdivisions": subdivisions_str,
+                    "sub_division_no": subdivisions_str,
+                    "district_name": district.name if district else "N/A",
+                    "taluk_name": taluk.name if taluk else "N/A",
+                    "town_name": town.name if town else "N/A",
+                    "ward_number": ward.ward_number if ward else "N/A",
+                    "block_number": block.block_number if block else "N/A",
+                    "jurisdiction": jur_dict,
+                    "applicant_name": applicant.name if applicant else "N/A",
+                    "applicant_email": applicant.email if applicant else "N/A",
+                    "applicant_mobile": applicant.mobile if applicant else "N/A",
+                    "applicant_address": applicant.address if applicant else "N/A",
+                    "included_subdivisions": ", ".join(subdiv_list) or "None"
+                })
 
         return {
             "count": len(app_rows),
             "jurisdiction_type": officer.jurisdiction_type,
+            "min_days_overdue": min_days_overdue,
             "applications": app_rows
         }
     except Exception as e:
@@ -498,7 +731,10 @@ async def get_officer_workload(
         
         overdue_count = await db.execute(
             base_query.where(
-                Application.is_overdue == True
+                and_(
+                    Application.is_overdue == True,
+                    Application.current_status.in_(["pending", "in_progress"])
+                )
             )
         )
         
@@ -543,7 +779,8 @@ async def get_application_detail(
         from sqlalchemy.orm import joinedload, selectinload
         query = select(Application).options(
             joinedload(Application.applicant),
-            selectinload(Application.survey_number),
+            selectinload(Application.assigned_officer),
+            selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
             selectinload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
             selectinload(Application.field_visits)
         ).where(
@@ -574,7 +811,92 @@ async def get_application_detail(
         app = result.scalar_one_or_none()
         
         if not app:
-            return {"found": False, "message": f"Application {application_number} not found"}
+            # 1. Try normalized candidate formats (zero padding sequence to 6 digits, e.g. 2026/0155/02/000001 or 2026/0155/02/000011)
+            candidate_numbers = []
+            if "/" in application_number:
+                parts = application_number.strip().split("/")
+                if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit() and parts[3].isdigit():
+                    candidate_numbers.append(f"{parts[0]}/{parts[1].zfill(4)}/{parts[2].zfill(2)}/{parts[3].zfill(6)}")
+                    candidate_numbers.append(f"{parts[0]}/{parts[2].zfill(2)}/{parts[1].zfill(4)}/{parts[3].zfill(6)}")
+
+            for cand in candidate_numbers:
+                if cand != application_number:
+                    cand_query = select(Application).options(
+                        joinedload(Application.applicant),
+                        selectinload(Application.assigned_officer),
+                        selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
+                        selectinload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
+                        selectinload(Application.field_visits)
+                    ).where(Application.application_number == cand)
+                    if officer and jurisdiction_filters:
+                        cand_query = cand_query.where(Application.id.in_(jurisdiction_subquery))
+                    cand_res = await db.execute(cand_query)
+                    cand_app = cand_res.scalar_one_or_none()
+                    if cand_app:
+                        app = cand_app
+                        break
+
+            # 2. Try prefix/wildcard search (e.g. 2026/0155/02/00001 matches 2026/0155/02/000011, 2026/0155/02/000012)
+            if not app:
+                prefix_query = select(Application).options(
+                    joinedload(Application.applicant),
+                    selectinload(Application.assigned_officer),
+                    selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
+                    selectinload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
+                    selectinload(Application.field_visits)
+                ).where(Application.application_number.ilike(f"{application_number.strip()}%"))
+                if officer and jurisdiction_filters:
+                    prefix_query = prefix_query.where(Application.id.in_(jurisdiction_subquery))
+                prefix_res = await db.execute(prefix_query)
+                prefix_apps = prefix_res.scalars().all()
+
+                if len(prefix_apps) == 1:
+                    app = prefix_apps[0]
+                elif len(prefix_apps) > 1:
+                    suggestions = [
+                        {
+                            "application_number": pa.application_number,
+                            "type": pa.application_type,
+                            "status": pa.current_status,
+                            "stage": pa.current_stage,
+                            "applicant_name": pa.applicant.name if pa.applicant else "N/A"
+                        }
+                        for pa in prefix_apps[:6]
+                    ]
+                    return {
+                        "found": False,
+                        "message": f"Application {application_number} not found. Found {len(prefix_apps)} matching applications.",
+                        "suggestions": suggestions,
+                        "searched_number": application_number,
+                        "query_type": "Application Suggestions"
+                    }
+
+            # 3. Fallback: Return recent applications in officer's jurisdiction as suggestions
+            if not app:
+                recent_query = select(Application).options(
+                    joinedload(Application.applicant)
+                ).order_by(Application.created_at.desc()).limit(6)
+                if officer and jurisdiction_filters:
+                    recent_query = recent_query.where(Application.id.in_(jurisdiction_subquery))
+                recent_res = await db.execute(recent_query)
+                recent_apps = recent_res.scalars().all()
+                suggestions = [
+                    {
+                        "application_number": ra.application_number,
+                        "type": ra.application_type,
+                        "status": ra.current_status,
+                        "stage": ra.current_stage,
+                        "applicant_name": ra.applicant.name if ra.applicant else "N/A"
+                    }
+                    for ra in recent_apps
+                ]
+                return {
+                    "found": False,
+                    "message": f"Application {application_number} not found.",
+                    "suggestions": suggestions,
+                    "searched_number": application_number,
+                    "query_type": "Application Suggestions"
+                }
             
         # Compile proposed sub-divisions with full detail
         sub_divisions_list = []
@@ -652,6 +974,21 @@ async def get_application_detail(
                 "area_verified": latest_visit.area_verified
             }
 
+        # Survey & geography hierarchy
+        sn = app.survey_number
+        block = sn.block if sn else None
+        ward = block.ward if block else None
+        town = ward.town if ward else None
+        taluk = town.taluk if town else None
+        district = taluk.district if taluk else None
+        jur_dict = {
+            "district": district.name if district else "N/A",
+            "taluk": taluk.name if taluk else "N/A",
+            "town": town.name if town else "N/A",
+            "ward": (ward.ward_name or f"Ward {ward.ward_number}") if ward else "N/A",
+            "block": (block.block_name or f"Block {block.block_number}") if block else "N/A"
+        }
+
         return {
             "found": True,
             "application_number": app.application_number,
@@ -662,12 +999,18 @@ async def get_application_detail(
             "submission_channel": app.submission_channel,
             "is_overdue": app.is_overdue,
             "priority_flag": app.priority_flag,
+            "district_name": district.name if district else "N/A",
+            "taluk_name": taluk.name if taluk else "N/A",
+            "town_name": town.name if town else "N/A",
+            "ward_number": ward.ward_number if ward else "N/A",
+            "block_number": block.block_number if block else "N/A",
+            "jurisdiction": jur_dict,
             # Applicant
             "applicant_name": app.applicant.name if app.applicant else None,
             "applicant_mobile": app.applicant.mobile if app.applicant else None,
             "applicant_email": app.applicant.email if app.applicant else None,
             "applicant_address": app.applicant.address if app.applicant else None,
-            "applicant_aadhaar_last4": app.applicant.aadhaar_last4 if app.applicant else None,
+            "can_number": getattr(app, 'can_number', None),
             "applicant": {
                 "name": app.applicant.name,
                 "mobile": app.applicant.mobile,
@@ -687,10 +1030,48 @@ async def get_application_detail(
                 {"transfer_order_number": pt.transfer_order_number, "status": pt.status}
                 for pt in patta_transfers
             ],
-            # Survey
             "survey_no": app.survey_number.survey_no if app.survey_number else "N/A",
+            "survey_number": app.survey_number.survey_no if app.survey_number else "N/A",
+            "subdivision_number": ", ".join(sub_divisions_list) if sub_divisions_list else (subdivisions_being_merged[0]["sub_division_no"] if (subdivisions_being_merged and isinstance(subdivisions_being_merged[0], dict)) else None),
+            "current_subdivision_number": (proposed_sub_divisions[0]["proposed_sub_division_no"] if (proposed_sub_divisions and isinstance(proposed_sub_divisions[0], dict)) else (sub_divisions_list[0] if sub_divisions_list else None)),
+            "patta_number": app.survey_number.patta_number if app.survey_number else None,
+            "serial_number": int(app.application_number.split('/')[-1]) if '/' in app.application_number and app.application_number.split('/')[-1].isdigit() else None,
+            "application_id": app.application_number,
+            "user_id": app.assigned_officer.employee_id if app.assigned_officer else None,
+            "role_id": app.assigned_officer.designation if app.assigned_officer else None,
+            "department_code": None,
+            "service_code": app.application_number.split('/')[1] if '/' in app.application_number else ("0154" if app.application_type == "ISD" else ("0153" if app.application_type == "NISD" else "0155")),
+            "district_code": district.district_code if (district and hasattr(district, 'district_code') and district.district_code) else (app.application_number.split('/')[2] if '/' in app.application_number else None),
+            "taluk_code": taluk.taluk_code if (taluk and hasattr(taluk, 'taluk_code') and taluk.taluk_code) else None,
+            "village_code": None,
+            "urban_unit_code": None,
+            "ward_code": f"Ward {ward.ward_number}" if ward else None,
+            "block_code": f"Block {block.block_number}" if block else None,
+            "application_date": app.submission_date.isoformat(),
+            "application_status": app.current_status,
+            "workflow_state": app.current_stage,
+            "return_status": getattr(app, 'return_status', None),
+            "renewal_number": getattr(app, 'renewal_number', None),
+            "parent_application_id": getattr(app, 'parent_application_id', None),
+            "auto_mutated_flag": getattr(app, 'is_auto_mutated', None),
+            "is_auto_mutated": getattr(app, 'is_auto_mutated', None),
+            "igrs_auto_mutation_flag": getattr(app, 'igrs_auto_mutation_flag', None),
+            "camp_flag": getattr(app, 'camp_flag', None),
+            "camp_code": getattr(app, 'camp_code', None),
+            "camp_correction_id": getattr(app, 'camp_correction_id', None),
+            "igrs_form6_number": getattr(app, 'igrs_form6_number', None),
+            "csc_service_charge": getattr(app, 'csc_service_charge', None),
+            "government_service_charge": getattr(app, 'government_service_charge', None),
+            "ip_address": getattr(app, 'ip_address', None),
+            "source_code": app.submission_channel or None,
+            "source_name": "Common Service Center (CSC)" if app.submission_channel == "CSC" else ("Citizen Portal" if app.submission_channel == "citizen" else ("Sub Registrar Office (IGRS)" if app.submission_channel == "sub_registrar" else None)),
+            "dispatch_date": None if app.current_status == "pending" else app.submission_date.isoformat(),
+            "received_date": app.submission_date.isoformat(),
+            "generated_datetime": app.submission_date.isoformat() if app.submission_date else None,
+            "last_updated_datetime": app.submission_date.isoformat() if app.submission_date else None,
             "survey_total_area_sqm": survey_total_area,
             "proposed_total_area_sqm": proposed_total_area,
+            "area_sqm": total_merge_area if total_merge_area else (proposed_total_area if proposed_total_area else survey_total_area),
             "area_match": abs(survey_total_area - proposed_total_area) < 1.0 if (survey_total_area and proposed_total_area) else None,
             # Application details
             "declared_reason": app.declared_reason,
@@ -780,11 +1161,11 @@ async def get_survey_detail(
             "has_encroachment": survey.has_encroachment,
             "has_litigation": survey.has_litigation,
             "jurisdiction": {
-                "district": district.name,
-                "taluk": taluk.name,
-                "town": town.name,
-                "ward": ward.ward_name,
-                "block": block.block_name
+                "district": district.name if district else "N/A",
+                "taluk": taluk.name if taluk else "N/A",
+                "town": town.name if town else "N/A",
+                "ward": (ward.ward_name or f"Ward {ward.ward_number}") if ward else "N/A",
+                "block": (block.block_name or f"Block {block.block_number}") if block else "N/A"
             },
             "sub_divisions_count": len(subdivisions),
             "sub_divisions": [
@@ -914,10 +1295,11 @@ async def get_unscheduled_visits(
         jurisdiction_filters = await get_jurisdiction_filter(db, officer)
         
         if not jurisdiction_filters:
-            return {"count": 0, "applications": [], "message": "No jurisdiction assigned"}
-        
+            return {"count": 0, "visits": [], "message": "No jurisdiction assigned"}
+
         query = select(Application).options(
-            selectinload(Application.survey_number)
+            selectinload(Application.survey_number),
+            selectinload(Application.applicant)
         ).join(
             SurveyNumber, Application.survey_number_id == SurveyNumber.id
         ).join(
@@ -933,9 +1315,10 @@ async def get_unscheduled_visits(
         ).where(
             and_(
                 or_(*jurisdiction_filters),
-                Application.application_type == "ISD",
+                Application.application_type.in_(["ISD", "MERGE"]),
                 Application.field_visit_scheduled == False,
-                Application.current_stage == "SIS"
+                Application.current_stage == (officer.officer_stage or "SIS"),
+                Application.current_status.in_(["pending", "in_progress"])
             )
         )
         
@@ -952,7 +1335,11 @@ async def get_unscheduled_visits(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat(),
                     "days_since_submission": (datetime.now().date() - app.submission_date).days,
-                    "is_overdue": app.is_overdue
+                    "is_overdue": app.is_overdue,
+                    "applicant_name": app.applicant.name if app.applicant else "N/A",
+                    "applicant_email": app.applicant.email if app.applicant else "N/A",
+                    "applicant_mobile": app.applicant.mobile if app.applicant else "N/A",
+                    "applicant_address": app.applicant.address if app.applicant else "N/A"
                 }
                 for app in applications
             ]
@@ -969,11 +1356,14 @@ async def get_field_visits(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     to_be_visited_only: bool = False,
-    application_type: Optional[List[str]] = None
+    application_type: Optional[List[str]] = None,
+    exclude_date_range: bool = False
 ) -> Dict[str, Any]:
     """
     Get field visits for the officer with optional status, date range (start_date to end_date),
     to-be-visited filtering, and application type filtering (supports multiple types via list).
+    If exclude_date_range=True the date filter is inverted: visits OUTSIDE [start_date, end_date]
+    are returned (i.e. scheduled_date < start_date OR scheduled_date > end_date).
     """
     try:
         from sqlalchemy.orm import joinedload
@@ -987,7 +1377,10 @@ async def get_field_visits(
         jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
         
         query = select(FieldVisit).options(
-            joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block)
+            joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block),
+            joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.sub_divisions),
+            joinedload(FieldVisit.application).joinedload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
+            joinedload(FieldVisit.application).joinedload(Application.applicant)
         ).join(
             Application, FieldVisit.application_id == Application.id
         ).join(
@@ -1017,11 +1410,21 @@ async def get_field_visits(
         if to_be_visited_only:
             query = query.where(FieldVisit.status.in_(["scheduled", "rescheduled", "pending", "overdue", "unscheduled"]))
 
-        if start_date:
-            query = query.where(FieldVisit.scheduled_date >= start_date)
+        if exclude_date_range and start_date and end_date:
+            # Return visits whose scheduled date falls OUTSIDE [start_date, end_date]
+            from sqlalchemy import or_
+            query = query.where(
+                or_(
+                    FieldVisit.scheduled_date < start_date,
+                    FieldVisit.scheduled_date > end_date
+                )
+            )
+        else:
+            if start_date:
+                query = query.where(FieldVisit.scheduled_date >= start_date)
 
-        if end_date:
-            query = query.where(FieldVisit.scheduled_date <= end_date)
+            if end_date:
+                query = query.where(FieldVisit.scheduled_date <= end_date)
             
         if application_type:
             # Support both single string and list of types
@@ -1035,7 +1438,7 @@ async def get_field_visits(
         query = query.order_by(FieldVisit.scheduled_date.asc())
 
         result = await db.execute(query)
-        visits = result.scalars().all()
+        visits = result.scalars().unique().all()
         
         field_visits = []
         to_be_visited_count = 0
@@ -1044,6 +1447,7 @@ async def get_field_visits(
 
         for visit in visits:
             app = visit.application
+            applicant = app.applicant if app else None
             survey = app.survey_number if app else None
             block = survey.block if survey else None
             
@@ -1060,14 +1464,44 @@ async def get_field_visits(
             else:
                 to_be_visited_count += 1
 
+            # Extract all sub-division numbers for this field visit
+            subdiv_list = []
+            if app and app.application_sub_divisions:
+                for assoc in app.application_sub_divisions:
+                    sd_val = assoc.proposed_sub_division_no or (assoc.sub_division.sub_division_no if assoc.sub_division else None)
+                    if sd_val:
+                        clean_sd = str(sd_val).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+            if not subdiv_list and survey and survey.sub_divisions:
+                for sd in survey.sub_divisions:
+                    if sd.sub_division_no:
+                        clean_sd = str(sd.sub_division_no).strip()
+                        if '/' in clean_sd:
+                            clean_sd = clean_sd.split('/')[-1]
+                        if clean_sd and clean_sd not in subdiv_list:
+                            subdiv_list.append(clean_sd)
+
+            base_survey_no = survey.survey_no if survey else "N/A"
+            subdivisions_str = format_survey_with_subdivisions(base_survey_no, subdiv_list)
+
             field_visits.append({
                 "application_number": app.application_number if app else "N/A",
-                "survey_no": survey.survey_no if survey else "N/A",
+                "survey_no": base_survey_no,
+                "raw_survey_no": base_survey_no,
+                "subdivisions": subdivisions_str,
+                "sub_division_no": subdivisions_str,
                 "block_number": block.block_number if block else None,
                 "application_type": app.application_type if app else "N/A",
                 "status": visit.status,
                 "field_visit_date": visit.scheduled_date.isoformat() if visit.scheduled_date else None,
-                "is_overdue": is_overdue
+                "is_overdue": is_overdue,
+                "applicant_name": applicant.name if applicant else "N/A",
+                "applicant_email": applicant.email if applicant else "N/A",
+                "applicant_mobile": applicant.mobile if applicant else "N/A",
+                "applicant_address": applicant.address if applicant else "N/A"
             })
         
         return {
@@ -1144,19 +1578,33 @@ async def get_next_subdivision_number(
         result = await db.execute(subdiv_query)
         subdivisions = result.scalars().all()
         
+        # Always build the next number off the *resolved* base survey, otherwise an input
+        # like "145/1A" would produce "145/1A/2".
+        resolved_base = survey.survey_no
+
+        highest_existing = "None"
         if not subdivisions:
-            next_no = f"{survey_no}/1"
+            next_no = f"{resolved_base}/1"
         else:
-            highest = subdivisions[0].sub_division_no
-            # Simple logic: extract number and increment
-            # This is simplified - real logic would be more complex
-            next_no = f"{survey_no}/{len(subdivisions) + 1}"
-        
+            # Take the highest numeric prefix already in use and increment it.
+            # Counting rows is wrong when the sequence has gaps (1, 3 -> would return 3),
+            # and the string ORDER BY puts "9" above "10".
+            import re as _re
+            highest_seq = 0
+            highest_existing = subdivisions[0].sub_division_no
+            for sd in subdivisions:
+                tail = str(sd.sub_division_no).split('/')[-1]
+                m = _re.match(r'\d+', tail)
+                if m and int(m.group(0)) > highest_seq:
+                    highest_seq = int(m.group(0))
+                    highest_existing = sd.sub_division_no
+            next_no = f"{resolved_base}/{highest_seq + 1}"
+
         return {
             "found": True,
             "survey_no": survey_no,
             "existing_count": len(subdivisions),
-            "highest_existing": subdivisions[0].sub_division_no if subdivisions else "None",
+            "highest_existing": highest_existing,
             "next_available": next_no
         }
     except Exception as e:
@@ -1261,7 +1709,7 @@ async def get_ward_surveys(
         
         # Organize data
         for survey, block, _, _, _, _ in rows:
-            block_key = block.block_name
+            block_key = block.block_name or f"Block {block.block_number}"
             
             if block_key not in surveys_by_block:
                 surveys_by_block[block_key] = []
@@ -1280,10 +1728,10 @@ async def get_ward_surveys(
         return {
             "found": True,
             "jurisdiction": {
-                "district": district.name,
-                "taluk": taluk.name,
-                "town": town.name,
-                "ward": ward.ward_name,
+                "district": district.name if district else "N/A",
+                "taluk": taluk.name if taluk else "N/A",
+                "town": town.name if town else "N/A",
+                "ward": ward.ward_name or f"Ward {ward.ward_number}",
                 "ward_number": ward.ward_number
             },
             "total_surveys": len(rows),
@@ -1611,7 +2059,8 @@ async def check_existing_pending_application_for_survey(
         query = select(Application).where(
             and_(
                 Application.survey_number_id == survey_number_id,
-                Application.current_status.in_(["pending", "in_progress"])
+                # Must mirror idx_unique_active_app_per_survey, which also covers 'escalated'
+                Application.current_status.in_(["pending", "in_progress", "escalated"])
             )
         )
         res = await db.execute(query)

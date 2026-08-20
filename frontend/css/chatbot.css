@@ -215,10 +215,16 @@
     width: fit-content;
 }
 
-/* When the message contains a table, allow the bubble to expand */
+/* When the message contains a table, allow the bubble to expand naturally */
 .message-content-wrapper:has(table) {
-    max-width: min(900px, 80vw);
-    width: auto;
+    max-width: min(1000px, 90vw);
+    width: fit-content;
+    min-width: min(320px, 100%);
+}
+
+.message-content:has(table) {
+    overflow-x: auto;
+    max-width: 100%;
 }
 
 .message-user .message-content-wrapper {
@@ -696,16 +702,14 @@
 }
 
 .message-content table.data-table {
-    display: block;
-    /* enables overflow-x scroll on the table itself */
-    overflow-x: auto;
-    /* scroll wide tables horizontally */
+    display: table;
     width: 100%;
     border-collapse: collapse;
     margin: var(--spacing-md) 0 0 0;
     background: var(--surface);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
 }
 
 .message-content table.data-table thead {

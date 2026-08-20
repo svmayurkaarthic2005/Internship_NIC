@@ -58,3 +58,6 @@ package-lock.json
 
 # Alembic
 alembic/versions/*.pyc
+
+# Office temp/lock files
+~$*

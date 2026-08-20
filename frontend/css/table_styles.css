@@ -95,7 +95,6 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--table-text-base, 13px);
-  min-width: 420px;
 }
 
 .data-table thead th {

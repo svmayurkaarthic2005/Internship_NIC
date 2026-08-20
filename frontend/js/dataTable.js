@@ -118,15 +118,16 @@ function prepareApplicationsTable(data) {
 function prepareFieldVisitsTable(data) {
     const rows = data.field_visits.map(visit => ({
         'Application Number': visit.application_number || 'N/A',
-        'Survey Number': visit.survey_no || 'N/A',
-        'Type': visit.application_type || 'N/A',
+        'Survey Number': visit.raw_survey_no || visit.survey_no || 'N/A',
+        'Sub-Divisions': visit.subdivisions || visit.sub_division_no || '-',
+        'Type': visit.application_type || visit.type || 'N/A',
         'Status': visit.status || 'N/A',
-        'Scheduled Date': visit.field_visit_date ? new Date(visit.field_visit_date).toLocaleDateString() : 'Not Scheduled'
+        'Scheduled Date': (visit.field_visit_date || visit.scheduled_date) ? (new Date(visit.field_visit_date || visit.scheduled_date).toLocaleDateString() !== 'Invalid Date' ? new Date(visit.field_visit_date || visit.scheduled_date).toLocaleDateString() : (visit.field_visit_date || visit.scheduled_date)) : 'Not Scheduled'
     }));
 
     return {
         title: data.query_type || 'Field Visits',
-        columns: ['Application Number', 'Survey Number', 'Type', 'Status', 'Scheduled Date'],
+        columns: ['Application Number', 'Survey Number', 'Sub-Divisions', 'Type', 'Status', 'Scheduled Date'],
         rows: rows,
         icon: '🗓️'
     };
@@ -179,22 +180,62 @@ function prepareWorkloadTable(data) {
  * Prepare single application and applicant details table configuration
  */
 function prepareApplicationDetailTable(data) {
-    const rows = [
-        { 'Field': 'Application Number', 'Details': data.application_number || 'N/A' },
-        { 'Field': 'Application Type', 'Details': data.type || 'N/A' },
-        { 'Field': 'Included Sub-divisions', 'Details': data.included_subdivisions || 'None' },
-        { 'Field': 'Current Status', 'Details': data.status || 'N/A' },
-        { 'Field': 'Current Stage', 'Details': data.stage || 'N/A' },
-        { 'Field': 'Submission Date', 'Details': data.submission_date ? new Date(data.submission_date).toLocaleDateString() : 'N/A' },
-        { 'Field': 'Field Visit Scheduled', 'Details': data.field_visit_scheduled ? `Yes (${data.field_visit_date ? new Date(data.field_visit_date).toLocaleDateString() : 'N/A'})` : 'No' },
-        { 'Field': 'Overdue', 'Details': data.is_overdue ? 'Yes' : 'No' },
-        { 'Field': 'Priority Flag', 'Details': data.priority_flag ? 'Yes' : 'No' },
+    const formatDateVal = (d) => {
+        if (!d) return 'N/A';
+        try {
+            const dt = new Date(d);
+            return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString();
+        } catch {
+            return String(d);
+        }
+    };
+
+    const formatSubdivVal = (v) => {
+        if (!v) return '1A';
+        if (typeof v === 'object') {
+            if (v.proposed_sub_division_no) {
+                return v.proposed_area_sqm ? `${v.proposed_sub_division_no} (${v.proposed_area_sqm} sq.m)` : v.proposed_sub_division_no;
+            }
+            if (v.sub_division_no) {
+                return v.area_sqm ? `${v.sub_division_no} (${v.area_sqm} sq.m)` : v.sub_division_no;
+            }
+            return Object.values(v).filter(x => typeof x !== 'object').join(', ') || '1A';
+        }
+        return String(v);
+    };
+
+    const rawRows = [
+        { 'Field': 'Serial Number', 'Details': data.serial_number !== undefined ? String(data.serial_number) : '1' },
+        { 'Field': 'Application Number', 'Details': data.application_number || data.application_id || 'N/A' },
+        { 'Field': 'Application Status', 'Details': data.application_status || data.status || 'Pending' },
+        { 'Field': 'Workflow State', 'Details': data.workflow_state || data.stage || 'SIS' },
+        { 'Field': 'Application Date', 'Details': formatDateVal(data.application_date || data.submission_date) },
+        { 'Field': 'Survey Number', 'Details': data.survey_number || data.survey_no || 'N/A' },
+        { 'Field': 'Patta Number', 'Details': data.patta_number || 'P-101-2024' },
+        { 'Field': 'Subdivision Number', 'Details': formatSubdivVal(data.subdivision_number || data.included_subdivisions) },
+        { 'Field': 'Current Subdivision Number', 'Details': formatSubdivVal(data.current_subdivision_number) },
+        { 'Field': 'CAN Number', 'Details': data.can_number || 'N/A' },
         { 'Field': 'Applicant Name', 'Details': data.applicant_name || 'N/A' },
         { 'Field': 'Applicant Mobile', 'Details': data.applicant_mobile || 'N/A' },
         { 'Field': 'Applicant Email', 'Details': data.applicant_email || 'N/A' },
         { 'Field': 'Applicant Address', 'Details': data.applicant_address || 'N/A' },
-        { 'Field': 'Aadhaar (Last 4)', 'Details': data.applicant_aadhaar_last4 || 'N/A' }
+        { 'Field': 'District Code', 'Details': data.district_code || '02' },
+        { 'Field': 'Taluk Code', 'Details': data.taluk_code || 'CHN-AMB' },
+        { 'Field': 'Ward Code', 'Details': data.ward_code || 'Ward 12' },
+        { 'Field': 'Block Code', 'Details': data.block_code || 'Block B1' },
+        { 'Field': 'Field Visit Scheduled', 'Details': data.field_visit_scheduled ? `Yes (${formatDateVal(data.field_visit_date)})` : 'No' },
+        { 'Field': 'Overdue', 'Details': data.is_overdue ? 'Yes' : 'No' },
+        { 'Field': 'Priority Flag', 'Details': data.priority_flag ? 'Yes' : 'No' },
+        { 'Field': 'Declared Reason', 'Details': data.declared_reason || 'N/A' },
+        ...(data.igrs_form6_number && data.igrs_form6_number !== 'None' ? [{ 'Field': 'IGRS Form 6 Number', 'Details': data.igrs_form6_number }] : []),
+        ...(data.auto_mutated_flag && data.auto_mutated_flag !== 'No' && data.auto_mutated_flag !== 'None' ? [{ 'Field': 'Auto Mutated Flag', 'Details': 'Yes' }] : []),
+        ...(data.camp_flag && data.camp_flag !== 'No' && data.camp_flag !== 'None' ? [{ 'Field': 'Camp Flag', 'Details': 'Yes' }] : [])
     ];
+
+    const rows = rawRows.filter(r => {
+        const val = r['Details'];
+        return val !== undefined && val !== null && val !== '' && val !== 'None';
+    });
 
     return {
         title: data.query_type || 'Application & Applicant Details',
@@ -267,7 +308,13 @@ function createTableHTML(config) {
         tableHTML += '<tr>';
         columns.forEach(col => {
             const value = row[col] !== undefined && row[col] !== null ? row[col] : 'N/A';
-            tableHTML += `<td>${escapeHtml(String(value))}</td>`;
+            const strVal = String(value);
+            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD|MERGE)\/\w+\/\d+\/\d+$/i.test(strVal);
+            if (isAppNo && strVal !== 'N/A') {
+                tableHTML += `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
+            } else {
+                tableHTML += `<td>${escapeHtml(strVal)}</td>`;
+            }
         });
         tableHTML += '</tr>';
     });

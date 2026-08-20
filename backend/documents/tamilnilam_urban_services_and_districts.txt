@@ -1,0 +1,61 @@
+=== SIS URBAN JURISDICTION: TAMILNILAM SERVICES & DATA SCHEMA ===
+
+1. SIS ROLE IN TAMILNILAM URBAN
+Sub Inspector Surveyors (SIS) operate exclusively in Urban Jurisdictions (Municipalities & Corporations).
+Their core duties:
+- Physical Field Inspection & Cadastral Verification for Town Survey Numbers (TSLR)
+- Verifying boundaries, sub-divisions, encroachments, and land types (Residential, Commercial, Agricultural)
+- Preparing inspection reports and measurement sketches (Colormap / FMB) for ISD, Merge, and Demarcation applications
+- Forwarding verified applications to Special Deputy Tahsildar (SD) and Deputy Inspector of Survey (DIS)
+
+2. URBAN APPLICATION NUMBER FORMAT
+   YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE
+   Example: 2026/0154/02/000001 (ISD Application in Chennai)
+
+3. URBAN SERVICE CODES HANDLED BY SIS
+- 0153: Not Involving Subdivision (NISD) — Direct patta transfer verification (no new sub-division).
+- 0154: Involving Subdivision (ISD) — Requires mandatory field inspection & sub-division sketch.
+- 0155: Merge Subdivisions — Verification of merged plots & total area.
+- 0156: TSLR Extract with Sketch — Urban land record extract with boundary sketch.
+- 0157: TSLR Extract Only — Urban land record extract.
+- 0158: Modification / Anadeenam — Correction/modification of urban survey records.
+- 0159: Addition — Adding sub-divisions or owners in urban records.
+- 0160: Deletion — Removing entries from urban records.
+- 0161: Street Master — Street-level master record creation/update.
+- 0162: Street and Door Number Modification — Modification of street and door number records.
+- 0163: Block/Revoke Town Survey Number — Transaction freeze or revocation.
+- 0164: ULC Land Subdivision — Urban Land Ceiling subdivision verification.
+- 0165: TSLR Owner Name Correction — Rectification of owner name errors.
+- 0167: TSLR Settlement - Owner Entry — Entry of owner details in TSLR settlement records.
+- 0168: TSLR Settlement - Subdivision — Urban settlement subdivision.
+- 0169: Govt to Private — Transfer of government land to private ownership.
+- 0170: TSLR Sketch Verification — Verification of existing survey sketches.
+- 0171: Rural-Urban Correlation — Correlation of rural survey numbers with urban records.
+- 0172: Town Settlement — Settlement of town survey records.
+- 0173: Temple Land Unblock — Unblocking of temple land records.
+- 0175: Block Change — Change of block assignment in urban records.
+- 0176: Govt to Govt Poramboke — Transfer between government poramboke accounts.
+- 0178: F-Line (Urban Demarcation) — Demarcation of urban boundary lines.
+- 0179: Settlement Govt to Private — Settlement transfer from government to private.
+- 0181: Settlement Modification — Modification of existing settlement records.
+- 0183: Settlement Govt Poramboke to Private (GO-506) — Special settlement transfer per GO-506 dated 09/12/2023.
+- 0184: TSR Preparation Subdivision — Town Survey Register subdivision preparation.
+- 0185: F-Line Appeal — Appeal survey for urban boundary demarcation.
+- 0187: Register Patta — Registration of patta records.
+- 0188: Natham Settlement — Settlement of Natham (habitation) land records.
+
+
+4. ESSENTIAL FIELDS STORED FOR SIS
+- Application Identity: application_id, service_code, application_type, application_date, application_status, workflow_state, last_updated_datetime, user_id (assigned SIS officer)
+- Cadastral / Urban Location: district_code, taluk_code, urban_unit_code, ward_code, block_code, survey_number (Town Survey No.), subdivision_number, current_subdivision_number, patta_number
+- Field Survey Data: field_visit_date, field_visit_scheduled, is_overdue, priority_flag, notes, sale_deed_number, sale_deed_registered, declared_reason, source_code, can_number
+- Applicant Details: applicant_name, applicant_mobile, applicant_email, applicant_address
+
+5. OFFICIAL DISTRICT CODES (01 to 38)
+01: Tiruvallur, 02: Chennai, 03: Kancheepuram, 04: Vellore, 05: Dharmapuri, 06: Tiruvannamalai,
+07: Villupuram, 08: Salem, 09: Namakkal, 10: Erode, 11: Nilgiris, 12: Coimbatore,
+13: Dindigul, 14: Karur, 15: Tiruchirappalli, 16: Perambalur, 17: Ariyalur, 18: Cuddalore,
+19: Nagapattinam, 20: Thiruvarur, 21: Thanjavur, 22: Pudukkottai, 23: Sivaganga, 24: Madurai,
+25: Theni, 26: Virudhunagar, 27: Ramanathapuram, 28: Thoothukudi, 29: Tirunelveli, 30: Kanniyakumari,
+31: Krishnagiri, 32: Tiruppur, 33: Kallakurichi, 34: Tenkasi, 35: Chengalpattu, 36: Tirupattur,
+37: Ranipet, 38: Mayiladuthurai.

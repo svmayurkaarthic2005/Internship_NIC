@@ -1,0 +1,674 @@
+================================================================================
+SIS CHATBOT - 200 TEST QUESTIONS BENCHMARK (ENGLISH & தமிழ்)
+TAMILNILAM URBAN REVENUE & PATTA MUTATION SYSTEM
+================================================================================
+APPLICATION NUMBER FORMAT: YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE
+Examples:
+  - 2026/0154/02/000001 (ISD - Involving Subdivision, Chennai District)
+  - 2026/0153/02/000002 (NISD - Not Involving Subdivision, Chennai District)
+  - 2026/0155/02/000003 (MERGE Subdivisions, Chennai District)
+
+SCHEMA COLUMNS COVERED (39 Fields):
+1. serial_number              14. application_id             27. source_name
+2. user_id                    15. survey_number              28. renewal_number
+3. department_code            16. subdivision_number         29. workflow_state
+4. service_code               17. patta_number               30. igrs_form6_number
+5. district_code              18. role_id                    31. return_status
+6. taluk_code                 19. source_code                32. current_subdivision_number
+7. village_code               20. csc_service_charge         33. parent_application_id
+8. urban_unit_code            21. government_service_charge  34. auto_mutated_flag
+9. ward_code                  22. can_number                 35. is_auto_mutated
+10. block_code                23. dispatch_date              36. igrs_auto_mutation_flag
+11. application_date          24. received_date              37. camp_flag
+12. application_status        25. ip_address                 38. camp_correction_id
+13. last_updated_datetime     26. generated_datetime         39. camp_code
+================================================================================
+
+================================================================================
+CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 25)
+[Columns: application_id, serial_number, parent_application_id, renewal_number, user_id, role_id]
+================================================================================
+
+1. Show details for application 2026/0154/02/000001
+   [application_id] [EN]
+
+2. விண்ணப்ப எண் 2026/0154/02/000001 இன் முழு விவரங்களைத் தருக
+   [application_id] [TA]
+
+3. What is the application type of 2026/0153/02/000002?
+   [application_id] [EN]
+
+4. 2026/0155/02/000003 விண்ணப்பத்தின் வகை என்ன?
+   [application_id] [TA]
+
+5. What is the serial number of application 2026/0154/02/000001?
+   [serial_number] [EN]
+
+6. 2026/0154/02/000001 விண்ணப்பத்தின் வரிசை எண் (serial number) என்ன?
+   [serial_number] [TA]
+
+7. Does application 2026/0154/02/000001 have a parent application id?
+   [parent_application_id] [EN]
+
+8. 2026/0155/02/000003 விண்ணப்பத்திற்கு parent_application_id உள்ளதா?
+   [parent_application_id] [TA]
+
+9. Show renewal number for application 2026/0153/02/000002
+   [renewal_number] [EN]
+
+10. 2026/0154/02/000001 விண்ணப்பத்தின் புதுப்பித்தல் எண் (renewal_number) என்ன?
+    [renewal_number] [TA]
+
+11. Which officer user_id is assigned to application 2026/0154/02/000001?
+    [user_id] [EN]
+
+12. 2026/0154/02/000001 விண்ணப்பம் எந்த அதிகாரிக்கு (user_id) ஒதுக்கப்பட்டுள்ளது?
+    [user_id] [TA]
+
+13. What role_id is handling application 2026/0154/02/000001?
+    [role_id] [EN]
+
+14. விண்ணப்பம் 2026/0154/02/000001 இன் அதிகாரியின் role_id என்ன?
+    [role_id] [TA]
+
+15. List all applications currently assigned to me
+    [application_id] [EN]
+
+16. எனக்கு ஒதுக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்
+    [application_id] [TA]
+
+17. How many total applications are in my jurisdiction?
+    [application_id] [EN]
+
+18. எனது அதிகார வரம்பில் உள்ள மொத்த விண்ணப்பங்களின் எண்ணிக்கை எவ்வளவு?
+    [application_id] [TA]
+
+19. Give me summary of application 2026/0154/02/000001
+    [application_id] [EN]
+
+20. 2026/0154/02/000001 விண்ணப்பத்தின் சுருக்கத்தை வழங்கவும்
+    [application_id] [TA]
+
+21. Check status of application 2026/0153/02/000002
+    [application_id] [EN]
+
+22. 2026/0153/02/000002 விண்ணப்பத்தின் தற்போதைய நிலையைச் சரிபார்க்கவும்
+    [application_id] [TA]
+
+23. Find application 2026/0155/02/000003
+    [application_id] [EN]
+
+24. 2026/0155/02/000003 விண்ணப்பத்தைக் கண்டறியவும்
+    [application_id] [TA]
+
+25. List all merge applications with parent application linkages
+    [parent_application_id] [EN]
+
+================================================================================
+CATEGORY 2: GEOGRAPHIC & ADMINISTRATIVE HIERARCHY CODES (Questions 26 - 55)
+[Columns: district_code, taluk_code, village_code, urban_unit_code, ward_code, block_code]
+================================================================================
+
+26. What is the official district code for Chennai?
+    [district_code] [EN]
+
+27. சென்னை மாவட்டத்தின் district_code என்ன?
+    [district_code] [TA]
+
+28. What is the district code of Tiruvallur?
+    [district_code] [EN]
+
+29. திருவள்ளூர் மாவட்ட குறியீடு என்ன?
+    [district_code] [TA]
+
+30. Show applications for district_code 02
+    [district_code] [EN]
+
+31. மாவட்டம் 02 இல் உள்ள விண்ணப்பங்களைக் காட்டு
+    [district_code] [TA]
+
+32. Show applications under taluk Ambattur
+    [taluk_code] [EN]
+
+33. அம்பத்தூர் வட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு
+    [taluk_code] [TA]
+
+34. What is the taluk_code for Ambattur?
+    [taluk_code] [EN]
+
+35. அம்பத்தூர் வட்டத்தின் taluk_code என்ன?
+    [taluk_code] [TA]
+
+36. Show applications under urban_unit_code AMB-T01
+    [urban_unit_code] [EN]
+
+37. நகர்ப்புற அலகு குறியீடு (urban_unit_code) AMB-T01 விண்ணப்பங்களைக் காட்டு
+    [urban_unit_code] [TA]
+
+38. What is the village_code associated with survey 145?
+    [village_code] [EN]
+
+39. சர்வே 145 இன் கிராம குறியீடு (village_code) என்ன?
+    [village_code] [TA]
+
+40. List all applications in Ward 12
+    [ward_code] [EN]
+
+41. வார்டு 12 இல் உள்ள அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்
+    [ward_code] [TA]
+
+42. Show survey numbers in Ward 12
+    [ward_code] [EN]
+
+43. வார்டு 12 இல் உள்ள புல எண்களைக் காட்டு
+    [ward_code] [TA]
+
+44. What is the ward_code for application 2026/0154/02/000001?
+    [ward_code] [EN]
+
+45. 2026/0154/02/000001 இன் வார்டு எண் என்ன?
+    [ward_code] [TA]
+
+46. List applications in Block B1
+    [block_code] [EN]
+
+47. பிளாக் B1 இல் உள்ள விண்ணப்பங்களைக் காட்டு
+    [block_code] [TA]
+
+48. How many applications are pending in Block B1?
+    [block_code] [EN]
+
+49. பிளாக் B1 இல் எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?
+    [block_code] [TA]
+
+50. Show all survey numbers in Block B1
+    [block_code] [EN]
+
+51. பிளாக் B1 இல் உள்ள அனைத்து சர்வே எண்களையும் காட்டு
+    [block_code] [TA]
+
+52. What is the district code of Coimbatore?
+    [district_code] [EN]
+
+53. கோயம்புத்தூர் மாவட்ட குறியீடு என்ன?
+    [district_code] [TA]
+
+54. What is the district code of Madurai?
+    [district_code] [EN]
+
+55. மதுரை மாவட்ட குறியீடு என்ன?
+    [district_code] [TA]
+
+================================================================================
+CATEGORY 3: SERVICE & DEPARTMENT CODES (Questions 56 - 75)
+[Columns: service_code, department_code, source_code, source_name]
+================================================================================
+
+56. What does service_code 0154 represent?
+    [service_code] [EN]
+
+57. சேவை குறியீடு (service_code) 0154 எதனைக் குறிக்கிறது?
+    [service_code] [TA]
+
+58. What does service_code 0153 mean?
+    [service_code] [EN]
+
+59. சேவை குறியீடு 0153 என்றால் என்ன?
+    [service_code] [TA]
+
+60. What is service_code 0155 in Urban TamilNilam?
+    [service_code] [EN]
+
+61. தமிழ்நிலம் நகர்ப்புறத்தில் சேவை குறியீடு 0155 என்ன?
+    [service_code] [TA]
+
+62. List all ISD applications (service_code 0154)
+    [service_code] [EN]
+
+63. அனைத்து ISD விண்ணப்பங்களையும் காட்டு (0154)
+    [service_code] [TA]
+
+64. List all NISD applications (service_code 0153)
+    [service_code] [EN]
+
+65. அனைத்து NISD விண்ணப்பங்களையும் காட்டு (0153)
+    [service_code] [TA]
+
+66. List all MERGE applications (service_code 0155)
+    [service_code] [EN]
+
+67. அனைத்து MERGE விண்ணப்பங்களையும் காட்டு (0155)
+    [service_code] [TA]
+
+68. What is the department_code for survey and settlement department?
+    [department_code] [EN]
+
+69. சர்வே துறையின் department_code என்ன?
+    [department_code] [TA]
+
+70. Show applications with source_code CITIZEN
+    [source_code] [EN]
+
+71. பொதுமக்கள் நேரடியாக சமர்ப்பித்த (CITIZEN) விண்ணப்பங்களைக் காட்டு
+    [source_code] [TA]
+
+72. Show applications with source_code CSC
+    [source_code] [EN]
+
+73. இ-சேவை மையம் (CSC) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
+    [source_code] [TA]
+
+74. What is the source_name of application 2026/0154/02/000001?
+    [source_name] [EN]
+
+75. 2026/0154/02/000001 விண்ணப்பத்தின் ஆதாரம் (source_name) என்ன?
+    [source_name] [TA]
+
+================================================================================
+CATEGORY 4: LAND & SURVEY IDENTIFIERS (Questions 76 - 105)
+[Columns: survey_number, subdivision_number, current_subdivision_number, patta_number]
+================================================================================
+
+76. Show survey details for survey 145
+    [survey_number] [EN]
+
+77. புல எண் 145 இன் விவரங்களைத் தருக
+    [survey_number] [TA]
+
+78. What is the survey_number for application 2026/0154/02/000001?
+    [survey_number] [EN]
+
+79. 2026/0154/02/000001 விண்ணப்பத்தின் சர்வே எண் என்ன?
+    [survey_number] [TA]
+
+80. Who is the owner of survey number 145?
+    [survey_number] [EN]
+
+81. புல எண் 145 இன் உரிமையாளர் யார்?
+    [survey_number] [TA]
+
+82. What is the total area of survey 145?
+    [survey_number] [EN]
+
+83. புல எண் 145 இன் மொத்த பரப்பளவு என்ன?
+    [survey_number] [TA]
+
+84. What is the next subdivision number for survey 145?
+    [subdivision_number] [EN]
+
+85. புல எண் 145 க்கான அடுத்த உட்பிரிவு எண் (next subdivision number) என்ன?
+    [subdivision_number] [TA]
+
+86. What are the existing subdivisions for survey 145?
+    [subdivision_number] [EN]
+
+87. புல எண் 145 இல் உள்ள உட்பிரிவுகள் என்ன?
+    [subdivision_number] [TA]
+
+88. What is the current_subdivision_number proposed for 2026/0154/02/000001?
+    [current_subdivision_number] [EN]
+
+89. 2026/0154/02/000001 இல் முன்மொழியப்பட்ட உட்பிரிவு எண் (current_subdivision_number) என்ன?
+    [current_subdivision_number] [TA]
+
+90. What is the patta_number for survey 145?
+    [patta_number] [EN]
+
+91. புல எண் 145 இன் பட்டா எண் என்ன?
+    [patta_number] [TA]
+
+92. What is the patta_number for application 2026/0154/02/000001?
+    [patta_number] [EN]
+
+93. 2026/0154/02/000001 விண்ணப்பத்தின் பட்டா எண் என்ன?
+    [patta_number] [TA]
+
+94. Does survey 145 have any encroachment or litigation?
+    [survey_number] [EN]
+
+95. புல எண் 145 இல் ஆக்கிரமிப்பு அல்லது வழக்கு உள்ளதா?
+    [survey_number] [TA]
+
+96. Show details for survey 146
+    [survey_number] [EN]
+
+97. சர்வே 146 விவரங்களைக் காட்டு
+    [survey_number] [TA]
+
+98. Show next available subdivision number for survey 146
+    [subdivision_number] [EN]
+
+99. புல எண் 146 இன் அடுத்த உட்பிரிவு எண் என்ன?
+    [subdivision_number] [TA]
+
+100. Show all survey numbers in my jurisdiction
+     [survey_number] [EN]
+
+101. எனது அதிகார வரம்பில் உள்ள அனைத்து சர்வே எண்களையும் காட்டு
+     [survey_number] [TA]
+
+102. Find surveys linked to patta number 101
+     [patta_number] [EN]
+
+103. பட்டா எண் 101 உடன் இணைக்கப்பட்ட சர்வே எண்களைக் காட்டு
+     [patta_number] [TA]
+
+104. Check subdivision 145/1A details
+     [subdivision_number] [EN]
+
+105. உட்பிரிவு 145/1A விவரங்களைச் சரிபார்க்கவும்
+     [subdivision_number] [TA]
+
+================================================================================
+CATEGORY 5: DATE, TIMELINE & TIMESTAMP FIELDS (Questions 106 - 130)
+[Columns: application_date, received_date, dispatch_date, last_updated_datetime, generated_datetime]
+================================================================================
+
+106. When was application 2026/0154/02/000001 submitted?
+     [application_date] [EN]
+
+107. 2026/0154/02/000001 விண்ணப்பம் எப்போது சமர்ப்பிக்கப்பட்டது?
+     [application_date] [TA]
+
+108. Show applications submitted in July 2026
+     [application_date] [EN]
+
+109. ஜூலை 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [application_date] [TA]
+
+110. Show applications submitted between 2026-07-01 and 2026-07-29
+     [application_date] [EN]
+
+111. 2026-07-01 முதல் 2026-07-29 வரை சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [application_date] [TA]
+
+112. What is the received_date of application 2026/0154/02/000001?
+     [received_date] [EN]
+
+113. 2026/0154/02/000001 விண்ணப்பம் பெறப்பட்ட தேதி (received_date) என்ன?
+     [received_date] [TA]
+
+114. What is the dispatch_date for application 2026/0154/02/000001?
+     [dispatch_date] [EN]
+
+115. 2026/0154/02/000001 அனுப்பப்பட்ட தேதி (dispatch_date) என்ன?
+     [dispatch_date] [TA]
+
+116. When was application 2026/0154/02/000001 last updated?
+     [last_updated_datetime] [EN]
+
+117. 2026/0154/02/000001 கடைசியாக எப்போது புதுப்பிக்கப்பட்டது (last_updated)?
+     [last_updated_datetime] [TA]
+
+118. What is the generated_datetime for application 2026/0154/02/000001?
+     [generated_datetime] [EN]
+
+119. 2026/0154/02/000001 உருவான தேதி/நேரம் (generated_datetime) என்ன?
+     [generated_datetime] [TA]
+
+120. Show applications submitted in June 2026
+     [application_date] [EN]
+
+121. ஜூன் 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [application_date] [TA]
+
+122. What year was application 2026/0154/02/000001 submitted?
+     [application_date] [EN]
+
+123. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட ஆண்டு என்ன?
+     [application_date] [TA]
+
+124. List applications received this month
+     [received_date] [EN]
+
+125. இந்த மாதம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [received_date] [TA]
+
+126. Show all completed applications with dispatch dates
+     [dispatch_date] [EN]
+
+127. முடிவடைந்து அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [dispatch_date] [TA]
+
+128. List applications updated in the last 7 days
+     [last_updated_datetime] [EN]
+
+129. கடந்த 7 நாட்களில் புதுப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [last_updated_datetime] [TA]
+
+130. How many applications were submitted in July 2026?
+     [application_date] [EN]
+
+================================================================================
+CATEGORY 6: STATUS, WORKFLOW STATES & RETURN STATUS (Questions 131 - 155)
+[Columns: application_status, workflow_state, return_status]
+================================================================================
+
+131. What is the application_status of 2026/0154/02/000001?
+     [application_status] [EN]
+
+132. 2026/0154/02/000001 இன் நிலை (status) என்ன?
+     [application_status] [TA]
+
+133. List all pending applications
+     [application_status] [EN]
+
+134. நிலுவையில் உள்ள அனைத்து விண்ணப்பங்களையும் காட்டு
+     [application_status] [TA]
+
+135. How many applications are pending?
+     [application_status] [EN]
+
+136. எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?
+     [application_status] [TA]
+
+137. List all approved applications
+     [application_status] [EN]
+
+138. அங்கீகரிக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் காட்டு
+     [application_status] [TA]
+
+139. List all rejected applications
+     [application_status] [EN]
+
+140. நிராகரிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [application_status] [TA]
+
+141. Show overdue applications in my jurisdiction
+     [application_status] [EN]
+
+142. காலதாமதமான விண்ணப்பங்களைக் காட்டு
+     [application_status] [TA]
+
+143. What is the workflow_state of 2026/0154/02/000001?
+     [workflow_state] [EN]
+
+144. 2026/0154/02/000001 விண்ணப்பத்தின் தற்போதைய கட்டம் (workflow_state) என்ன?
+     [workflow_state] [TA]
+
+145. Show applications currently at SIS workflow state
+     [workflow_state] [EN]
+
+146. SIS கட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு
+     [workflow_state] [TA]
+
+147. Show applications forwarded to Tahsildar
+     [workflow_state] [EN]
+
+148. தாசில்தார் அலுவலகத்தில் உள்ள விண்ணப்பங்களைக் காட்டு
+     [workflow_state] [TA]
+
+149. Where is application 2026/0154/02/000001 right now?
+     [workflow_state] [EN]
+
+150. 2026/0154/02/000001 தற்போது எந்த அலுவலகத்தில் உள்ளது?
+     [workflow_state] [TA]
+
+151. What is the return_status of application 2026/0154/02/000001?
+     [return_status] [EN]
+
+152. 2026/0154/02/000001 இன் திருப்பி அனுப்பிய நிலை (return_status) என்ன?
+     [return_status] [TA]
+
+153. Show all applications with return_status flagged as returned for clarification
+     [return_status] [EN]
+
+154. விளக்கத்திற்காக திருப்பி அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [return_status] [TA]
+
+155. Show applications at DIS review stage
+     [workflow_state] [EN]
+
+================================================================================
+CATEGORY 7: FINANCIAL & FEE DETAILS (Questions 156 - 170)
+[Columns: csc_service_charge, government_service_charge]
+================================================================================
+
+156. What is the csc_service_charge for application 2026/0154/02/000001?
+     [csc_service_charge] [EN]
+
+157. 2026/0154/02/000001 விண்ணப்பத்திற்கான CSC சேவை கட்டணம் (csc_service_charge) என்ன?
+     [csc_service_charge] [TA]
+
+158. What is the government_service_charge for application 2026/0154/02/000001?
+     [government_service_charge] [EN]
+
+159. 2026/0154/02/000001 விண்ணப்பத்திற்கான அரசு சேவை கட்டணம் என்ன?
+     [government_service_charge] [TA]
+
+160. What is the standard fee for ISD application (service_code 0154)?
+     [csc_service_charge] [EN]
+
+161. ISD விண்ணப்பத்திற்கான கட்டண விவரங்கள் என்ன?
+     [csc_service_charge] [TA]
+
+162. What is the government fee for NISD mutation (service_code 0153)?
+     [government_service_charge] [EN]
+
+163. NISD பட்டா மாறுதலுக்கான அரசு கட்டணம் என்ன?
+     [government_service_charge] [TA]
+
+164. Show fee breakdown for application 2026/0154/02/000001
+     [csc_service_charge] [EN]
+
+165. 2026/0154/02/000001 இன் கட்டண விவரங்களைக் காட்டு
+     [csc_service_charge] [TA]
+
+166. Is survey fee paid for application 2026/0154/02/000001?
+     [government_service_charge] [EN]
+
+167. 2026/0154/02/000001 விண்ணப்பத்திற்கு சர்வே கட்டணம் செலுத்தப்பட்டுள்ளதா?
+     [government_service_charge] [TA]
+
+168. What are the CSC charges for TSLR extract services?
+     [csc_service_charge] [EN]
+
+169. TSLR சான்றிதழுக்கான இ-சேவை கட்டணம் என்ன?
+     [csc_service_charge] [TA]
+
+170. Show total service charges collected for July 2026
+     [government_service_charge] [EN]
+
+================================================================================
+CATEGORY 8: CITIZEN IDENTITY, IGRS & IP AUDIT (Questions 171 - 185)
+[Columns: can_number, igrs_form6_number, ip_address]
+================================================================================
+
+171. What is the can_number for application 2026/0154/02/000001?
+     [can_number] [EN]
+
+172. 2026/0154/02/000001 விண்ணப்பத்தின் குடிமக்கள் அணுகல் எண் (can_number) என்ன?
+     [can_number] [TA]
+
+173. Find application associated with CAN number CAN-000001
+     [can_number] [EN]
+
+174. CAN எண் CAN-000001 இன் விண்ணப்பத்தைக் காட்டு
+     [can_number] [TA]
+
+175. What is the igrs_form6_number for application 2026/0154/02/000001?
+     [igrs_form6_number] [EN]
+
+176. 2026/0154/02/000001 விண்ணப்பத்தின் igrs_form6_number என்ன?
+     [igrs_form6_number] [TA]
+
+177. Show applications integrated with IGRS Form 6
+     [igrs_form6_number] [EN]
+
+178. IGRS படிவம் 6 மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [igrs_form6_number] [TA]
+
+179. What is the ip_address from which application 2026/0154/02/000001 was submitted?
+     [ip_address] [EN]
+
+180. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட IP முகவரி (ip_address) என்ன?
+     [ip_address] [TA]
+
+181. Show citizen details and CAN number for 2026/0153/02/000002
+     [can_number] [EN]
+
+182. 2026/0153/02/000002 விண்ணப்பதாரரின் CAN எண் என்ன?
+     [can_number] [TA]
+
+183. Check registered sale deed and IGRS Form 6 status for 2026/0154/02/000001
+     [igrs_form6_number] [EN]
+
+184. 2026/0154/02/000001 இன் பத்திரப் பதிவு மற்றும் IGRS விவரங்களைச் சரிபார்க்கவும்
+     [igrs_form6_number] [TA]
+
+185. Are there any submission audit logs with IP addresses for application 2026/0154/02/000001?
+     [ip_address] [EN]
+
+================================================================================
+CATEGORY 9: AUTO-MUTATION & SPECIAL CAMP FLAGS (Questions 186 - 200)
+[Columns: auto_mutated_flag, is_auto_mutated, igrs_auto_mutation_flag, camp_flag, camp_correction_id, camp_code]
+================================================================================
+
+186. Is application 2026/0154/02/000001 marked with auto_mutated_flag?
+     [auto_mutated_flag] [EN]
+
+187. 2026/0154/02/000001 விண்ணப்பத்திற்கு auto_mutated_flag உள்ளதா?
+     [auto_mutated_flag] [TA]
+
+188. Show applications where is_auto_mutated is True
+     [is_auto_mutated] [EN]
+
+189. தானியங்கி பட்டா மாறுதல் (is_auto_mutated) செய்யப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [is_auto_mutated] [TA]
+
+190. What is the igrs_auto_mutation_flag for application 2026/0154/02/000001?
+     [igrs_auto_mutation_flag] [EN]
+
+191. 2026/0154/02/000001 இன் igrs_auto_mutation_flag என்ன?
+     [igrs_auto_mutation_flag] [TA]
+
+192. Show applications marked with camp_flag
+     [camp_flag] [EN]
+
+193. சிறப்பு முகாம் (camp_flag) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
+     [camp_flag] [TA]
+
+194. Is application 2026/0154/02/000001 processed under a special camp?
+     [camp_flag] [EN]
+
+195. 2026/0154/02/000001 சிறப்பு முகாம் விண்ணப்பமா?
+     [camp_flag] [TA]
+
+196. What is the camp_correction_id for application 2026/0154/02/000001?
+     [camp_correction_id] [EN]
+
+197. 2026/0154/02/000001 இன் முகாம் திருத்த எண் (camp_correction_id) என்ன?
+     [camp_correction_id] [TA]
+
+198. What is the camp_code for special revenue camps in Ambattur?
+     [camp_code] [EN]
+
+199. அம்பத்தூர் வட்ட சிறப்பு முகாம் குறியீடு (camp_code) என்ன?
+     [camp_code] [TA]
+
+200. List all applications received under camp_code CMP-2026-01
+     [camp_code] [EN]
+
+================================================================================
+END OF 200 TEST QUESTIONS BENCHMARK
+================================================================================

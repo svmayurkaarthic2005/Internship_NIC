@@ -98,7 +98,13 @@ Q: How many applications do I already have scheduled in this taluk this week?
 A: The system shows the count and list of applications already scheduled for field visits in a specific taluk during the current week.
 
 Q: Check schedule availability for rescheduling this field visit.
-A: The system checks available dates when a field visit can be rescheduled without conflicts.
+A: The system checks available dates when a field visit can be rescheduled without conflicts. Note that to change or reschedule a field visit date, you should ask the Tahsildar for approval.
+
+Q: How do I change the date of a field visit or whom should I ask?
+A: To change the date of a field visit, you should ask the Tahsildar. The Tahsildar is the designated authority who has the power to approve and modify scheduled field visit dates.
+
+Q: Can an SIS officer directly change the field visit date?
+A: No, an SIS officer cannot modify field visit dates independently. You must ask and obtain approval from the Tahsildar about field visit date change.
 
 Q: Is this application already past the 15-working-day field visit deadline?
 A: The system calculates if an application is overdue (showing how many days past the 15-day deadline) or still within the window (showing which day of 15 it's on). Overdue applications should be escalated or scheduled immediately.

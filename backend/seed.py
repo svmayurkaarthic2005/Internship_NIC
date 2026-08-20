@@ -58,8 +58,8 @@ async def seed_database():
             ("21", "Thanjavur"), ("22", "Pudukkottai"), ("23", "Sivagangai"), ("24", "Madurai"),
             ("25", "Theni"), ("26", "Virudhunagar"), ("27", "Ramanathapuram"), ("28", "Thoothukudi"),
             ("29", "Tirunelveli"), ("30", "Kanniyakumari"), ("31", "Krishnagiri"), ("32", "Tiruppur"),
-            ("33", "Kallakurichi"), ("34", "Chengalpattu"), ("35", "Ranipet"), ("36", "Tirupathur"),
-            ("37", "Tenkasi"), ("38", "Mayiladuthurai")
+            ("33", "Kallakurichi"), ("34", "Tenkasi"), ("35", "Chengalpattu"), ("36", "Tirupattur"),
+            ("37", "Ranipet"), ("38", "Mayiladuthurai")
         ]
         
         district_objs = {}
@@ -71,37 +71,57 @@ async def seed_database():
         await db.flush()
         chennai = district_objs["02"]
 
-        # Taluks
-        ambattur = Taluk(district_id=chennai.id, name="Ambattur", taluk_code="CHN-AMB")
-        tambaram = Taluk(district_id=chennai.id, name="Tambaram", taluk_code="CHN-TAM")
-        db.add_all([ambattur, tambaram])
+        # Taluks under Chennai District
+        ambattur  = Taluk(district_id=chennai.id, name="Ambattur",  taluk_code="CHN-AMB")
+        mylapore  = Taluk(district_id=chennai.id, name="Mylapore",  taluk_code="CHN-MYL")
+        guindy    = Taluk(district_id=chennai.id, name="Guindy",    taluk_code="CHN-GND")
+        egmore    = Taluk(district_id=chennai.id, name="Egmore",    taluk_code="CHN-EGM")
+        tambaram  = Taluk(district_id=chennai.id, name="Tambaram",  taluk_code="CHN-TAM")
+        velachery = Taluk(district_id=chennai.id, name="Velachery", taluk_code="CHN-VEL")
+        db.add_all([ambattur, mylapore, guindy, egmore, tambaram, velachery])
         await db.flush()
         
-        # Towns
-        ambattur_town = Town(taluk_id=ambattur.id, name="Ambattur", town_code="AMB-T01")
-        tambaram_town = Town(taluk_id=tambaram.id, name="Tambaram", town_code="TAM-T01")
-        db.add_all([ambattur_town, tambaram_town])
+        # Towns under Taluks
+        ambattur_town  = Town(taluk_id=ambattur.id,  name="Ambattur",  town_code="AMB-T01")
+        mylapore_town  = Town(taluk_id=mylapore.id,  name="Mylapore",  town_code="MYL-T01")
+        guindy_town    = Town(taluk_id=guindy.id,    name="Guindy",    town_code="GND-T01")
+        egmore_town    = Town(taluk_id=egmore.id,    name="Egmore",    town_code="EGM-T01")
+        tambaram_town  = Town(taluk_id=tambaram.id,  name="Tambaram",  town_code="TAM-T01")
+        velachery_town = Town(taluk_id=velachery.id, name="Velachery", town_code="VEL-T01")
+        db.add_all([ambattur_town, mylapore_town, guindy_town, egmore_town, tambaram_town, velachery_town])
         await db.flush()
         
-        # Wards
-        ward_12 = Ward(town_id=ambattur_town.id, ward_number="12", ward_name="Ward 12")
-        ward_15 = Ward(town_id=ambattur_town.id, ward_number="15", ward_name="Ward 15")
-        ward_5 = Ward(town_id=tambaram_town.id, ward_number="5", ward_name="Ward 5")
-        db.add_all([ward_12, ward_15, ward_5])
+        # Wards under Towns
+        ward_12  = Ward(town_id=ambattur_town.id,  ward_number="12",  ward_name="Ward 12")
+        ward_15  = Ward(town_id=ambattur_town.id,  ward_number="15",  ward_name="Ward 15")
+        ward_173 = Ward(town_id=mylapore_town.id,  ward_number="173", ward_name="Ward 173")
+        ward_175 = Ward(town_id=mylapore_town.id,  ward_number="175", ward_name="Ward 175")
+        ward_160 = Ward(town_id=guindy_town.id,    ward_number="160", ward_name="Ward 160")
+        ward_105 = Ward(town_id=egmore_town.id,    ward_number="105", ward_name="Ward 105")
+        ward_5   = Ward(town_id=tambaram_town.id,  ward_number="5",   ward_name="Ward 5")
+        ward_178 = Ward(town_id=velachery_town.id, ward_number="178", ward_name="Ward 178")
+        db.add_all([ward_12, ward_15, ward_173, ward_175, ward_160, ward_105, ward_5, ward_178])
         await db.flush()
         
-        # Blocks
-        block_b1 = Block(ward_id=ward_12.id, block_number="B1", block_name="Block B1")
-        block_b2 = Block(ward_id=ward_12.id, block_number="B2", block_name="Block B2")
-        block_b3 = Block(ward_id=ward_15.id, block_number="B3", block_name="Block B3")
-        block_b10 = Block(ward_id=ward_5.id, block_number="B10", block_name="Block B10")
-        db.add_all([block_b1, block_b2, block_b3, block_b10])
+        # Blocks under Wards
+        block_b1  = Block(ward_id=ward_12.id,  block_number="B1",  block_name="Block B1")
+        block_b2  = Block(ward_id=ward_12.id,  block_number="B2",  block_name="Block B2")
+        block_b3  = Block(ward_id=ward_15.id,  block_number="B3",  block_name="Block B3")
+        block_b4  = Block(ward_id=ward_173.id, block_number="B4",  block_name="Block B4")
+        block_b5  = Block(ward_id=ward_173.id, block_number="B5",  block_name="Block B5")
+        block_b6  = Block(ward_id=ward_175.id, block_number="B6",  block_name="Block B6")
+        block_b7  = Block(ward_id=ward_160.id, block_number="B7",  block_name="Block B7")
+        block_b8  = Block(ward_id=ward_160.id, block_number="B8",  block_name="Block B8")
+        block_b9  = Block(ward_id=ward_105.id, block_number="B9",  block_name="Block B9")
+        block_b10 = Block(ward_id=ward_5.id,   block_number="B10", block_name="Block B10")
+        block_b11 = Block(ward_id=ward_178.id, block_number="B11", block_name="Block B11")
+        db.add_all([block_b1, block_b2, block_b3, block_b4, block_b5, block_b6, block_b7, block_b8, block_b9, block_b10, block_b11])
         await db.flush()
         
-        print("[OK] Geography data seeded")
+        print("[OK] Geography data seeded (Taluks: Ambattur, Mylapore, Guindy, Egmore, Tambaram, Velachery)")
         
         # ========== SURVEY NUMBERS & SUB-DIVISIONS ==========
-        # NOTE: Each survey number is dedicated to at most 1 active application.
+        # NOTE: Each survey number within a block is unique.
         print("[SURVEY] Seeding survey numbers and sub-divisions...")
         
         # --- Block B1 Surveys (Ambattur Ward 12 / Block B1) ---
@@ -135,39 +155,33 @@ async def seed_database():
         sub_145_1a = SubDivision(survey_number_id=survey_145.id, sub_division_no="145/1A", area_sqm=600.00, status="active")
         sub_145_1b = SubDivision(survey_number_id=survey_145.id, sub_division_no="145/1B", area_sqm=700.00, status="active")
         sub_145_1c = SubDivision(survey_number_id=survey_145.id, sub_division_no="145/1C", area_sqm=650.00, status="active")
-
-        sub_146_1 = SubDivision(survey_number_id=survey_146.id, sub_division_no="146/1", area_sqm=400.00, status="active")
-        sub_146_2 = SubDivision(survey_number_id=survey_146.id, sub_division_no="146/2", area_sqm=400.00, status="active")
-
-        sub_147_1 = SubDivision(survey_number_id=survey_147.id, sub_division_no="147/1", area_sqm=800.00, status="active")
-        sub_147_2 = SubDivision(survey_number_id=survey_147.id, sub_division_no="147/2", area_sqm=750.00, status="active")
-
+        sub_146_1  = SubDivision(survey_number_id=survey_146.id, sub_division_no="146/1", area_sqm=400.00, status="active")
+        sub_146_2  = SubDivision(survey_number_id=survey_146.id, sub_division_no="146/2", area_sqm=400.00, status="active")
+        sub_147_1  = SubDivision(survey_number_id=survey_147.id, sub_division_no="147/1", area_sqm=800.00, status="active")
+        sub_147_2  = SubDivision(survey_number_id=survey_147.id, sub_division_no="147/2", area_sqm=750.00, status="active")
         sub_148_1a = SubDivision(survey_number_id=survey_148.id, sub_division_no="148/1A", area_sqm=500.00, status="active")
         sub_148_1b = SubDivision(survey_number_id=survey_148.id, sub_division_no="148/1B", area_sqm=600.00, status="active")
         sub_148_1c = SubDivision(survey_number_id=survey_148.id, sub_division_no="148/1C", area_sqm=400.00, status="active")
-
-        sub_149_1 = SubDivision(survey_number_id=survey_149.id, sub_division_no="149/1", area_sqm=450.00, status="active")
-        sub_149_2 = SubDivision(survey_number_id=survey_149.id, sub_division_no="149/2", area_sqm=550.00, status="active")
-
+        sub_149_1  = SubDivision(survey_number_id=survey_149.id, sub_division_no="149/1", area_sqm=450.00, status="active")
+        sub_149_2  = SubDivision(survey_number_id=survey_149.id, sub_division_no="149/2", area_sqm=550.00, status="active")
         sub_150_1a = SubDivision(survey_number_id=survey_150.id, sub_division_no="150/1A", area_sqm=350.00, status="active")
         sub_150_1b = SubDivision(survey_number_id=survey_150.id, sub_division_no="150/1B", area_sqm=400.00, status="active")
-
-        sub_151_1 = SubDivision(survey_number_id=survey_151.id, sub_division_no="151/1", area_sqm=850.00, status="active")
-        sub_152_1 = SubDivision(survey_number_id=survey_152.id, sub_division_no="152/1", area_sqm=1000.00, status="active")
-        sub_153_1 = SubDivision(survey_number_id=survey_153.id, sub_division_no="153/1", area_sqm=700.00, status="active")
-        sub_154_1 = SubDivision(survey_number_id=survey_154.id, sub_division_no="154/1", area_sqm=550.00, status="active")
-        sub_154_2 = SubDivision(survey_number_id=survey_154.id, sub_division_no="154/2", area_sqm=550.00, status="active")
+        sub_151_1  = SubDivision(survey_number_id=survey_151.id, sub_division_no="151/1", area_sqm=850.00, status="active")
+        sub_152_1  = SubDivision(survey_number_id=survey_152.id, sub_division_no="152/1", area_sqm=1000.00, status="active")
+        sub_153_1  = SubDivision(survey_number_id=survey_153.id, sub_division_no="153/1", area_sqm=700.00, status="active")
+        sub_154_1  = SubDivision(survey_number_id=survey_154.id, sub_division_no="154/1", area_sqm=550.00, status="active")
+        sub_154_2  = SubDivision(survey_number_id=survey_154.id, sub_division_no="154/2", area_sqm=550.00, status="active")
         sub_155_1a = SubDivision(survey_number_id=survey_155.id, sub_division_no="155/1A", area_sqm=700.00, status="active")
         sub_155_1b = SubDivision(survey_number_id=survey_155.id, sub_division_no="155/1B", area_sqm=700.00, status="active")
-        sub_156_1 = SubDivision(survey_number_id=survey_156.id, sub_division_no="156/1", area_sqm=450.00, status="active")
-        sub_157_1 = SubDivision(survey_number_id=survey_157.id, sub_division_no="157/1", area_sqm=750.00, status="active")
-        sub_158_1 = SubDivision(survey_number_id=survey_158.id, sub_division_no="158/1", area_sqm=650.00, status="active")
-        sub_158_2 = SubDivision(survey_number_id=survey_158.id, sub_division_no="158/2", area_sqm=650.00, status="active")
+        sub_156_1  = SubDivision(survey_number_id=survey_156.id, sub_division_no="156/1", area_sqm=450.00, status="active")
+        sub_157_1  = SubDivision(survey_number_id=survey_157.id, sub_division_no="157/1", area_sqm=750.00, status="active")
+        sub_158_1  = SubDivision(survey_number_id=survey_158.id, sub_division_no="158/1", area_sqm=650.00, status="active")
+        sub_158_2  = SubDivision(survey_number_id=survey_158.id, sub_division_no="158/2", area_sqm=650.00, status="active")
         sub_159_1a = SubDivision(survey_number_id=survey_159.id, sub_division_no="159/1A", area_sqm=800.00, status="active")
         sub_159_1b = SubDivision(survey_number_id=survey_159.id, sub_division_no="159/1B", area_sqm=800.00, status="active")
-        sub_160_1 = SubDivision(survey_number_id=survey_160.id, sub_division_no="160/1", area_sqm=800.00, status="active")
-        sub_161_1 = SubDivision(survey_number_id=survey_161.id, sub_division_no="161/1", area_sqm=525.00, status="active")
-        sub_161_2 = SubDivision(survey_number_id=survey_161.id, sub_division_no="161/2", area_sqm=525.00, status="active")
+        sub_160_1  = SubDivision(survey_number_id=survey_160.id, sub_division_no="160/1", area_sqm=800.00, status="active")
+        sub_161_1  = SubDivision(survey_number_id=survey_161.id, sub_division_no="161/1", area_sqm=525.00, status="active")
+        sub_161_2  = SubDivision(survey_number_id=survey_161.id, sub_division_no="161/2", area_sqm=525.00, status="active")
         sub_162_1a = SubDivision(survey_number_id=survey_162.id, sub_division_no="162/1A", area_sqm=875.00, status="active")
         sub_162_1b = SubDivision(survey_number_id=survey_162.id, sub_division_no="162/1B", area_sqm=875.00, status="active")
 
@@ -180,7 +194,7 @@ async def seed_database():
         ])
         await db.flush()
 
-        # --- Block B2 & B3 Surveys (Ambattur Ward 12 / 15) ---
+        # --- Block B2, B3, B4, B5, B6, B7, B8, B9, B10, B11 Unique Surveys ---
         survey_200 = SurveyNumber(block_id=block_b2.id, survey_no="200", total_area_sqm=980.00, land_type="commercial", patta_number="P-200-2022")
         survey_201 = SurveyNumber(block_id=block_b2.id, survey_no="201", total_area_sqm=950.00, land_type="residential", patta_number="P-201-2020")
         
@@ -192,7 +206,53 @@ async def seed_database():
         survey_305 = SurveyNumber(block_id=block_b3.id, survey_no="305", total_area_sqm=1250.00, land_type="residential", patta_number="P-305-2025")
         survey_306 = SurveyNumber(block_id=block_b3.id, survey_no="306", total_area_sqm=1450.00, land_type="residential", patta_number="P-306-2026")
 
-        db.add_all([survey_200, survey_201, survey_300, survey_301, survey_302, survey_303, survey_304, survey_305, survey_306])
+        # Block B4 (Mylapore Ward 173)
+        survey_401 = SurveyNumber(block_id=block_b4.id, survey_no="401", total_area_sqm=1600.00, land_type="residential", patta_number="P-401-2023")
+        survey_402 = SurveyNumber(block_id=block_b4.id, survey_no="402", total_area_sqm=1400.00, land_type="commercial", patta_number="P-402-2024")
+
+        # Block B5 (Mylapore Ward 173)
+        survey_501_b5 = SurveyNumber(block_id=block_b5.id, survey_no="501", total_area_sqm=1300.00, land_type="residential", patta_number="P-501-2025")
+        survey_502_b5 = SurveyNumber(block_id=block_b5.id, survey_no="502", total_area_sqm=1100.00, land_type="commercial", patta_number="P-502-2025")
+
+        # Block B6 (Mylapore Ward 175)
+        survey_601 = SurveyNumber(block_id=block_b6.id, survey_no="601", total_area_sqm=1700.00, land_type="residential", patta_number="P-601-2024")
+        survey_602 = SurveyNumber(block_id=block_b6.id, survey_no="602", total_area_sqm=1500.00, land_type="commercial", patta_number="P-602-2025")
+
+        # Block B7 (Guindy Ward 160)
+        survey_701 = SurveyNumber(block_id=block_b7.id, survey_no="701", total_area_sqm=1900.00, land_type="commercial", patta_number="P-701-2023")
+        survey_702 = SurveyNumber(block_id=block_b7.id, survey_no="702", total_area_sqm=2100.00, land_type="residential", patta_number="P-702-2024")
+
+        # Block B8 (Guindy Ward 160)
+        survey_801 = SurveyNumber(block_id=block_b8.id, survey_no="801", total_area_sqm=1650.00, land_type="residential", patta_number="P-801-2025")
+        survey_802 = SurveyNumber(block_id=block_b8.id, survey_no="802", total_area_sqm=1850.00, land_type="commercial", patta_number="P-802-2025")
+
+        # Block B9 (Egmore Ward 105)
+        survey_901 = SurveyNumber(block_id=block_b9.id, survey_no="901", total_area_sqm=1450.00, land_type="commercial", patta_number="P-901-2024")
+        survey_902 = SurveyNumber(block_id=block_b9.id, survey_no="902", total_area_sqm=1250.00, land_type="residential", patta_number="P-902-2025")
+
+        # Block B10 (Tambaram Ward 5)
+        survey_1001 = SurveyNumber(block_id=block_b10.id, survey_no="1001", total_area_sqm=2200.00, land_type="residential", patta_number="P-1001-2019")
+        survey_1002 = SurveyNumber(block_id=block_b10.id, survey_no="1002", total_area_sqm=1900.00, land_type="agricultural", patta_number="P-1002-2020")
+        survey_1003 = SurveyNumber(block_id=block_b10.id, survey_no="1003", total_area_sqm=1600.00, land_type="commercial", patta_number="P-1003-2022")
+        survey_1004 = SurveyNumber(block_id=block_b10.id, survey_no="1004", total_area_sqm=1400.00, land_type="residential", patta_number="P-1004-2023")
+        survey_1005 = SurveyNumber(block_id=block_b10.id, survey_no="1005", total_area_sqm=1700.00, land_type="commercial", patta_number="P-1005-2024")
+
+        # Block B11 (Velachery Ward 178)
+        survey_1101 = SurveyNumber(block_id=block_b11.id, survey_no="1101", total_area_sqm=1550.00, land_type="residential", patta_number="P-1101-2025")
+        survey_1102 = SurveyNumber(block_id=block_b11.id, survey_no="1102", total_area_sqm=1750.00, land_type="commercial", patta_number="P-1102-2026")
+
+        # Surveys for District Officer (Lakshmi) in Block B1
+        survey_163 = SurveyNumber(block_id=block_b1.id, survey_no="163", total_area_sqm=1150.00, land_type="residential", patta_number="P-163-2025")
+        survey_164 = SurveyNumber(block_id=block_b1.id, survey_no="164", total_area_sqm=1250.00, land_type="commercial", patta_number="P-164-2025")
+        survey_165 = SurveyNumber(block_id=block_b1.id, survey_no="165", total_area_sqm=1350.00, land_type="residential", patta_number="P-165-2025")
+        survey_166 = SurveyNumber(block_id=block_b1.id, survey_no="166", total_area_sqm=1450.00, land_type="commercial", patta_number="P-166-2026")
+
+        db.add_all([
+            survey_200, survey_201, survey_300, survey_301, survey_302, survey_303, survey_304, survey_305, survey_306,
+            survey_401, survey_402, survey_501_b5, survey_502_b5, survey_601, survey_602, survey_701, survey_702,
+            survey_801, survey_802, survey_901, survey_902, survey_1001, survey_1002, survey_1003, survey_1004, survey_1005,
+            survey_1101, survey_1102, survey_163, survey_164, survey_165, survey_166
+        ])
         await db.flush()
 
         sub_200_1 = SubDivision(survey_number_id=survey_200.id, sub_division_no="200/1", area_sqm=500.00, status="active")
@@ -207,36 +267,14 @@ async def seed_database():
         sub_305_1b = SubDivision(survey_number_id=survey_305.id, sub_division_no="305/1B", area_sqm=625.00, status="active")
         sub_306_1 = SubDivision(survey_number_id=survey_306.id, sub_division_no="306/1", area_sqm=725.00, status="active")
 
-        db.add_all([
-            sub_200_1, sub_201_1, sub_300_1, sub_301_1, sub_302_1,
-            sub_303_1, sub_304_1a, sub_304_1b, sub_305_1a, sub_305_1b, sub_306_1
-        ])
-        await db.flush()
-
-        # --- Block B10 Surveys (Tambaram Ward 5) ---
-        survey_500 = SurveyNumber(block_id=block_b10.id, survey_no="500", total_area_sqm=2200.00, land_type="residential", patta_number="P-500-2019")
-        survey_501 = SurveyNumber(block_id=block_b10.id, survey_no="501", total_area_sqm=1900.00, land_type="agricultural", patta_number="P-501-2020")
-        survey_502 = SurveyNumber(block_id=block_b10.id, survey_no="502", total_area_sqm=1600.00, land_type="commercial", patta_number="P-502-2022")
-        survey_503 = SurveyNumber(block_id=block_b10.id, survey_no="503", total_area_sqm=1400.00, land_type="residential", patta_number="P-503-2023")
-        survey_504 = SurveyNumber(block_id=block_b10.id, survey_no="504", total_area_sqm=1700.00, land_type="commercial", patta_number="P-504-2024")
-        survey_505 = SurveyNumber(block_id=block_b10.id, survey_no="505", total_area_sqm=1500.00, land_type="residential", patta_number="P-505-2025")
-
-        # Surveys for District Officer (Lakshmi) in Block B1
-        survey_163 = SurveyNumber(block_id=block_b1.id, survey_no="163", total_area_sqm=1150.00, land_type="residential", patta_number="P-163-2025")
-        survey_164 = SurveyNumber(block_id=block_b1.id, survey_no="164", total_area_sqm=1250.00, land_type="commercial", patta_number="P-164-2025")
-        survey_165 = SurveyNumber(block_id=block_b1.id, survey_no="165", total_area_sqm=1350.00, land_type="residential", patta_number="P-165-2025")
-        survey_166 = SurveyNumber(block_id=block_b1.id, survey_no="166", total_area_sqm=1450.00, land_type="commercial", patta_number="P-166-2026")
-
-        db.add_all([survey_500, survey_501, survey_502, survey_503, survey_504, survey_505, survey_163, survey_164, survey_165, survey_166])
-        await db.flush()
-
-        sub_500_1 = SubDivision(survey_number_id=survey_500.id, sub_division_no="500/1", area_sqm=1100.00, status="active")
-        sub_501_1 = SubDivision(survey_number_id=survey_501.id, sub_division_no="501/1", area_sqm=950.00, status="active")
-        sub_502_1 = SubDivision(survey_number_id=survey_502.id, sub_division_no="502/1", area_sqm=800.00, status="active")
-        sub_503_1 = SubDivision(survey_number_id=survey_503.id, sub_division_no="503/1", area_sqm=700.00, status="active")
-        sub_504_1a = SubDivision(survey_number_id=survey_504.id, sub_division_no="504/1A", area_sqm=850.00, status="active")
-        sub_504_1b = SubDivision(survey_number_id=survey_504.id, sub_division_no="504/1B", area_sqm=850.00, status="active")
-        sub_505_1 = SubDivision(survey_number_id=survey_505.id, sub_division_no="505/1", area_sqm=750.00, status="active")
+        sub_401_1 = SubDivision(survey_number_id=survey_401.id, sub_division_no="401/1", area_sqm=800.00, status="active")
+        sub_501_1 = SubDivision(survey_number_id=survey_501_b5.id, sub_division_no="501/1", area_sqm=650.00, status="active")
+        sub_601_1 = SubDivision(survey_number_id=survey_601.id, sub_division_no="601/1", area_sqm=850.00, status="active")
+        sub_701_1 = SubDivision(survey_number_id=survey_701.id, sub_division_no="701/1", area_sqm=950.00, status="active")
+        sub_801_1 = SubDivision(survey_number_id=survey_801.id, sub_division_no="801/1", area_sqm=825.00, status="active")
+        sub_901_1 = SubDivision(survey_number_id=survey_901.id, sub_division_no="901/1", area_sqm=725.00, status="active")
+        sub_1001_1 = SubDivision(survey_number_id=survey_1001.id, sub_division_no="1001/1", area_sqm=1100.00, status="active")
+        sub_1101_1 = SubDivision(survey_number_id=survey_1101.id, sub_division_no="1101/1", area_sqm=775.00, status="active")
 
         sub_163_1 = SubDivision(survey_number_id=survey_163.id, sub_division_no="163/1", area_sqm=575.00, status="active")
         sub_164_1a = SubDivision(survey_number_id=survey_164.id, sub_division_no="164/1A", area_sqm=625.00, status="active")
@@ -246,9 +284,12 @@ async def seed_database():
         sub_166_1 = SubDivision(survey_number_id=survey_166.id, sub_division_no="166/1", area_sqm=725.00, status="active")
 
         db.add_all([
-            sub_500_1, sub_501_1, sub_502_1, sub_503_1, sub_504_1a, sub_504_1b, sub_505_1,
+            sub_200_1, sub_201_1, sub_300_1, sub_301_1, sub_302_1,
+            sub_303_1, sub_304_1a, sub_304_1b, sub_305_1a, sub_305_1b, sub_306_1,
+            sub_401_1, sub_501_1, sub_601_1, sub_701_1, sub_801_1, sub_901_1, sub_1001_1, sub_1101_1,
             sub_163_1, sub_164_1a, sub_164_1b, sub_165_1a, sub_165_1b, sub_166_1
         ])
+        await db.flush()
         await db.flush()
         
         print("[OK] Survey numbers seeded")
@@ -271,6 +312,42 @@ async def seed_database():
         await db.flush()
         
         print("[OK] Owners seeded")
+        
+        # ========== SURVEY OWNERSHIPS ==========
+        print("[OWNERSHIP] Seeding survey ownerships...")
+        ownerships = []
+        all_surveys_list = [
+            survey_145, survey_146, survey_147, survey_148, survey_149, survey_150,
+            survey_151, survey_152, survey_153, survey_154, survey_155, survey_156,
+            survey_157, survey_158, survey_159, survey_160, survey_161, survey_162,
+            survey_163, survey_164, survey_165, survey_166, survey_200, survey_201,
+            survey_300, survey_301, survey_302, survey_303, survey_304, survey_305,
+            survey_306, survey_401, survey_402, survey_501_b5, survey_502_b5,
+            survey_601, survey_602, survey_701, survey_702, survey_801, survey_802,
+            survey_901, survey_902, survey_1001, survey_1002, survey_1003, survey_1004, survey_1005,
+            survey_1101, survey_1102
+        ]
+        for idx, srv in enumerate(all_surveys_list):
+            if idx % 3 == 0:  # Joint ownership (50/50)
+                o1 = owners[idx % len(owners)]
+                o2 = owners[(idx + 1) % len(owners)]
+                ownerships.append(SurveyOwnership(
+                    survey_number_id=srv.id, owner_id=o1.id, ownership_share=50.00,
+                    is_joint_owner=True, ownership_type="joint"
+                ))
+                ownerships.append(SurveyOwnership(
+                    survey_number_id=srv.id, owner_id=o2.id, ownership_share=50.00,
+                    is_joint_owner=True, ownership_type="joint"
+                ))
+            else:  # Sole ownership (100%)
+                o = owners[idx % len(owners)]
+                ownerships.append(SurveyOwnership(
+                    survey_number_id=srv.id, owner_id=o.id, ownership_share=100.00,
+                    is_joint_owner=False, ownership_type="sole"
+                ))
+        db.add_all(ownerships)
+        await db.flush()
+        print(f"[OK] Survey ownerships seeded ({len(ownerships)} records)")
         
         # ========== SIS OFFICERS ==========
         print("[OFFICERS] Seeding SIS officers...")
@@ -343,7 +420,7 @@ async def seed_database():
         # --- Officer 1 Applications (Block B1) ---
         # App 1: ISD, pending, field visit scheduled (Survey 145)
         app_1 = Application(
-            application_number="APP-2024-000001", application_type="ISD", applicant_id=applicants[0].id,
+            application_number="2024/31/0154/000001", application_type="ISD", applicant_id=applicants[0].id,
             survey_number_id=survey_145.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=5), sale_deed_number="SD-2025-1001", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -352,7 +429,7 @@ async def seed_database():
         )
         # App 2: NISD, forwarded to SD (Survey 146)
         app_2 = Application(
-            application_number="APP-2024-000002", application_type="NISD", applicant_id=applicants[1].id,
+            application_number="2024/31/0153/000002", application_type="NISD", applicant_id=applicants[1].id,
             survey_number_id=survey_146.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=today - timedelta(days=12), sale_deed_number="SD-2025-1002", sale_deed_registered=True,
             declared_reason="inheritance", current_stage="SD", current_status="in_progress",
@@ -360,7 +437,7 @@ async def seed_database():
         )
         # App 3: ISD, at DIS, overdue (Survey 147)
         app_3 = Application(
-            application_number="APP-2024-000003", application_type="ISD", applicant_id=applicants[2].id,
+            application_number="2024/31/0154/000003", application_type="ISD", applicant_id=applicants[2].id,
             survey_number_id=survey_147.id, assigned_officer_id=officer_1.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=25), sale_deed_number="SD-2025-1003", sale_deed_registered=True,
             declared_reason="partition", current_stage="DIS", current_status="pending",
@@ -368,7 +445,7 @@ async def seed_database():
         )
         # App 4: MERGE, completed (Survey 148)
         app_4 = Application(
-            application_number="APP-2024-000004", application_type="MERGE", applicant_id=applicants[3].id,
+            application_number="2024/31/0155/000004", application_type="MERGE", applicant_id=applicants[3].id,
             survey_number_id=survey_148.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=45), sale_deed_number="SD-2025-1004", sale_deed_registered=True,
             declared_reason="sale", current_stage="COMPLETED", current_status="approved",
@@ -376,7 +453,7 @@ async def seed_database():
         )
         # App 11: MERGE, pending at SIS (Survey 149)
         app_11 = Application(
-            application_number="APP-2024-000011", application_type="MERGE", applicant_id=applicants[10].id,
+            application_number="2024/31/0155/000011", application_type="MERGE", applicant_id=applicants[10].id,
             survey_number_id=survey_149.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=7), sale_deed_number="SD-2025-1011", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -384,7 +461,7 @@ async def seed_database():
         )
         # App 12: MERGE, in_progress at SD (Survey 150)
         app_12 = Application(
-            application_number="APP-2024-000012", application_type="MERGE", applicant_id=applicants[11].id,
+            application_number="2024/31/0155/000012", application_type="MERGE", applicant_id=applicants[11].id,
             survey_number_id=survey_150.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=today - timedelta(days=14), sale_deed_number="SD-2025-1012", sale_deed_registered=True,
             declared_reason="partition", current_stage="SD", current_status="in_progress",
@@ -392,7 +469,7 @@ async def seed_database():
         )
         # App 13: NISD, pending at SIS (Survey 151)
         app_13 = Application(
-            application_number="APP-2024-000013", application_type="NISD", applicant_id=applicants[12].id,
+            application_number="2024/31/0153/000013", application_type="NISD", applicant_id=applicants[12].id,
             survey_number_id=survey_151.id, assigned_officer_id=officer_1.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=4), sale_deed_number="SD-2025-1013", sale_deed_registered=True,
             declared_reason="gift_deed", current_stage="SIS", current_status="pending",
@@ -400,7 +477,7 @@ async def seed_database():
         )
         # App 14: ISD, in_progress at SD (Survey 152)
         app_14 = Application(
-            application_number="APP-2024-000014", application_type="ISD", applicant_id=applicants[13].id,
+            application_number="2024/31/0154/000014", application_type="ISD", applicant_id=applicants[13].id,
             survey_number_id=survey_152.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=16), sale_deed_number="SD-2025-1014", sale_deed_registered=True,
             declared_reason="sale", current_stage="SD", current_status="in_progress",
@@ -408,7 +485,7 @@ async def seed_database():
         )
         # App 15: NISD, pending at Tahsildar (Survey 153)
         app_15 = Application(
-            application_number="APP-2024-000015", application_type="NISD", applicant_id=applicants[14].id,
+            application_number="2024/31/0153/000015", application_type="NISD", applicant_id=applicants[14].id,
             survey_number_id=survey_153.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=today - timedelta(days=22), sale_deed_number="SD-2025-1015", sale_deed_registered=True,
             declared_reason="inheritance", current_stage="TAHSILDAR", current_status="pending",
@@ -416,16 +493,16 @@ async def seed_database():
         )
         # App 18: Overdue ISD (Survey 154 - dedicated to avoid conflict with Survey 145)
         app_18 = Application(
-            application_number="APP-2024-000018", application_type="ISD", applicant_id=applicants[17].id,
+            application_number="2024/31/0154/000018", application_type="ISD", applicant_id=applicants[17].id,
             survey_number_id=survey_154.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
-            submission_date=today - timedelta(days=22), sale_deed_number="SD-2025-1018", sale_deed_registered=True,
+            submission_date=today - timedelta(days=12), sale_deed_number="SD-2025-1018", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
-            field_visit_scheduled=True, field_visit_date=today - timedelta(days=5), is_overdue=True, priority_flag=True,
-            notes="ISD application - Field visit overdue by 5 days"
+            field_visit_scheduled=True, field_visit_date=today + timedelta(days=3), is_overdue=False, priority_flag=False,
+            notes="ISD application - Field visit scheduled"
         )
         # App 22: Overdue MERGE (Survey 155 - dedicated to avoid conflict with Survey 148)
         app_22 = Application(
-            application_number="APP-2024-000022", application_type="MERGE", applicant_id=applicants[21].id,
+            application_number="2024/31/0155/000022", application_type="MERGE", applicant_id=applicants[21].id,
             survey_number_id=survey_155.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=26), sale_deed_number="SD-2025-1022", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -434,7 +511,7 @@ async def seed_database():
         )
         # App 26: 2025 ISD (Survey 156)
         app_26 = Application(
-            application_number="APP-2025-000001", application_type="ISD", applicant_id=applicants[25].id,
+            application_number="2025/31/0154/000001", application_type="ISD", applicant_id=applicants[25].id,
             survey_number_id=survey_156.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=date(2025, 1, 15), sale_deed_number="SD-2025-2001", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -442,7 +519,7 @@ async def seed_database():
         )
         # App 27: 2025 NISD (Survey 157)
         app_27 = Application(
-            application_number="APP-2025-000002", application_type="NISD", applicant_id=applicants[26].id,
+            application_number="2025/31/0153/000002", application_type="NISD", applicant_id=applicants[26].id,
             survey_number_id=survey_157.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=date(2025, 2, 10), sale_deed_number="SD-2025-2002", sale_deed_registered=True,
             declared_reason="inheritance", current_stage="SIS", current_status="pending",
@@ -452,7 +529,7 @@ async def seed_database():
         # --- Recent Applications Submitted up to Current Date (2026-07-29) ---
         # App 31: ISD submitted TODAY 2026-07-29 (Survey 158)
         app_31 = Application(
-            application_number="APP-2026-000031", application_type="ISD", applicant_id=applicants[27].id,
+            application_number="2026/31/0154/000031", application_type="ISD", applicant_id=applicants[27].id,
             survey_number_id=survey_158.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today, sale_deed_number="SD-2026-3031", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -461,7 +538,7 @@ async def seed_database():
         )
         # App 32: MERGE submitted TODAY 2026-07-29 (Survey 159)
         app_32 = Application(
-            application_number="APP-2026-000032", application_type="MERGE", applicant_id=applicants[28].id,
+            application_number="2026/31/0155/000032", application_type="MERGE", applicant_id=applicants[28].id,
             survey_number_id=survey_159.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=today, sale_deed_number="SD-2026-3032", sale_deed_registered=True,
             declared_reason="partition", current_stage="SIS", current_status="pending",
@@ -470,7 +547,7 @@ async def seed_database():
         )
         # App 33: NISD submitted YESTERDAY 2026-07-28 (Survey 160)
         app_33 = Application(
-            application_number="APP-2026-000033", application_type="NISD", applicant_id=applicants[29].id,
+            application_number="2026/31/0153/000033", application_type="NISD", applicant_id=applicants[29].id,
             survey_number_id=survey_160.id, assigned_officer_id=officer_1.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=1), sale_deed_number="SD-2026-3033", sale_deed_registered=True,
             declared_reason="gift_deed", current_stage="SIS", current_status="pending",
@@ -478,7 +555,7 @@ async def seed_database():
         )
         # App 34: ISD submitted 2026-07-25 (Survey 161)
         app_34 = Application(
-            application_number="APP-2026-000034", application_type="ISD", applicant_id=applicants[30].id,
+            application_number="2026/31/0154/000034", application_type="ISD", applicant_id=applicants[30].id,
             survey_number_id=survey_161.id, assigned_officer_id=officer_1.id, submission_channel="CSC",
             submission_date=today - timedelta(days=4), sale_deed_number="SD-2026-3034", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -486,7 +563,7 @@ async def seed_database():
         )
         # App 35: MERGE submitted 2026-07-20 (Survey 162)
         app_35 = Application(
-            application_number="APP-2026-000035", application_type="MERGE", applicant_id=applicants[31].id,
+            application_number="2026/31/0155/000035", application_type="MERGE", applicant_id=applicants[31].id,
             survey_number_id=survey_162.id, assigned_officer_id=officer_1.id, submission_channel="citizen",
             submission_date=today - timedelta(days=9), sale_deed_number="SD-2026-3035", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -496,35 +573,35 @@ async def seed_database():
         # --- Officer 2 Applications (Block B2 / B3) ---
         # App 5: ISD (Survey 200)
         app_5 = Application(
-            application_number="APP-2024-000005", application_type="ISD", applicant_id=applicants[4].id,
+            application_number="2024/31/0154/000005", application_type="ISD", applicant_id=applicants[4].id,
             survey_number_id=survey_200.id, assigned_officer_id=officer_2.id, submission_channel="citizen",
             submission_date=today - timedelta(days=8), declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
         # App 6: NISD, rejected (Survey 201)
         app_6 = Application(
-            application_number="APP-2024-000006", application_type="NISD", applicant_id=applicants[5].id,
+            application_number="2024/31/0153/000006", application_type="NISD", applicant_id=applicants[5].id,
             survey_number_id=survey_201.id, assigned_officer_id=officer_2.id, submission_channel="CSC",
             submission_date=today - timedelta(days=18), declared_reason="gift_deed", current_stage="REJECTED", current_status="rejected",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
         # App 7: ISD (Survey 300)
         app_7 = Application(
-            application_number="APP-2024-000007", application_type="ISD", applicant_id=applicants[6].id,
+            application_number="2024/31/0154/000007", application_type="ISD", applicant_id=applicants[6].id,
             survey_number_id=survey_300.id, assigned_officer_id=officer_2.id, submission_channel="citizen",
             submission_date=today - timedelta(days=6), declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
         # App 8: ISD at SD (Survey 301)
         app_8 = Application(
-            application_number="APP-2024-000008", application_type="ISD", applicant_id=applicants[7].id,
+            application_number="2024/31/0154/000008", application_type="ISD", applicant_id=applicants[7].id,
             survey_number_id=survey_301.id, assigned_officer_id=officer_2.id, submission_channel="CSC",
             submission_date=today - timedelta(days=10), declared_reason="partition", current_stage="SD", current_status="pending",
             field_visit_scheduled=False, is_overdue=False, priority_flag=True
         )
         # App 16: MERGE at DIS (Survey 302)
         app_16 = Application(
-            application_number="APP-2024-000016", application_type="MERGE", applicant_id=applicants[15].id,
+            application_number="2024/31/0155/000016", application_type="MERGE", applicant_id=applicants[15].id,
             survey_number_id=survey_302.id, assigned_officer_id=officer_2.id, submission_channel="CSC",
             submission_date=today - timedelta(days=18), sale_deed_number="SD-2025-1016", sale_deed_registered=True,
             declared_reason="sale", current_stage="DIS", current_status="in_progress",
@@ -532,7 +609,7 @@ async def seed_database():
         )
         # App 19: Overdue ISD (Survey 303)
         app_19 = Application(
-            application_number="APP-2024-000019", application_type="ISD", applicant_id=applicants[18].id,
+            application_number="2024/31/0154/000019", application_type="ISD", applicant_id=applicants[18].id,
             survey_number_id=survey_303.id, assigned_officer_id=officer_2.id, submission_channel="CSC",
             submission_date=today - timedelta(days=28), sale_deed_number="SD-2025-1019", sale_deed_registered=True,
             declared_reason="partition", current_stage="SIS", current_status="pending",
@@ -540,7 +617,7 @@ async def seed_database():
         )
         # App 23: Overdue MERGE (Survey 304)
         app_23 = Application(
-            application_number="APP-2024-000023", application_type="MERGE", applicant_id=applicants[22].id,
+            application_number="2024/31/0155/000023", application_type="MERGE", applicant_id=applicants[22].id,
             survey_number_id=survey_304.id, assigned_officer_id=officer_2.id, submission_channel="citizen",
             submission_date=today - timedelta(days=24), sale_deed_number="SD-2025-1023", sale_deed_registered=True,
             declared_reason="partition", current_stage="SIS", current_status="pending",
@@ -548,7 +625,7 @@ async def seed_database():
         )
         # App 28: 2025 MERGE (Survey 305)
         app_28 = Application(
-            application_number="APP-2025-000003", application_type="MERGE", applicant_id=applicants[8].id,
+            application_number="2025/31/0155/000003", application_type="MERGE", applicant_id=applicants[8].id,
             survey_number_id=survey_305.id, assigned_officer_id=officer_2.id, submission_channel="sub_registrar",
             submission_date=date(2025, 3, 5), sale_deed_number="SD-2025-2003", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="in_progress",
@@ -556,7 +633,7 @@ async def seed_database():
         )
         # App 36: ISD submitted 2026-07-28 (Survey 306)
         app_36 = Application(
-            application_number="APP-2026-000036", application_type="ISD", applicant_id=applicants[32].id,
+            application_number="2026/31/0154/000036", application_type="ISD", applicant_id=applicants[32].id,
             survey_number_id=survey_306.id, assigned_officer_id=officer_2.id, submission_channel="citizen",
             submission_date=today - timedelta(days=1), sale_deed_number="SD-2026-3036", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
@@ -564,82 +641,82 @@ async def seed_database():
         )
 
         # --- Officer 3 Applications (Tambaram Block B10) ---
-        # App 9: NISD, completed (Survey 500)
+        # App 9: NISD, completed (Survey 1001)
         app_9 = Application(
-            application_number="APP-2024-000009", application_type="NISD", applicant_id=applicants[8].id,
-            survey_number_id=survey_500.id, assigned_officer_id=officer_3.id, submission_channel="sub_registrar",
+            application_number="2024/31/0153/000009", application_type="NISD", applicant_id=applicants[8].id,
+            survey_number_id=survey_1001.id, assigned_officer_id=officer_3.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=30), declared_reason="inheritance", current_stage="COMPLETED", current_status="approved",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
-        # App 10: ISD at Tahsildar (Survey 501)
+        # App 10: ISD at Tahsildar (Survey 1002)
         app_10 = Application(
-            application_number="APP-2024-000010", application_type="ISD", applicant_id=applicants[9].id,
-            survey_number_id=survey_501.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
+            application_number="2024/31/0154/000010", application_type="ISD", applicant_id=applicants[9].id,
+            survey_number_id=survey_1002.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
             submission_date=today - timedelta(days=20), declared_reason="sale", current_stage="TAHSILDAR", current_status="pending",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
-        # App 17: MERGE, completed (Survey 502)
+        # App 17: MERGE, completed (Survey 1003)
         app_17 = Application(
-            application_number="APP-2024-000017", application_type="MERGE", applicant_id=applicants[16].id,
-            survey_number_id=survey_502.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
+            application_number="2024/31/0155/000017", application_type="MERGE", applicant_id=applicants[16].id,
+            survey_number_id=survey_1003.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
             submission_date=today - timedelta(days=35), sale_deed_number="SD-2025-1017", sale_deed_registered=True,
             declared_reason="sale", current_stage="COMPLETED", current_status="approved",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
         )
-        # App 20: Overdue ISD (Survey 503)
+        # App 20: Overdue ISD (Survey 1004)
         app_20 = Application(
-            application_number="APP-2024-000020", application_type="ISD", applicant_id=applicants[19].id,
-            survey_number_id=survey_503.id, assigned_officer_id=officer_3.id, submission_channel="sub_registrar",
+            application_number="2024/31/0154/000020", application_type="ISD", applicant_id=applicants[19].id,
+            survey_number_id=survey_1004.id, assigned_officer_id=officer_3.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=20), sale_deed_number="SD-2025-1020", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=True, field_visit_date=today - timedelta(days=3), is_overdue=True, priority_flag=True
         )
-        # App 24: Overdue MERGE (Survey 504)
+        # App 24: Overdue MERGE (Survey 1005)
         app_24 = Application(
-            application_number="APP-2024-000024", application_type="MERGE", applicant_id=applicants[23].id,
-            survey_number_id=survey_504.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
+            application_number="2024/31/0155/000024", application_type="MERGE", applicant_id=applicants[23].id,
+            survey_number_id=survey_1005.id, assigned_officer_id=officer_3.id, submission_channel="CSC",
             submission_date=today - timedelta(days=27), sale_deed_number="SD-2025-1024", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=True, field_visit_date=today - timedelta(days=9), is_overdue=True, priority_flag=True
         )
-        # App 29: 2025 ISD (Survey 505)
+        # App 29: 2025 ISD (Survey 1001)
         app_29 = Application(
-            application_number="APP-2025-000004", application_type="ISD", applicant_id=applicants[9].id,
-            survey_number_id=survey_505.id, assigned_officer_id=officer_3.id, submission_channel="citizen",
+            application_number="2025/31/0154/000004", application_type="ISD", applicant_id=applicants[9].id,
+            survey_number_id=survey_1001.id, assigned_officer_id=officer_3.id, submission_channel="citizen",
             submission_date=date(2025, 1, 25), sale_deed_number="SD-2025-2004", sale_deed_registered=True,
             declared_reason="partition", current_stage="SD", current_status="in_progress",
             field_visit_scheduled=False, is_overdue=True, priority_flag=True
         )
 
-        # --- Officer 4 Applications (District Level) ---
-        # App 21: Overdue ISD (Survey 163)
+        # --- Officer 4 Applications (District Level across various Taluks, Towns, Wards, Blocks) ---
+        # App 21: Overdue ISD (Survey 401 - Mylapore, Ward 173, Block B4)
         app_21 = Application(
-            application_number="APP-2024-000021", application_type="ISD", applicant_id=applicants[20].id,
-            survey_number_id=survey_163.id, assigned_officer_id=officer_4.id, submission_channel="citizen",
+            application_number="2026/31/0154/000021", application_type="ISD", applicant_id=applicants[20].id,
+            survey_number_id=survey_401.id, assigned_officer_id=officer_4.id, submission_channel="citizen",
             submission_date=today - timedelta(days=30), sale_deed_number="SD-2025-1021", sale_deed_registered=True,
             declared_reason="inheritance", current_stage="SIS", current_status="pending",
             field_visit_scheduled=True, field_visit_date=today - timedelta(days=10), is_overdue=True, priority_flag=True
         )
-        # App 25: Overdue MERGE (Survey 164)
+        # App 25: Overdue MERGE (Survey 701 - Guindy, Ward 160, Block B7)
         app_25 = Application(
-            application_number="APP-2024-000025", application_type="MERGE", applicant_id=applicants[24].id,
-            survey_number_id=survey_164.id, assigned_officer_id=officer_4.id, submission_channel="sub_registrar",
+            application_number="2026/31/0155/000025", application_type="MERGE", applicant_id=applicants[24].id,
+            survey_number_id=survey_701.id, assigned_officer_id=officer_4.id, submission_channel="sub_registrar",
             submission_date=today - timedelta(days=32), sale_deed_number="SD-2025-1025", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=True, field_visit_date=today - timedelta(days=12), is_overdue=True, priority_flag=True
         )
-        # App 30: 2025 MERGE (Survey 165)
+        # App 30: 2025 MERGE (Survey 901 - Egmore, Ward 105, Block B9)
         app_30 = Application(
-            application_number="APP-2025-000005", application_type="MERGE", applicant_id=applicants[10].id,
-            survey_number_id=survey_165.id, assigned_officer_id=officer_4.id, submission_channel="CSC",
+            application_number="2025/31/0155/000005", application_type="MERGE", applicant_id=applicants[10].id,
+            survey_number_id=survey_901.id, assigned_officer_id=officer_4.id, submission_channel="CSC",
             submission_date=date(2025, 2, 20), sale_deed_number="SD-2025-2005", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=False, is_overdue=True, priority_flag=True
         )
-        # App 37: ISD submitted TODAY 2026-07-29 (Survey 166)
+        # App 37: ISD submitted TODAY 2026-07-29 (Survey 1101 - Velachery, Ward 178, Block B11)
         app_37 = Application(
-            application_number="APP-2026-000037", application_type="ISD", applicant_id=applicants[33].id,
-            survey_number_id=survey_166.id, assigned_officer_id=officer_4.id, submission_channel="CSC",
+            application_number="2026/31/0154/000037", application_type="ISD", applicant_id=applicants[33].id,
+            survey_number_id=survey_1101.id, assigned_officer_id=officer_4.id, submission_channel="CSC",
             submission_date=today, sale_deed_number="SD-2026-3037", sale_deed_registered=True,
             declared_reason="sale", current_stage="SIS", current_status="pending",
             field_visit_scheduled=False, is_overdue=False, priority_flag=False
@@ -651,6 +728,14 @@ async def seed_database():
             app_21, app_22, app_23, app_24, app_25, app_26, app_27, app_28, app_29, app_30,
             app_31, app_32, app_33, app_34, app_35, app_36, app_37
         ]
+
+        # Enforce strict Application ID format: Year/ServiceCode/DistrictCode/Sequence
+        # Year strictly follows application applied (submission) year.
+        for app in all_apps:
+            applied_year = app.submission_date.year if app.submission_date else 2026
+            service_code = "0153" if app.application_type == "NISD" else ("0154" if app.application_type == "ISD" else "0155")
+            seq = app.application_number.split('/')[-1] if '/' in app.application_number else "000001"
+            app.application_number = f"{applied_year}/{service_code}/02/{seq}"
 
         db.add_all(all_apps)
         await db.flush()
@@ -689,7 +774,7 @@ async def seed_database():
             # App 16
             ApplicationSubDivision(application_id=app_16.id, sub_division_id=sub_302_1.id, proposed_area_sqm=600.00),
             # App 17
-            ApplicationSubDivision(application_id=app_17.id, sub_division_id=sub_502_1.id, proposed_area_sqm=800.00),
+            ApplicationSubDivision(application_id=app_17.id, sub_division_id=sub_1001_1.id, proposed_area_sqm=800.00),
             # App 18
             ApplicationSubDivision(application_id=app_18.id, sub_division_id=sub_154_1.id, proposed_area_sqm=550.00),
             ApplicationSubDivision(application_id=app_18.id, sub_division_id=sub_154_2.id, proposed_area_sqm=550.00),
@@ -700,8 +785,7 @@ async def seed_database():
             ApplicationSubDivision(application_id=app_23.id, sub_division_id=sub_304_1a.id, proposed_area_sqm=675.00),
             ApplicationSubDivision(application_id=app_23.id, sub_division_id=sub_304_1b.id, proposed_area_sqm=675.00),
             # App 24
-            ApplicationSubDivision(application_id=app_24.id, sub_division_id=sub_504_1a.id, proposed_area_sqm=850.00),
-            ApplicationSubDivision(application_id=app_24.id, sub_division_id=sub_504_1b.id, proposed_area_sqm=850.00),
+            ApplicationSubDivision(application_id=app_24.id, sub_division_id=sub_1001_1.id, proposed_area_sqm=850.00),
             # App 25
             ApplicationSubDivision(application_id=app_25.id, sub_division_id=sub_164_1a.id, proposed_area_sqm=625.00),
             ApplicationSubDivision(application_id=app_25.id, sub_division_id=sub_164_1b.id, proposed_area_sqm=625.00),

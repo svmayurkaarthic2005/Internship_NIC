@@ -3,17 +3,18 @@ Main chatbot service - RAG orchestration
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import asyncio
 import time
 import re
+import uuid
 from difflib import SequenceMatcher
 
-from backend.config import DISTRICT_NAME_MAP
+from backend.config import DISTRICT_NAME_MAP, settings
 from backend.schemas import OfficerContext
 from backend.services.rag import (
     detect_language,
-    get_rag_context,
+    get_rag_context_async,
     build_prompt,
     build_html_response,
     call_llama,
@@ -21,9 +22,14 @@ from backend.services.rag import (
     parse_intent,
     extract_survey_number,
     extract_application_number,
+    extract_application_numbers,
     extract_ward_number,
     extract_block_number,
-    extract_town_name
+    extract_town_name,
+    extract_taluk_name,
+    extract_date_range,
+    _get_projected_application_columns,
+    _get_projected_field_visit_columns
 )
 from backend.services.postgres import (
     get_pending_applications,
@@ -43,7 +49,7 @@ from backend.services.postgres import (
 from backend.models import (
     ChatSession, ChatMessage, Application, SurveyNumber, Block, Ward, Town, Taluk,
     FieldVisit, ApplicationDocument, WorkflowHistory, Applicant, ApplicationSubDivision,
-    OfficerJurisdiction, District, PattaTransfer
+    OfficerJurisdiction, District, PattaTransfer, SISOfficer
 )
 from backend.utils.logger import get_logger
 from sqlalchemy import select, and_, func
@@ -51,7 +57,20 @@ from sqlalchemy import select, and_, func
 logger = get_logger(__name__)
 
 
-from backend.utils.fuzzy import extract_month_from_text, extract_tokens, is_token_typo_match, normalize_text
+from backend.utils.fuzzy import (
+    extract_month_from_text,
+    extract_tokens,
+    match_phrase,
+    normalize_text,
+    resolve_unique_entry,
+)
+
+# Application-type detection patterns.
+# Service codes are only meaningful as standalone digit runs — the (?<!\d)/(?!\d)
+# guards stop a serial number like "000153" from being read as the NISD code.
+_SERVICE_CODE_NISD_RE = re.compile(r'\bnisd\b|(?<!\d)0153(?!\d)')
+_SERVICE_CODE_ISD_RE = re.compile(r'\bisd\b|(?<!\d)0154(?!\d)')
+_SERVICE_CODE_MERGE_RE = re.compile(r'\bmerg(?:e|es|ed|ing)?\b|(?<!\d)0155(?!\d)')
 
 
 def extract_month_from_query(message: str) -> Optional[int]:
@@ -66,6 +85,144 @@ def extract_month_from_query(message: str) -> Optional[int]:
     if month_num:
         logger.info(f"Month extracted: {month_num} from query '{message[:40]}'")
     return month_num
+
+
+def _extract_app_types(message_lower: str, intent: str = None):
+    """
+    Extract one or more application types from a query message.
+
+    Returns:
+        - A list  ["ISD", "MERGE"] when multiple types mentioned
+        - A single string "ISD" / "NISD" / "MERGE" when exactly one type
+        - None when no specific type mentioned (all types)
+    """
+    types = []
+    # \bisd\b matches "isd" but NOT "nisd" (no word-boundary before i in nisd).
+    # Service codes must be standalone digit runs: "2026/0153/02/000002" counts,
+    # but the serial "000153" inside 2026/0154/02/000153 must NOT read as NISD.
+    has_nisd  = bool(_SERVICE_CODE_NISD_RE.search(message_lower))
+    has_isd   = bool(_SERVICE_CODE_ISD_RE.search(message_lower))
+    has_merge = bool(_SERVICE_CODE_MERGE_RE.search(message_lower))
+
+    if has_nisd:
+        types.append("NISD")
+    if has_isd:
+        types.append("ISD")
+    if has_merge:
+        types.append("MERGE")
+
+    if len(types) == 0:
+        if intent == "both_applications":
+            return ["ISD", "NISD"]
+        elif intent == "isd_applications":
+            return "ISD"
+        elif intent == "nisd_applications":
+            return "NISD"
+        elif intent == "merge_applications":
+            return "MERGE"
+        return None
+    if len(types) == 1:
+        return types[0]
+    return types  # list for multi-type IN query
+
+
+
+def _format_count_intro(structured_data: dict, language: str, message: str) -> str:
+    """
+    Format clean, natural English and Tamil intro sentence when the user asks for application counts.
+    """
+    if not structured_data:
+        return ""
+    count = structured_data.get("count", len(structured_data.get("applications", [])))
+    qtype_raw = structured_data.get("query_type", "applications")
+    is_tamil = language in ("ta", "tanglish")
+
+    import re as _re
+    # Clean leading status adjectives (e.g. "All NISD & ISD Applications (2026-07-03 to 2026-07-20)" -> "NISD & ISD Applications (2026-07-03 to 2026-07-20)")
+    label = _re.sub(r'^(All|Pending|Approved|Rejected)\s+', '', qtype_raw, flags=_re.IGNORECASE)
+
+    # Extract date range from label if present e.g. "(2026-07-03 to 2026-07-20)" or "(not 2025-01-01 to 2026-12-31)"
+    date_range_match = _re.search(r'\((?:not\s+)?(20\d{2}-\d{2}-\d{2})\s+to\s+(20\d{2}-\d{2}-\d{2})\)', label)
+    is_negated_date = bool(date_range_match and "not " in date_range_match.group(0)) or structured_data.get("exclude_date_range", False) or any(w in message.lower() for w in ["not between", "not in", "outside", "other than", "இடைப்பட்டவை அல்ல", "இடையில் இல்லாத"])
+    date_suffix_en = ""
+    date_prefix_ta = ""
+    if date_range_match:
+        d1, d2 = date_range_match.group(1), date_range_match.group(2)
+        # Show just the year if it's a full-year range (Jan 1 → Dec 31 of any year)
+        y1, m1, day1 = d1.split('-')
+        y2, m2, day2 = d2.split('-')
+        if m1 == '01' and day1 == '01' and m2 == '12' and day2 == '31':
+            if y1 == y2:
+                if is_negated_date:
+                    date_suffix_en = f" not in {y1}"
+                    date_prefix_ta = f"{y1} ஆண்டு தவிர "
+                else:
+                    date_suffix_en = f" in {y1}"
+                    date_prefix_ta = f"{y1} ஆண்டில் "
+            else:
+                if is_negated_date:
+                    date_suffix_en = f" not between {y1} and {y2}"
+                    date_prefix_ta = f"{y1} முதல் {y2} வரை இல்லாத "
+                else:
+                    date_suffix_en = f" between {y1} and {y2}"
+                    date_prefix_ta = f"{y1} முதல் {y2} வரை "
+        else:
+            if is_negated_date:
+                date_suffix_en = f" not between {d1} and {d2}"
+                date_prefix_ta = f"{d1} முதல் {d2} வரை இல்லாத "
+            else:
+                date_suffix_en = f" ({d1} to {d2})"
+                date_prefix_ta = f"{d1} முதல் {d2} வரை "
+        label = label.replace(date_range_match.group(0), "").strip()
+
+    label_en = _re.sub(r'\bApplications\b', 'application' if count == 1 else 'applications', label, flags=_re.IGNORECASE)
+    label_ta = label.replace("Applications", "விண்ணப்பங்கள்").replace("Application", "விண்ணப்பம்")
+
+    if is_tamil:
+        if count == 0:
+            return f"உங்கள் அதிகார வரம்பில் {date_prefix_ta}{label_ta} எதுவும் இல்லை."
+        elif count == 1:
+            return f"உங்கள் அதிகார வரம்பில் {date_prefix_ta}1 {label_ta.replace('விண்ணப்பங்கள்', 'விண்ணப்பம்')} உள்ளது."
+        else:
+            return f"உங்கள் அதிகார வரம்பில் {date_prefix_ta}{count} {label_ta} உள்ளன."
+    else:
+        if count == 0:
+            return f"There are no {label_en}{date_suffix_en} in your jurisdiction."
+        elif count == 1:
+            return f"There is 1 {label_en}{date_suffix_en} in your jurisdiction."
+        else:
+            return f"There are {count} {label_en}{date_suffix_en} in your jurisdiction."
+
+
+def _is_count_only_query(message: str) -> bool:
+    """
+    Returns True ONLY if the user is explicitly asking for a count/quantity,
+    and NOT asking to list/show/display the records or table,
+    and NOT asking for a specific field identifier (like serial no, patta no, etc.).
+    """
+    msg = message.lower()
+    
+    # Check if asking for specific field like "serial no", "patta no", "can no", etc.
+    import re
+    if re.search(r'\b(serial|can|patta|ward|block|survey|subdivision|phone|mobile|aadhaar|renewal|service|department|district|taluk|village|form\s*6|ip)\s+(?:no|number)\b', msg):
+        return False
+    
+    _list_words = ["show", "list", "display", "view", "get", "fetch", "details", "காட்டு", "காண்பி", "பட்டியல்"]
+    has_list_word = any(w in msg for w in _list_words)
+    
+    _count_triggers = [
+        "how many", "howmuch", "how much", "total count", "count of",
+        "total number of", "total number", "no of", "no. of", "nos of", "nos. of",
+        "number of", "num of", "num. of", "count",
+        "எத்தனை", "எண்ணிக்கை", "தொகை", "மொத்த எண்ணிக்கை", "மொத்தம்"
+    ]
+    has_count_trigger = any(kw in msg for kw in _count_triggers) or bool(re.search(r'\b(?:no|no\.|nos|nos\.|number|num|count)\s+of\b', msg))
+    
+    if has_count_trigger and not has_list_word:
+        return True
+    if has_count_trigger and has_list_word and any(w in msg for w in ["count", "total", "how many", "எத்தனை", "எண்ணிக்கை"]):
+        return True
+    return False
 
 
 def _extract_app_number_from_context(message: str, chat_history: list = None, allow_implicit_continuation: bool = False) -> str:
@@ -83,6 +240,11 @@ def _extract_app_number_from_context(message: str, chat_history: list = None, al
         Application number in uppercase, or None if not found
     """
     import re
+
+    # Pattern 0: Official YYYY/SERVICE_CODE/DISTRICT_CODE/SEQUENCE format (e.g. 2026/0153/31/000001 or 2026/31/0153/000001)
+    app_match = re.search(r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b', message, re.IGNORECASE)
+    if app_match:
+        return app_match.group(0).upper()
 
     # Pattern 1: Standard format (ISD|NISD|MERGE)/XX/YYYY/NNN
     app_match = re.search(r'(ISD|NISD|MERGE)/\w+/\d+/\d+', message, re.IGNORECASE)
@@ -106,26 +268,21 @@ def _extract_app_number_from_context(message: str, chat_history: list = None, al
     _msg_lower = message.lower()
     has_explicit_reference = any(pattern in _msg_lower for pattern in reference_patterns)
     
-    # Pattern 4: Implicit continuation - if asking a field query immediately after
-    # an application was discussed, assume continuity (only check last 2 messages)
+    # Pattern 4: Implicit continuation - if asking a field/column query after
+    # an application was discussed, assume continuity
     if allow_implicit_continuation and not has_explicit_reference and chat_history:
-        # Check only the immediate previous exchange (last 2 messages: user + assistant)
-        for msg in reversed(chat_history[-2:]):
+        for msg in reversed(chat_history[-6:]):
             content = msg.get("content", "")
-            app_match = re.search(r'(ISD|NISD|MERGE)/\w+/\d+/\d+', content, re.IGNORECASE)
-            if not app_match:
-                app_match = re.search(r'APP-\d{4}-\d{6}', content, re.IGNORECASE)
+            app_match = re.search(r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|(?:ISD|NISD|MERGE)/\w+/\d+/\d+|APP-\d{4}-\d{6}', content, re.IGNORECASE)
             if app_match:
                 logger.info(f"Found implicit application continuation '{app_match.group(0)}' from immediate context")
                 return app_match.group(0).upper()
     
-    # Pattern 5: Explicit reference - search further back in history (last 5 messages)
+    # Pattern 5: Explicit reference - search further back in history
     if has_explicit_reference and chat_history:
-        for msg in reversed(chat_history[-5:]):
+        for msg in reversed(chat_history[-8:]):
             content = msg.get("content", "")
-            app_match = re.search(r'(ISD|NISD|MERGE)/\w+/\d+/\d+', content, re.IGNORECASE)
-            if not app_match:
-                app_match = re.search(r'APP-\d{4}-\d{6}', content, re.IGNORECASE)
+            app_match = re.search(r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|(?:ISD|NISD|MERGE)/\w+/\d+/\d+|APP-\d{4}-\d{6}', content, re.IGNORECASE)
             if app_match:
                 logger.info(f"Found application reference '{app_match.group(0)}' from chat history")
                 return app_match.group(0).upper()
@@ -133,33 +290,407 @@ def _extract_app_number_from_context(message: str, chat_history: list = None, al
     return None
 
 
+# ── Application number format validation ────────────────────────────────────
+# extract_application_number() only ever matches well-formed numbers; when it
+# returns None we cannot tell "the officer mentioned no application" apart from
+# "the officer typed an application number wrongly". These helpers make that
+# distinction so both chat paths can say which of the two happened.
+
+# The accepted shapes, kept in sync with rag.extract_application_number().
+_VALID_APP_NUMBER_RE = re.compile(
+    r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b'
+    r'|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b'
+    r'|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b'
+    r'|\bAPP-\d+-\d+\b',
+    re.IGNORECASE,
+)
+
+# Deliberately loose — only consulted after _VALID_APP_NUMBER_RE has already
+# failed, so anything it catches is by definition not a valid number.
+# Group 1: an APP-prefixed token (self-evidently an application number attempt).
+# Group 2: a TYPE-prefixed token.
+# Group 3: a bare digits-and-slashes token — needs a cue word to count.
+_APP_NUMBER_ATTEMPT_RE = re.compile(
+    r'\b(APP[\-_/]*\d[\w\-/]*)'
+    r'|\b((?:ISD|NISD|MERGE)/[\w/]+)'
+    r'|(\b\d{2,4}(?:/\d{1,6})+\b)',
+    re.IGNORECASE,
+)
+
+# A date typed as 12/05/2026, or a span like 2024/2025, must never be reported as
+# a malformed application number — those are normal, supported queries.
+_DATE_LIKE_RE = re.compile(r'^\d{1,2}/\d{1,2}(/\d{2,4})?$|^\d{4}/\d{1,2}$|^\d{4}/\d{4}$')
+
+# A single-slash bare token only reads as a truncated application number when the
+# second segment looks like a zero-padded service/district code (0153, 0154, 031…).
+# That keeps "2026/0153" but rejects "2024/2025".
+_TRUNCATED_APP_RE = re.compile(r'^\d{4}/0\d{3}$')
+
+_APP_NUMBER_CUE_WORDS = ("app", "application", "appl", "விண்ணப்ப", "vinnappa")
+
+# Intents whose answer is about one specific application, so a malformed number
+# makes the whole request unanswerable.
+_APP_NUMBER_INTENTS = {
+    "application_status", "check_documents", "check_sale_deed", "sale_deed_check",
+    "is_nisd_or_isd", "joint_owner_check", "merge_info", "isd_processing",
+    "escalation_check", "litigation_check", "rejection_info",
+    "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
+    "sd_forward_check", "sd_remarks",
+    "fv_date_select", "fv_nearby_pending", "fv_deadline_check",
+}
+
+
+def detect_invalid_app_number(message: str) -> Optional[str]:
+    """
+    Return the offending token when the officer clearly tried to give an
+    application number but used a format we cannot parse, else None.
+
+    Returns None when the message contains a valid number, or contains nothing
+    that looks like an attempt at one.
+    """
+    if not message:
+        return None
+    if _VALID_APP_NUMBER_RE.search(message):
+        return None
+
+    _lower = message.lower()
+    has_cue = any(w in _lower for w in _APP_NUMBER_CUE_WORDS)
+
+    for m in _APP_NUMBER_ATTEMPT_RE.finditer(message):
+        app_tok, type_tok, bare_tok = m.group(1), m.group(2), m.group(3)
+        token = app_tok or type_tok or bare_tok
+        if not token:
+            continue
+        token = token.strip().rstrip("/-_")
+        if bare_tok and not app_tok and not type_tok:
+            # A bare number only counts as an attempt when the officer said
+            # "application" somewhere, and never when it reads as a date or span.
+            if not has_cue:
+                continue
+            # A single-slash token is ambiguous: keep it only in the
+            # YYYY/service-code shape, otherwise treat it as a date or a span.
+            if not _TRUNCATED_APP_RE.match(token):
+                if _DATE_LIKE_RE.match(token) or token.count("/") < 2:
+                    continue
+        return token
+    return None
+
+
+def build_invalid_app_number_message(token: str, language: str) -> str:
+    """Localised 'that application number is not valid' message."""
+    if language == "ta":
+        return (
+            f"நீங்கள் கொடுத்த விண்ணப்ப எண் **{token}** சரியான வடிவத்தில் இல்லை.\n\n"
+            "சரியான வடிவங்கள்:\n"
+            "  • APP-YYYY-NNNNNN — எ.கா. APP-2024-000001\n"
+            "  • YYYY/சேவைக்குறியீடு/மாவட்டக்குறியீடு/வரிசை எண் — எ.கா. 2026/0153/31/000001\n"
+            "  • ISD/NISD/MERGE/வார்டு/YYYY/எண் — எ.கா. ISD/W1/2024/0001\n\n"
+            "சரியான விண்ணப்ப எண்ணுடன் மீண்டும் கேட்கவும்."
+        )
+    if language == "tanglish":
+        return (
+            f"Neenga kudutha application number **{token}** correct format-la illa.\n\n"
+            "Valid formats:\n"
+            "  • APP-YYYY-NNNNNN — e.g. APP-2024-000001\n"
+            "  • YYYY/SERVICE/DISTRICT/SEQUENCE — e.g. 2026/0153/31/000001\n"
+            "  • ISD/NISD/MERGE/WARD/YYYY/NNN — e.g. ISD/W1/2024/0001\n\n"
+            "Correct application number kuduthu marubadiyum kelunga."
+        )
+    return (
+        f"The application number you entered — **{token}** — is not in a valid format.\n\n"
+        "Valid application number formats are:\n"
+        "  • APP-YYYY-NNNNNN — e.g. APP-2024-000001\n"
+        "  • YYYY/SERVICE_CODE/DISTRICT_CODE/SEQUENCE — e.g. 2026/0153/31/000001\n"
+        "  • ISD|NISD|MERGE/WARD/YYYY/NNN — e.g. ISD/W1/2024/0001\n\n"
+        "Please re-enter your question with a valid application number."
+    )
+
+
+def build_app_not_found_message(structured_data: Dict[str, Any], language: str) -> str:
+    """
+    Localised 'no such application' message, including the suggestions
+    get_application_detail() attaches when it finds near-matches.
+    """
+    searched = structured_data.get("searched_number") or structured_data.get("application_number") or ""
+    suggestions = structured_data.get("suggestions") or []
+
+    if language == "ta":
+        head = (
+            f"நீங்கள் கேட்ட விண்ணப்ப எண் **{searched}** கிடைக்கவில்லை — "
+            "தவறான விண்ணப்ப எண்ணை உள்ளிட்டுள்ளீர்கள், அல்லது அது உங்கள் அதிகார எல்லைக்கு வெளியே உள்ளது."
+            if searched else
+            "நீங்கள் கேட்ட விண்ணப்பம் கிடைக்கவில்லை."
+        )
+        lead = "\n\nஉங்கள் அதிகார எல்லையில் உள்ள விண்ணப்பங்கள்:"
+    elif language == "tanglish":
+        head = (
+            f"Neenga ketta application number **{searched}** kidaikala — "
+            "wrong application number enter panniteenga, illana adhu unga jurisdiction-la illa."
+            if searched else
+            "Neenga ketta application kidaikala."
+        )
+        lead = "\n\nUnga jurisdiction-la irukkura applications:"
+    else:
+        head = (
+            f"The application number you asked for — **{searched}** — was not found. "
+            "You have entered a wrong application number, or it is outside your jurisdiction."
+            if searched else
+            "The application you asked for was not found."
+        )
+        lead = "\n\nApplications available in your jurisdiction:"
+
+    if not suggestions:
+        return head
+
+    lines = [
+        f"  • {s.get('application_number')} — {s.get('type') or 'N/A'}, "
+        f"{(s.get('status') or 'N/A').capitalize()}, {s.get('applicant_name') or 'N/A'}"
+        for s in suggestions[:6]
+    ]
+    return head + lead + "\n" + "\n".join(lines)
+
+
+def _sorted_keywords(keywords: Dict[str, tuple]) -> List[tuple]:
+    """Keyword items, longest first, so specific phrases win over generic words."""
+    return sorted(keywords.items(), key=lambda x: len(x[0]), reverse=True)
+
+
+def _split_keywords(sorted_kws: List[tuple]) -> tuple:
+    """
+    Split keywords into phrases and single words by TOKEN count, not by spaces —
+    "sub-division" is a two-token phrase even though it has no space.
+
+    Returns (phrases, singles) where:
+      phrases = [(original_kw, first_token, field_key, field_label), ...]
+      singles = {normalized_kw: (field_key, field_label, original_kw)}
+    Duplicate single-word keys keep the first (longest) spelling.
+    """
+    phrases: List[tuple] = []
+    singles: Dict[str, tuple] = {}
+    for kw, (field_key, field_label) in sorted_kws:
+        parts = extract_tokens(kw)
+        if not parts:
+            continue
+        if len(parts) > 1:
+            phrases.append((kw, parts[0], field_key, field_label))
+        else:
+            singles.setdefault(parts[0], (field_key, field_label, kw))
+    return phrases, singles
+
+
+def _typo_candidates(singles: Dict[str, tuple]) -> Dict[str, str]:
+    """
+    {normalized keyword: field_key} for keywords long enough to typo-match safely.
+    Collapsing to field_key means several spellings of the SAME field are not
+    mistaken for an ambiguity.
+    """
+    return {k: v[0] for k, v in singles.items() if len(k) >= 4}
+
+
+def _resolve_typo_field(
+    token: str,
+    typo_kws: Dict[str, str],
+    singles: Dict[str, tuple],
+    threshold: float,
+) -> Optional[tuple]:
+    """
+    Resolve a token to a single field via typo matching, refusing to guess when
+    the token is equally close to keywords belonging to different fields
+    (e.g. 'mail' vs 'mall').
+    """
+    entry = resolve_unique_entry(token, typo_kws, min_ratio=threshold, keys_normalized=True)
+    if entry is None:
+        return None
+    return singles[entry[0]]
+
+
 def _fuzzy_match_keywords(message_lower: str, keywords: Dict[str, tuple], threshold: float = 0.75) -> Optional[tuple]:
     """
-    Match field keywords with strict word-boundary token precision and Damerau-Levenshtein typo tolerance.
-    Does NOT match substring fragments across token boundaries (preventing false hits like 'mar' in 'smart').
+    Match field keywords with priority for multi-word phrases, word-boundary precision, and typo tolerance.
+
+    Precision order: multi-word phrase → exact token → unambiguous typo.
     """
+    if not message_lower or not keywords:
+        return None
+
     msg_tokens = extract_tokens(message_lower)
     if not msg_tokens:
         return None
 
-    # First pass: Exact token match
-    for token in msg_tokens:
-        for kw, (field_key, field_label) in keywords.items():
-            kw_norm = normalize_text(kw)
-            if token == kw_norm:
-                return (field_key, field_label, kw)
+    phrases, singles = _split_keywords(_sorted_keywords(keywords))
+    token_set = set(msg_tokens)
 
-    # Second pass: Typo match for tokens with length >= 4
+    # Pass 1: Multi-word phrase matching (longest phrase first), token-boundary strict
+    for kw, first_tok, field_key, field_label in phrases:
+        if match_phrase(msg_tokens, kw):
+            return (field_key, field_label, kw)
+
+    # Pass 2: Exact token match (longest keyword first, as before)
+    for kw_norm, entry in singles.items():
+        if kw_norm in token_set:
+            return entry
+
+    # Pass 3: Unambiguous typo match for tokens with length >= 4
+    typo_kws = _typo_candidates(singles)
     for token in msg_tokens:
-        if len(token) < 4:
+        if len(token) < 4 or token in singles:
             continue
-        for kw, (field_key, field_label) in keywords.items():
-            kw_norm = normalize_text(kw)
-            if len(kw_norm) >= 4 and is_token_typo_match(token, kw_norm):
-                logger.info(f"Fuzzy matched token '{token}' to keyword '{kw}'")
-                return (field_key, field_label, kw)
+        entry = _resolve_typo_field(token, typo_kws, singles, threshold)
+        if entry:
+            logger.info(f"Fuzzy matched token '{token}' to keyword '{entry[2]}'")
+            return entry
 
     return None
+
+
+def _fuzzy_match_all_fields(message_lower: str, keywords: Dict[str, tuple], threshold: float = 0.75) -> List[tuple]:
+    """
+    Find ALL matched unique fields in the message (e.g. for combined multi-field queries).
+    Returns list of (field_key, field_label, matched_kw), preserving order of appearance in message.
+    """
+    if not message_lower or not keywords:
+        return []
+
+    msg_norm = normalize_text(message_lower)
+    msg_tokens = extract_tokens(msg_norm)
+    if not msg_tokens:
+        return []
+
+    seen_fields = set()
+    matches = []
+    big = len(msg_norm) + 1  # sorts unlocatable matches last instead of first
+
+    def _pos(needle: str) -> int:
+        idx = msg_norm.find(needle)
+        return idx if idx >= 0 else big
+
+    phrases, singles = _split_keywords(_sorted_keywords(keywords))
+    token_set = set(msg_tokens)
+
+    # Pass 1: Multi-word phrase matching, token-boundary strict.
+    # Position is anchored on the phrase's first token, because the raw keyword
+    # may use a different separator than the message ("sub-division" vs "sub division").
+    for kw, first_tok, field_key, field_label in phrases:
+        if field_key not in seen_fields and match_phrase(msg_tokens, kw):
+            seen_fields.add(field_key)
+            matches.append((field_key, field_label, kw, _pos(first_tok)))
+
+    # Pass 2: Exact token match
+    for kw_norm, (field_key, field_label, orig_kw) in singles.items():
+        if kw_norm in token_set and field_key not in seen_fields:
+            seen_fields.add(field_key)
+            matches.append((field_key, field_label, orig_kw, _pos(kw_norm)))
+
+    # Pass 3: Unambiguous typo match for tokens with length >= 4
+    typo_kws = _typo_candidates(singles)
+    for token in msg_tokens:
+        if len(token) < 4 or token in singles:
+            continue  # exact keywords were already handled above
+        entry = _resolve_typo_field(token, typo_kws, singles, threshold)
+        if entry and entry[0] not in seen_fields:
+            seen_fields.add(entry[0])
+            matches.append((entry[0], entry[1], entry[2], _pos(token)))
+
+    matches.sort(key=lambda x: x[3])
+    return [(m[0], m[1], m[2]) for m in matches]
+
+
+def build_isd_processing_answer(message: str, structured_data: Dict[str, Any], app_number: str) -> str:
+    """
+    Deterministic answer text for the isd_processing intent.
+
+    Shared by process_chat and process_chat_stream so the two paths cannot
+    drift apart on ISD sub-division wording again.
+    """
+    if not structured_data or not structured_data.get("found", True):
+        return structured_data.get("message", "Application not found.") if structured_data else "Application not found."
+
+    proposed = structured_data.get("proposed_sub_divisions", [])
+    survey_no = structured_data.get("survey_no", "N/A")
+    survey_area = structured_data.get("survey_total_area_sqm")
+    proposed_area = structured_data.get("proposed_total_area_sqm")
+    area_match = structured_data.get("area_match")
+    patta_count = structured_data.get("patta_transfers_count", 0)
+    app_number = app_number or structured_data.get("application_number", "")
+    answer = ""
+
+    message_lower_isd = message.lower()
+
+
+    # Q1 / Q4 – proposed sub-divisions (count or list)
+    if "proposed" in message_lower_isd:
+        count = len(proposed)
+        if count == 0:
+            answer = f"No proposed sub-divisions found for application {app_number} under Survey {survey_no}."
+        elif "how many" in message_lower_isd:
+            answer = f"{count} sub-division(s) are proposed under Survey No. {survey_no}: {', '.join(p['proposed_sub_division_no'] for p in proposed)}."
+        else:
+            lines = [f"  • {p['proposed_sub_division_no']} — {int(p['proposed_area_sqm'])} sq.m — {p['status'].capitalize()}" for p in proposed if p.get("proposed_area_sqm")]
+            answer = f"Proposed sub-divisions for {app_number} (Survey {survey_no}):\n" + "\n".join(lines)
+
+    # Q2 – retrieve application status by sub-division
+    elif "status" in message_lower_isd and ("retrieve" in message_lower_isd or "by sub" in message_lower_isd):
+        if proposed:
+            status_parts = [f"{p['proposed_sub_division_no']} – {p['status'].capitalize()}" for p in proposed]
+            answer = "Application status by sub-division: " + ", ".join(status_parts) + "."
+        else:
+            answer = f"No sub-division status found for application {app_number}."
+
+    # Q3 – patta transfer count
+    elif any(w in message_lower_isd for w in ["patta transfer", "transfer order"]):
+        if patta_count > 0:
+            answer = f"{patta_count} patta transfer order(s) will be generated — one per approved sub-division under {app_number}."
+        else:
+            answer = f"No patta transfer orders found for application {app_number}. They are generated after approval."
+
+    # Q5 – assigned sub-division numbers
+    elif "assigned" in message_lower_isd and any(w in message_lower_isd for w in ["number", "numbers"]):
+        approved = [p for p in proposed if p.get("status") == "approved"]
+        if approved:
+            nums = ", ".join(p["proposed_sub_division_no"] for p in approved)
+            answer = f"Assigned sub-division numbers for approved {app_number}: {nums}."
+        else:
+            answer = "Sub-division numbers are assigned after the Survey Department approves the subdivision sketch."
+
+    # Q6 – area comparison
+    elif any(w in message_lower_isd for w in ["compare", "original"]) and "area" in message_lower_isd:
+        if survey_area and proposed_area:
+            diff = abs(survey_area - proposed_area)
+            if area_match:
+                match_str = "✅ Areas match — no discrepancy."
+            else:
+                match_str = f"⚠ Mismatch! Difference: {diff:,.2f} sq.m. Please verify the manually entered sub-division areas."
+            answer = (
+                f"Original Survey {survey_no} area: {survey_area:,.2f} sq.m\n"
+                f"Total proposed sub-division area: {proposed_area:,.2f} sq.m\n"
+                f"{match_str}"
+            )
+        elif survey_area and not proposed_area:
+            answer = (
+                f"Survey {survey_no} original area: {survey_area:,.2f} sq.m. "
+                f"However, no sub-division area data is available for {app_number} — "
+                f"the proposed sub-division areas may not have been entered yet."
+            )
+        else:
+            answer = f"Area data not available for application {app_number}."
+
+    # Q7 – latest action per sub-division
+    elif any(w in message_lower_isd for w in ["latest action", "action taken", "each sub-division", "each subdivision"]):
+        if proposed:
+            parts = [f"{p['proposed_sub_division_no']} – {p['status'].capitalize()}" for p in proposed]
+            answer = "Latest status for each sub-division: " + ", ".join(parts) + "."
+        else:
+            answer = f"No sub-division action data found for application {app_number}."
+
+    else:
+        # Generic fallback — show full proposed list
+        if proposed:
+            lines = [f"  • {p['proposed_sub_division_no']} — {p['status'].capitalize()}" for p in proposed]
+            answer = f"Sub-divisions for {app_number} (Survey {survey_no}):\n" + "\n".join(lines)
+        else:
+            answer = f"No ISD processing data found for application {app_number}."
+
+    return answer
 
 
 async def process_chat(
@@ -219,14 +750,15 @@ async def process_chat(
                 await save_chat_messages(
                     db=db, session_id=session_id, user_message=message,
                     assistant_message=res_txt, language=language,
-                    response_time_ms=int((time.time() - start_time) * 1000)
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    officer_id=officer.officer_id if officer else None
                 )
                 return {
                     "response": res_txt,
                     "language": language,
                     "intent": "district_code",
                     "sources": [],
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "context_used": True,
                     "response_time_ms": int((time.time() - start_time) * 1000),
                     "table_data": None
@@ -279,7 +811,7 @@ async def process_chat(
         # own data — they are NOT requests for broader jurisdiction data.
         _FIELD_VISIT_INTENTS = {
             "fv_scheduled_this_week", "fv_date_select", "fv_nearby_pending",
-            "fv_reschedule_availability", "fv_deadline_check", "fv_overdue_inspections",
+            "fv_reschedule_availability", "fv_change_date", "fv_deadline_check", "fv_overdue_inspections",
             "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts",
             "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
             "sd_forward_check", "sd_remarks", "application_status", "isd_processing",
@@ -287,7 +819,7 @@ async def process_chat(
             "help", "district_code"
         }
         _is_code_reference_query = any(w in _msg_lower_jur for w in ["code", "கோடு", "service code", "district code"])
-        _skip_keyword_check = (intent in _FIELD_VISIT_INTENTS) or _is_code_reference_query
+        _skip_keyword_check = (intent in _FIELD_VISIT_INTENTS) or _is_code_reference_query or intent == "service_code_lookup"
 
         if _officer_level == 0 and not _skip_keyword_check:  # block officer
             if any(w in _msg_lower_jur for w in ["ward", "வார்டு"]):
@@ -333,14 +865,15 @@ async def process_chat(
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=message, assistant_message=response_text,
-                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
             )
             return {
                 "response": response_text,
                 "language": language,
                 "intent": intent,
                 "sources": [],
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context_used": False,
                 "response_time_ms": int((time.time() - start_time) * 1000),
                 "table_data": None
@@ -375,14 +908,39 @@ async def process_chat(
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=message, assistant_message=response_text,
-                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
             )
             return {
                 "response": response_text,
                 "language": language,
                 "intent": "greeting",
                 "sources": [],
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+
+        # ── Step 2d: Application number format validation ──────────────────
+        # The officer clearly meant to give an application number but mistyped
+        # it. Say so instead of silently answering about some other application.
+        _bad_app_token = detect_invalid_app_number(message)
+        if _bad_app_token and intent in _APP_NUMBER_INTENTS:
+            response_text = build_invalid_app_number_message(_bad_app_token, language)
+            logger.info(f"Rejected malformed application number '{_bad_app_token}' (intent={intent})")
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=response_text,
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": response_text,
+                "language": language,
+                "intent": intent,
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context_used": False,
                 "response_time_ms": int((time.time() - start_time) * 1000),
                 "table_data": None
@@ -391,28 +949,64 @@ async def process_chat(
         # Step 3: Execute structured database queries based on intent
         structured_data = {}
         response_text = ""
-        
-        if intent == "pending_applications":
-            # Extract application type if mentioned in message
-            app_type = None
+        _isd_app_no = ""
+
+        if intent in ("pending_applications", "isd_applications", "nisd_applications", "both_applications", "merge_applications"):
             message_lower = message.lower()
-            if "isd" in message_lower:
-                app_type = "ISD"
-            elif "nisd" in message_lower:
-                app_type = "NISD"
-            elif "merge" in message_lower:
-                app_type = "MERGE"
+
+            # Detect one or multiple application types (e.g. "isd", "merge", "isd and merge")
+            app_type = _extract_app_types(message_lower, intent=intent)  # str, list, or None
+
+            # Detect time of day session
+            session_label = ""
+            if any(w in message_lower for w in ["morning", "காலை"]):
+                session_label = " (Morning Session: 09:00 AM – 01:00 PM)"
+            elif any(w in message_lower for w in ["afternoon", "பிற்பகல்", "மதியம்"]):
+                session_label = " (Afternoon Session: 02:00 PM – 05:00 PM)"
+            elif any(w in message_lower for w in ["evening", "மாலை"]):
+                session_label = " (Evening Session: 04:00 PM – 06:00 PM)"
+
+            # Extract date range first (e.g. "between 2026-07-03 and 2026-07-20", "today", "yesterday")
+            start_d, end_d = extract_date_range(message)
+            if session_label and not start_d and not end_d:
+                start_d = date.today()
+                end_d = date.today()
+
+            has_date_range = start_d is not None and end_d is not None
+            is_negated_date_range = any(w in message_lower for w in [
+                "not between", "not in", "outside", "other than", "இடைப்பட்டவை அல்ல", "இடையில் இல்லாத", "தவிர"
+            ])
+
+            # Extract year from message (only used when NO full date range is present)
+            submission_year = None
+            submission_month = None
+            if not has_date_range:
+                year_match = re.search(r'\b(20\d{2})\b', message)
+                submission_year = int(year_match.group(1)) if year_match else None
+                # Extract month from message (handles English/Tamil with fuzzy matching)
+                submission_month = extract_month_from_query(message)
             
-            # Extract year from message (e.g., "2025", "2026")
-            year_match = re.search(r'\b(20\d{2})\b', message)
-            submission_year = int(year_match.group(1)) if year_match else None
-            
-            # Extract month from message (handles English/Tamil with fuzzy matching)
-            submission_month = extract_month_from_query(message)
-                
-            if submission_year:
-                status_filter = None  # Show all statuses when querying by specific year (2025, etc.)
-            elif app_type == "MERGE":
+            # Extract geography filters
+            taluk_name = extract_taluk_name(message)
+            ward_num = extract_ward_number(message) if "ward" in message_lower else None
+            block_num = extract_block_number(message) if "block" in message_lower else None
+
+            # Detect whether overdue vs non-overdue (on-time) filter is requested
+            is_not_overdue = any(w in message_lower for w in [
+                "not overdue", "non overdue", "non-overdue", "on time", "not late",
+                "not delayed", "within sla", "தாமதமில்லாத", "தாமதம் இல்லாத", "காலதாமதமாகாத"
+            ])
+            is_overdue_requested = any(w in message_lower for w in ["overdue", "late", "delayed"]) and not is_not_overdue
+            is_overdue_filter = False if is_not_overdue else (True if is_overdue_requested else None)
+
+            # Determine status filter
+            is_merge_only = (app_type == "MERGE")
+            if has_date_range or is_overdue_filter is not None:
+                # Date-range or overdue/non-overdue query: show all statuses within that scope
+                status_filter = None
+            elif submission_year:
+                status_filter = None  # Show all statuses when querying by specific year
+            elif is_merge_only:
                 status_filter = None
             else:
                 status_filter = "pending"
@@ -425,54 +1019,157 @@ async def process_chat(
                 elif "reject" in message_lower:
                     status_filter = "rejected"
                 
-            structured_data = await get_pending_applications(
-                db, officer, 
-                application_type=app_type, 
-                status=status_filter, 
-                submission_year=submission_year,
-                submission_month=submission_month
-            )
+            # Check if this is a follow-up query on an active/previously discussed single application.
+            # IMPORTANT: For list intents (pending_applications etc.), we must NOT use implicit
+            # continuation — that would cause "show applications" to pull the last-discussed app
+            # from chat history and fetch only that single app's detail.
+            # Only use allow_implicit_continuation if the message itself has an explicit reference
+            # like "this application" / "that app" / "previous application".
+            target_app_num = extract_application_number(message)
+            if not target_app_num:
+                # Only allow implicit continuation if the message has an explicit reference phrase
+                # (e.g. "this app", "that application", "previous app"), NOT for bare list queries.
+                _has_explicit_app_ref = any(p in message_lower for p in [
+                    "this application", "that application", "same application",
+                    "this app", "that app", "the application", "the app",
+                    "prev application", "previous application", "prev app", "previous app",
+                    "last application", "last app", "above application",
+                    "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
+                ])
+                if _has_explicit_app_ref:
+                    target_app_num = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=False)
+            has_projected_cols = _get_projected_application_columns(message) is not None
+            is_explicit_plural = any(w in message_lower for w in ["all", "every", "list all", "show all", "between", "today", "yesterday", "this week", "last week", "month", "முழு", "அனைத்து"])
+
+            if target_app_num and not is_explicit_plural and has_projected_cols:
+                app_detail = await get_application_detail(db, target_app_num, officer=officer)
+                if app_detail and app_detail.get("found", True):
+                    structured_data = {
+                        "applications": [app_detail],
+                        "count": 1,
+                        "query_type": f"Application {target_app_num}"
+                    }
+                else:
+                    structured_data = await get_pending_applications(
+                        db, officer, 
+                        application_type=app_type,
+                        status=status_filter, 
+                        submission_year=submission_year,
+                        submission_month=submission_month,
+                        taluk_name=taluk_name,
+                        ward_number=ward_num,
+                        block_number=block_num,
+                        start_date=start_d,
+                        end_date=end_d,
+                        is_overdue=is_overdue_filter,
+                        exclude_date_range=is_negated_date_range
+                    )
+            else:
+                structured_data = await get_pending_applications(
+                    db, officer, 
+                    application_type=app_type,   # str, list, or None
+                    status=status_filter, 
+                    submission_year=submission_year,
+                    submission_month=submission_month,
+                    taluk_name=taluk_name,
+                    ward_number=ward_num,
+                    block_number=block_num,
+                    start_date=start_d,
+                    end_date=end_d,
+                    is_overdue=is_overdue_filter,
+                    exclude_date_range=is_negated_date_range
+                )
+            if is_negated_date_range:
+                structured_data["exclude_date_range"] = True
             
-            # Determine appropriate query title
-            type_str = f" {app_type}" if app_type else ""
+            # Build human-readable type label for the query title
+            if isinstance(app_type, list):
+                type_str = " " + " & ".join(app_type)   # e.g. " ISD & MERGE"
+            elif app_type:
+                type_str = f" {app_type}"
+            else:
+                type_str = ""
+
             year_str = f" in {submission_year}" if submission_year else ""
             
-            # Add month string to title if month filter is present
+            # Date range label
+            date_range_str = ""
+            if has_date_range:
+                if is_negated_date_range:
+                    date_range_str = f" (not {start_d} to {end_d})"
+                elif start_d == end_d:
+                    if start_d == date.today():
+                        date_range_str = f" Received Today ({start_d}){session_label}"
+                    elif start_d == date.today() - timedelta(days=1):
+                        date_range_str = f" Received Yesterday ({start_d}){session_label}"
+                    elif start_d == date.today() - timedelta(days=2):
+                        date_range_str = f" Received Day Before Yesterday ({start_d}){session_label}"
+                    elif start_d == date.today() + timedelta(days=1):
+                        date_range_str = f" for Tomorrow ({start_d}){session_label}"
+                    else:
+                        date_range_str = f" Received on {start_d}{session_label}"
+                else:
+                    date_range_str = f" ({start_d} to {end_d}){session_label}"
+
+            # Month label
             month_str = ""
             if submission_month:
                 month_names = ["", "January", "February", "March", "April", "May", "June",
                              "July", "August", "September", "October", "November", "December"]
                 month_str = f" {month_names[submission_month]}" if submission_year else f" in {month_names[submission_month]}"
             
-            if app_type == "MERGE":
-                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}"
+            if is_not_overdue:
+                structured_data["query_type"] = f"Non-Overdue{type_str} Applications{month_str}{year_str}{date_range_str}"
+            elif is_overdue_requested:
+                structured_data["query_type"] = f"Overdue{type_str} Applications{month_str}{year_str}{date_range_str}"
+            elif taluk_name:
+                structured_data["query_type"] = f"Applications in {taluk_name}{type_str}{month_str}{year_str}{date_range_str}"
+            elif is_merge_only:
+                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == ["approved", "rejected"]:
-                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}"
+                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}{date_range_str}"
             elif status_filter is None:
-                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == "approved":
-                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == "rejected":
-                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}{date_range_str}"
             else:
-                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}{date_range_str}"
             
         elif intent == "overdue_applications":
             # Extract application type if mentioned in message
             app_type = None
             message_lower = message.lower()
-            if "isd" in message_lower:
+            if any(w in message_lower for w in ["isd", "0154"]):
                 app_type = "ISD"
-            elif "nisd" in message_lower:
+            elif any(w in message_lower for w in ["nisd", "0153"]):
                 app_type = "NISD"
             elif "merge" in message_lower:
                 app_type = "MERGE"
                 
-            structured_data = await get_overdue_applications(db, officer, application_type=app_type)
+            min_days_overdue = None
+            match_days = re.search(r'(?:overdue|late|delayed)\s+(?:by\s+)?(\d+)\s*days?', message_lower) or \
+                         re.search(r'(\d+)\s*days?\s+(?:overdue|late|delayed)', message_lower)
+            if match_days:
+                min_days_overdue = int(match_days.group(1))
+
+            start_d, end_d = extract_date_range(message)
+
+            structured_data = await get_overdue_applications(
+                db, officer, 
+                application_type=app_type, 
+                min_days_overdue=min_days_overdue,
+                start_date=start_d,
+                end_date=end_d
+            )
+            structured_data["min_days_overdue"] = min_days_overdue
+            days_str = f" by {min_days_overdue}+ Days" if min_days_overdue else ""
+            range_str = f" ({start_d} to {end_d})" if (start_d and end_d and start_d != end_d) else ""
             if app_type:
-                structured_data["query_type"] = f"Overdue {app_type} Applications"
+                structured_data["query_type"] = f"Overdue {app_type} Applications{days_str}{range_str}"
             else:
-                structured_data["query_type"] = "Overdue Applications"
+                structured_data["query_type"] = f"Overdue Applications{days_str}{range_str}"
             
         elif intent == "officer_workload":
             structured_data = await get_officer_workload(db, officer)
@@ -481,75 +1178,92 @@ async def process_chat(
         elif intent == "fv_overdue_inspections":
             # Get field visits that are overdue (scheduled date in past, not completed)
             try:
-                logger.info(f"🔍 Fetching overdue field visits for officer {officer.officer_id}")
-                from datetime import date
-                today = date.today()
+                from backend.models import FieldVisit, Application, SurveyNumber, Block
+                from sqlalchemy.orm import joinedload
+                from backend.services.postgres import get_jurisdiction_filter
                 
-                query = select(FieldVisit).where(
+                today = date.today()
+                logger.info(f"=== OVERDUE FIELD VISITS QUERY ===")
+                logger.info(f"Today: {today}")
+                logger.info(f"Officer ID: {officer.officer_id}")
+                
+                # Add jurisdiction filter to ensure only applications within officer's jurisdiction
+                jurisdiction_filter = await get_jurisdiction_filter(db, officer)
+                # jurisdiction_filter returns a list, we need to unpack it
+                jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
+                
+                overdue_visits_stmt = select(FieldVisit).options(
+                    joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block)
+                ).join(
+                    Application, FieldVisit.application_id == Application.id
+                ).join(
+                    SurveyNumber, Application.survey_number_id == SurveyNumber.id
+                ).join(
+                    # The geography chain must be joined explicitly: jur_conditions reference
+                    # Block/Ward/Town/Taluk/District, and without these joins SQLAlchemy adds
+                    # them as an uncorrelated FROM (cartesian product), silently voiding the filter.
+                    Block, SurveyNumber.block_id == Block.id
+                ).join(
+                    Ward, Block.ward_id == Ward.id
+                ).join(
+                    Town, Ward.town_id == Town.id
+                ).join(
+                    Taluk, Town.taluk_id == Taluk.id
+                ).join(
+                    District, Taluk.district_id == District.id
+                ).where(
                     and_(
                         FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.scheduled_date.isnot(None),
                         FieldVisit.scheduled_date < today,
-                        FieldVisit.status.in_(["scheduled", "rescheduled", "overdue"])
+                        FieldVisit.status.in_(['scheduled', 'rescheduled', 'overdue']),
+                        *jur_conditions  # Unpack list of conditions
                     )
-                )
+                ).order_by(FieldVisit.scheduled_date.asc())
                 
-                result = await db.execute(query)
-                overdue_visits = result.scalars().all()
+                overdue_visits = (await db.execute(overdue_visits_stmt)).unique().scalars().all()
+                logger.info(f"Overdue visits found: {len(overdue_visits)}")
                 
-                logger.info(f"📊 Found {len(overdue_visits)} overdue field visits")
-                
-                # Build structured data for table rendering
-                visit_data = []
-                for fv in overdue_visits:
-                    app = await db.get(Application, fv.application_id)
-                    survey = await db.get(SurveyNumber, app.survey_number_id) if app else None
-                    block = None
-                    if survey:
-                        block = await db.get(Block, survey.block_id)
-                    
-                    days_overdue = (today - fv.scheduled_date).days
-                    
-                    visit_data.append({
-                        "visit_id": str(fv.id),
-                        "application_number": app.application_number if app else "N/A",
-                        "survey_no": survey.survey_no if survey else "N/A",
-                        "block_number": block.block_number if block else None,
-                        "application_type": app.application_type if app else "N/A",
-                        "field_visit_date": fv.scheduled_date.strftime("%Y-%m-%d"),
-                        "status": fv.status,
-                        "days_overdue": days_overdue
-                    })
+                overdue_list = []
+                for visit in overdue_visits:
+                    app = visit.application
+                    if app:
+                        app_type = app.application_type if app.application_type else "N/A"
+                        logger.info(f"Overdue visit: App={app.application_number}, Type={app_type}, Scheduled={visit.scheduled_date}, Status={visit.status}")
+                        overdue_list.append({
+                            "application_number": app.application_number,
+                            "type": app_type,  # Use variable with fallback
+                            "status": visit.status,  # Field visit status, not application status
+                            "stage": app.current_stage if app.current_stage else "N/A",
+                            "survey_no": app.survey_number.survey_no if app.survey_number else "N/A",
+                            "block_number": app.survey_number.block.block_number if app.survey_number and app.survey_number.block else "N/A",
+                            "scheduled_date": visit.scheduled_date.isoformat() if visit.scheduled_date else "Not Scheduled",
+                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A"
+                        })
+                        # Log the complete dictionary for debugging
+                        logger.info(f"  Complete data: {overdue_list[-1]}")
                 
                 structured_data = {
-                    "overdue_count": len(overdue_visits),
-                    "field_visits": visit_data,
+                    "overdue_visits_count": len(overdue_list),
+                    "field_visits": overdue_list,
                     "query_type": "Overdue Field Visits"
                 }
-                
-                # Set response_text explicitly to prevent LLM fallback
-                count = len(visit_data)
-                if count == 0:
-                    response_text = "No field visits are currently overdue. All field visits are on schedule."
-                else:
-                    response_text = f"Found {count} overdue field visit(s). See the table below for details."
-                
-                logger.info(f"✅ Built structured data with {len(visit_data)} overdue visits, response_text set")
-                
             except Exception as e:
-                logger.error(f"❌ Error fetching overdue field visits: {str(e)}")
-                structured_data = {
-                    "error": f"Error fetching overdue field visits: {str(e)}",
-                    "query_type": "Overdue Field Visits"
-                }
-                response_text = f"Error retrieving overdue field visits: {str(e)}"
-            
+                logger.error(f"Error getting overdue field visits: {e}", exc_info=True)
+                structured_data = {"error": str(e), "field_visits": []}
+
+
         elif intent in ["field_visits", "fv_between_dates"]:
-            from backend.services.rag import extract_date_range
-            from datetime import date as _dt_date
             import calendar
 
             msg_lower = message.lower()
             start_d, end_d = extract_date_range(message)
+
+            # Detect negation: "not between", "outside", "except between", "not in"
+            exclude_range = any(w in msg_lower for w in [
+                "not between", "outside", "except between", "not in range",
+                "outside the range", "exclude", "excluding"
+            ])
 
             # Extract application type filter(s) from message — supports multi-type queries
             # e.g. "isd and nisd", "merge and isd", "all types"
@@ -570,19 +1284,49 @@ async def process_chat(
                 "pending visit", "yet to visit", "upcoming"
             ])
 
+            # Detect morning / afternoon / evening time session
+            session_label = ""
+            if any(w in msg_lower for w in ["morning", "காலை"]):
+                session_label = " (Morning Session: 09:00 AM – 01:00 PM)"
+            elif any(w in msg_lower for w in ["afternoon", "பிற்பகல்", "மதியம்"]):
+                session_label = " (Afternoon Session: 02:00 PM – 05:00 PM)"
+            elif any(w in msg_lower for w in ["evening", "மாலை"]):
+                session_label = " (Evening Session: 04:00 PM – 06:00 PM)"
+
+            # If user asked for morning/afternoon without specific date, default to today
+            if session_label and not start_d and not end_d:
+                start_d = date.today()
+                end_d = date.today()
+
             status_filter = None
-            if "unscheduled" in msg_lower or "not scheduled" in msg_lower or "yet to schedule" in msg_lower:
+            if "unscheduled" in msg_lower or ("not scheduled" in msg_lower and not exclude_range) or "yet to schedule" in msg_lower:
                 status_filter = "unscheduled"
                 query_type = "Unscheduled Field Visits"
             elif intent == "fv_between_dates" or start_d or end_d or "between" in msg_lower or to_be_visited:
                 if not start_d and not end_d:
-                    today = _dt_date.today()
+                    today = date.today()
                     start_d = today.replace(day=1)
                     _, last_day = calendar.monthrange(today.year, today.month)
                     end_d = today.replace(day=last_day)
                 type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
-                query_type = ("Field Visits Needed To Be Visited" if to_be_visited
-                              else f"{type_label} Field Visits Between Dates".strip())
+                if exclude_range and start_d and end_d:
+                    query_type = (f"{type_label} Field Visits Outside Dates".strip())
+                elif start_d and end_d and start_d == end_d:
+                    if start_d == date.today() + timedelta(days=2):
+                        query_type = (f"{type_label} Field Visits for Day After Tomorrow ({start_d}){session_label}".strip())
+                    elif start_d == date.today() + timedelta(days=1):
+                        query_type = (f"{type_label} Field Visits for Tomorrow ({start_d}){session_label}".strip())
+                    elif start_d == date.today():
+                        query_type = (f"{type_label} Field Visits for Today ({start_d}){session_label}".strip())
+                    elif start_d == date.today() - timedelta(days=1):
+                        query_type = (f"{type_label} Field Visits for Yesterday ({start_d}){session_label}".strip())
+                    elif start_d == date.today() - timedelta(days=2):
+                        query_type = (f"{type_label} Field Visits for Day Before Yesterday ({start_d}){session_label}".strip())
+                    else:
+                        query_type = (f"{type_label} Field Visits on {start_d}{session_label}".strip())
+                else:
+                    query_type = ("Field Visits Needed To Be Visited" if to_be_visited
+                                  else f"{type_label} Field Visits Between Dates".strip())
             elif "scheduled" in msg_lower or "visit date" in msg_lower or "when" in msg_lower or "schedule" in msg_lower:
                 status_filter = "scheduled"
                 query_type = "Scheduled Field Visits"
@@ -596,7 +1340,8 @@ async def process_chat(
                 start_date=start_d,
                 end_date=end_d,
                 to_be_visited_only=to_be_visited,
-                application_type=app_type_filter
+                application_type=app_type_filter,
+                exclude_date_range=exclude_range
             )
             structured_data["query_type"] = query_type
             if start_d:
@@ -727,6 +1472,9 @@ async def process_chat(
             
             structured_data = {
                 "applications": rows,
+                # "apps" kept alongside "applications" so both response phases
+                # can read either key without drifting apart again.
+                "apps": [r["application_number"] for r in rows],
                 "query_type": "Immediate Action Required — Overdue Applications"
             }
 
@@ -743,6 +1491,86 @@ async def process_chat(
             structured_data = {
                 "count": res.scalar(),
                 "query_type": "Awaiting Field Visit"
+            }
+
+        elif intent == "ip_address_analysis":
+            apps_result = await get_officer_applications(db, officer)
+            apps = apps_result.get("applications", [])
+            ip_groups = {}
+            for a in apps:
+                ip = a.get("ip_address") or "Unknown"
+                if ip not in ip_groups:
+                    ip_groups[ip] = []
+                ip_groups[ip].append(a)
+
+            structured_data = {
+                "ip_analysis": [
+                    {
+                        "ip_address": ip,
+                        "submission_count": len(app_list),
+                        # Derive source from actual submission_channel, not hardcoded IP
+                        "source": next(
+                            ("Common Service Center (CSC)" if a.get("submission_channel") == "CSC"
+                             else ("Citizen Portal" if a.get("submission_channel") == "citizen"
+                                   else ("Sub Registrar (IGRS)" if a.get("submission_channel") == "sub_registrar"
+                                         else "Unknown Source")))
+                            for a in app_list[:1]
+                        ),
+                        "applications": [a["application_number"] for a in app_list],
+                        "applicants": [a.get("applicant_name", "N/A") for a in app_list],
+                        "status": "Data from DB" if ip != "Unknown" else "IP Not Recorded"
+                    }
+                    for ip, app_list in ip_groups.items()
+                ],
+                "total_unique_ips": len(ip_groups),
+                "total_applications": len(apps),
+                "query_type": "IP Address & Submission Channel Analysis"
+            }
+
+        elif intent == "can_number_info":
+            structured_data = {
+                "can_summary": {
+                    "assigned_by": "Common Service Center (CSC) / Citizen Portal",
+                    "description": "Citizen Access Number (CAN) is a unique citizen identity number assigned through CSC or citizen self-registration.",
+                    "role_in_patta_transfer": "CAN links the citizen's Aadhaar, mobile number, and identity across all Patta transfer requests (ISD, NISD, MERGE).",
+                    "csc_charges": "₹60.00 CSC service fee for application submission with CAN registration.",
+                    "service_codes_linked": "0153 (NISD), 0154 (ISD), 0155 (MERGE)"
+                },
+                "query_type": "CAN Number & CSC Assignment Guide"
+            }
+
+        elif intent == "service_code_guide":
+            structured_data = {
+                "service_codes": [
+                    {
+                        "service_code": "0153",
+                        "type": "NISD (Not Involving Sub-Division)",
+                        "tamil_name": "உட்பிரிவு இல்லாத பட்டா மாறுதல்",
+                        "govt_fee": "₹100.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "15-20 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Document Verification) → Deputy Tahsildar (Review) → Tahsildar (Digital Signature / DSC) [No field visit required]"
+                    },
+                    {
+                        "service_code": "0154",
+                        "type": "ISD (Involving Sub-Division)",
+                        "tamil_name": "உட்பிரிவு உள்ள பட்டா மாறுதல்",
+                        "govt_fee": "₹400.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "30-35 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Mandatory Field Visit within 15 days) → Survey Dept (SD Sketch) → DIS (Approval) → Tahsildar (Digital Signature / DSC)"
+                    },
+                    {
+                        "service_code": "0155",
+                        "type": "MERGE (Subdivision Merger)",
+                        "tamil_name": "உட்பிரிவு இணைப்பு பட்டா மாறுதல்",
+                        "govt_fee": "₹0.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "15 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Field Boundary & Total Merged Area Verification) → Tahsildar (Digital Signature / DSC)"
+                    }
+                ],
+                "query_type": "Service Codes Workflow & Fee Comparison (0153 / 0154 / 0155)"
             }
 
         elif intent == "workload_by_type":
@@ -837,90 +1665,10 @@ async def process_chat(
                 app_number = a_last.application_number if a_last else "APP-2024-000001"
             structured_data = await get_application_detail(db, app_number)
             structured_data["query_type"] = "ISD Processing"
-            message_lower_isd = message.lower()
-
-            proposed = structured_data.get("proposed_sub_divisions", [])
-            survey_no = structured_data.get("survey_no", "N/A")
-            survey_area = structured_data.get("survey_total_area_sqm")
-            proposed_area = structured_data.get("proposed_total_area_sqm")
-            area_match = structured_data.get("area_match")
-            patta_count = structured_data.get("patta_transfers_count", 0)
-
-            # Q1 / Q4 – proposed sub-divisions (count or list)
-            if "proposed" in message_lower_isd:
-                count = len(proposed)
-                if count == 0:
-                    response_text = f"No proposed sub-divisions found for application {app_number} under Survey {survey_no}."
-                elif "how many" in message_lower_isd:
-                    response_text = f"{count} sub-division(s) are proposed under Survey No. {survey_no}: {', '.join(p['proposed_sub_division_no'] for p in proposed)}."
-                else:
-                    lines = [f"  • {p['proposed_sub_division_no']} — {int(p['proposed_area_sqm'])} sq.m — {p['status'].capitalize()}" for p in proposed if p.get("proposed_area_sqm")]
-                    response_text = f"Proposed sub-divisions for {app_number} (Survey {survey_no}):\n" + "\n".join(lines)
-
-            # Q2 – retrieve application status by sub-division
-            elif "status" in message_lower_isd and ("retrieve" in message_lower_isd or "by sub" in message_lower_isd):
-                if proposed:
-                    status_parts = [f"{p['proposed_sub_division_no']} – {p['status'].capitalize()}" for p in proposed]
-                    response_text = "Application status by sub-division: " + ", ".join(status_parts) + "."
-                else:
-                    response_text = f"No sub-division status found for application {app_number}."
-
-            # Q3 – patta transfer count
-            elif any(w in message_lower_isd for w in ["patta transfer", "transfer order"]):
-                if patta_count > 0:
-                    response_text = f"{patta_count} patta transfer order(s) will be generated — one per approved sub-division under {app_number}."
-                else:
-                    response_text = f"No patta transfer orders found for application {app_number}. They are generated after approval."
-
-            # Q5 – assigned sub-division numbers
-            elif "assigned" in message_lower_isd and any(w in message_lower_isd for w in ["number", "numbers"]):
-                approved = [p for p in proposed if p.get("status") == "approved"]
-                if approved:
-                    nums = ", ".join(p["proposed_sub_division_no"] for p in approved)
-                    response_text = f"Assigned sub-division numbers for approved {app_number}: {nums}."
-                else:
-                    response_text = "Sub-division numbers are assigned after the Survey Department approves the subdivision sketch."
-
-            # Q6 – area comparison
-            elif any(w in message_lower_isd for w in ["compare", "original"]) and "area" in message_lower_isd:
-                if survey_area and proposed_area:
-                    diff = abs(survey_area - proposed_area)
-                    if area_match:
-                        match_str = "✅ Areas match — no discrepancy."
-                    else:
-                        match_str = f"⚠ Mismatch! Difference: {diff:,.2f} sq.m. Please verify the manually entered sub-division areas."
-                    response_text = (
-                        f"Original Survey {survey_no} area: {survey_area:,.2f} sq.m\n"
-                        f"Total proposed sub-division area: {proposed_area:,.2f} sq.m\n"
-                        f"{match_str}"
-                    )
-                elif survey_area and not proposed_area:
-                    response_text = (
-                        f"Survey {survey_no} original area: {survey_area:,.2f} sq.m. "
-                        f"However, no sub-division area data is available for {app_number} — "
-                        f"the proposed sub-division areas may not have been entered yet."
-                    )
-                else:
-                    response_text = f"Area data not available for application {app_number}."
-
-            # Q7 – latest action per sub-division
-            elif any(w in message_lower_isd for w in ["latest action", "action taken", "each sub-division", "each subdivision"]):
-                if proposed:
-                    parts = [f"{p['proposed_sub_division_no']} – {p['status'].capitalize()}" for p in proposed]
-                    response_text = "Latest status for each sub-division: " + ", ".join(parts) + "."
-                else:
-                    response_text = f"No sub-division action data found for application {app_number}."
-
-            else:
-                # Generic fallback — show full proposed list
-                if proposed:
-                    lines = [f"  • {p['proposed_sub_division_no']} — {p['status'].capitalize()}" for p in proposed]
-                    response_text = f"Sub-divisions for {app_number} (Survey {survey_no}):\n" + "\n".join(lines)
-                else:
-                    response_text = f"No ISD processing data found for application {app_number}."
+            _isd_app_no = app_number
 
 
-        elif intent in ["sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness", "sd_forward_check", "sd_remarks", "fv_date_select", "fv_nearby_pending", "fv_scheduled_this_week", "fv_reschedule_availability", "fv_deadline_check", "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"]:
+        elif intent in ["sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness", "sd_forward_check", "sd_remarks", "fv_date_select", "fv_nearby_pending", "fv_scheduled_this_week", "fv_reschedule_availability", "fv_change_date", "fv_deadline_check", "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"]:
             app_number = extract_application_number(message)
 
             # ── fv_scheduled_this_week without a specific application ──────────
@@ -960,7 +1708,7 @@ async def process_chat(
                 taluk_name = taluk_obj.name if taluk_obj else "your taluk"
                 taluk_id = taluk_obj.id if taluk_obj else None
 
-                today = datetime.utcnow().date()
+                today = datetime.now(timezone.utc).date()
                 start_of_week = today - timedelta(days=today.weekday())
                 end_of_week = start_of_week + timedelta(days=6)
 
@@ -1076,10 +1824,10 @@ async def process_chat(
                     )
                     a_dl = app_res.scalar_one_or_none()
                     if not a_dl:
-                        structured_data = {"found": False, "message": f"Application {resolved_app} not found."}
+                        structured_data = {"found": False, "message": f"Application {resolved_app} not found.", "searched_number": resolved_app}
                     else:
                         sub_date = a_dl.submission_date
-                        today_dl = datetime.utcnow().date()
+                        today_dl = datetime.now(timezone.utc).date()
                         working_days_dl = 0
                         curr = sub_date
                         while curr < today_dl:
@@ -1116,268 +1864,227 @@ async def process_chat(
                 a = app_res.scalar_one_or_none()
                 
                 if not a:
-                    structured_data = {"found": False, "message": f"Application {app_number} not found."}
+                    structured_data = {"found": False, "message": f"Application {app_number} not found.", "searched_number": app_number}
                 else:
                     doc_stmt = select(ApplicationDocument).where(ApplicationDocument.application_id == a.id)
                     docs = (await db.execute(doc_stmt)).scalars().all()
                     missing_docs = [d.document_type for d in docs if not d.is_uploaded]
                 
-                visit_stmt = select(FieldVisit).where(FieldVisit.application_id == a.id)
-                visit = (await db.execute(visit_stmt)).scalars().first()
+                    visit_stmt = select(FieldVisit).where(FieldVisit.application_id == a.id)
+                    visit = (await db.execute(visit_stmt)).scalars().first()
                 
-                hist_stmt = select(WorkflowHistory).where(WorkflowHistory.application_id == a.id).order_by(WorkflowHistory.performed_at.asc())
-                history = (await db.execute(hist_stmt)).scalars().all()
+                    hist_stmt = select(WorkflowHistory).where(WorkflowHistory.application_id == a.id).order_by(WorkflowHistory.performed_at.asc())
+                    history = (await db.execute(hist_stmt)).scalars().all()
                 
-                sd_clarification = None
-                sd_remarks = None
-                forwarded_to_sd_date = None
+                    sd_clarification = None
+                    sd_remarks = None
+                    forwarded_to_sd_date = None
                 
-                for h in history:
-                    if h.from_stage == "SD":
-                        sd_clarification = h.rejection_reason or h.remarks
-                        sd_remarks = h.remarks or h.rejection_reason
-                    if h.to_stage == "SD":
-                        forwarded_to_sd_date = h.performed_at.date().isoformat()
+                    for h in history:
+                        if h.from_stage == "SD":
+                            sd_clarification = h.rejection_reason or h.remarks
+                            sd_remarks = h.remarks or h.rejection_reason
+                        if h.to_stage == "SD":
+                            forwarded_to_sd_date = h.performed_at.date().isoformat()
                 
-                nearby_count = 0
-                ward_num = "N/A"
-                block_num = "N/A"
-                if a.survey_number and a.survey_number.block:
-                    bl = a.survey_number.block
-                    ward_num = bl.ward.ward_number if bl.ward else "N/A"
-                    block_num = bl.block_number
+                    nearby_count = 0
+                    ward_num = "N/A"
+                    block_num = "N/A"
+                    if a.survey_number and a.survey_number.block:
+                        bl = a.survey_number.block
+                        ward_num = bl.ward.ward_number if bl.ward else "N/A"
+                        block_num = bl.block_number
                     
-                    nearby_stmt = select(func.count(Application.id)).join(
-                        SurveyNumber, Application.survey_number_id == SurveyNumber.id
-                    ).where(
-                        and_(
-                            SurveyNumber.block_id == bl.id,
-                            Application.id != a.id,
-                            Application.current_status.in_(["pending", "in_progress"])
-                        )
-                    )
-                    nearby_count = (await db.execute(nearby_stmt)).scalar() or 0
-                
-                taluk_name = "N/A"
-                taluk_scheduled_count = 0
-                taluk_cases = []
-                if a.survey_number and a.survey_number.block and a.survey_number.block.ward and a.survey_number.block.ward.town:
-                    town = a.survey_number.block.ward.town
-                    taluk = town.taluk
-                    if taluk:
-                        taluk_name = taluk.name
-                        today = datetime.utcnow().date()
-                        start_of_week = today - timedelta(days=today.weekday())
-                        end_of_week = start_of_week + timedelta(days=6)
-                        
-                        stmt_week = select(Application).join(
-                            FieldVisit, FieldVisit.application_id == Application.id
-                        ).join(
+                        nearby_stmt = select(func.count(Application.id)).join(
                             SurveyNumber, Application.survey_number_id == SurveyNumber.id
-                        ).join(
-                            Block, SurveyNumber.block_id == Block.id
-                        ).join(
-                            Ward, Block.ward_id == Ward.id
-                        ).join(
-                            Town, Ward.town_id == Town.id
                         ).where(
                             and_(
-                                Town.taluk_id == taluk.id,
-                                FieldVisit.officer_id == officer.officer_id,
-                                FieldVisit.status == "scheduled",
-                                FieldVisit.scheduled_date >= start_of_week,
-                                FieldVisit.scheduled_date <= end_of_week
+                                SurveyNumber.block_id == bl.id,
+                                Application.id != a.id,
+                                Application.current_status.in_(["pending", "in_progress"])
                             )
                         )
-                        week_apps = (await db.execute(stmt_week)).scalars().all()
-                        taluk_scheduled_count = len(week_apps)
-                        taluk_cases = [wa.application_number for wa in week_apps]
+                        nearby_count = (await db.execute(nearby_stmt)).scalar() or 0
                 
-                reschedule_date = None
-                for offset in range(1, 10):
-                    test_date = datetime.utcnow().date() + timedelta(days=offset)
-                    if test_date.weekday() >= 5:
-                        continue
-                    visit_count = (await db.execute(
+                    taluk_name = "N/A"
+                    taluk_scheduled_count = 0
+                    taluk_cases = []
+                    if a.survey_number and a.survey_number.block and a.survey_number.block.ward and a.survey_number.block.ward.town:
+                        town = a.survey_number.block.ward.town
+                        taluk = town.taluk
+                        if taluk:
+                            taluk_name = taluk.name
+                            today = datetime.now(timezone.utc).date()
+                            start_of_week = today - timedelta(days=today.weekday())
+                            end_of_week = start_of_week + timedelta(days=6)
+                        
+                            stmt_week = select(Application).join(
+                                FieldVisit, FieldVisit.application_id == Application.id
+                            ).join(
+                                SurveyNumber, Application.survey_number_id == SurveyNumber.id
+                            ).join(
+                                Block, SurveyNumber.block_id == Block.id
+                            ).join(
+                                Ward, Block.ward_id == Ward.id
+                            ).join(
+                                Town, Ward.town_id == Town.id
+                            ).where(
+                                and_(
+                                    Town.taluk_id == taluk.id,
+                                    FieldVisit.officer_id == officer.officer_id,
+                                    FieldVisit.status == "scheduled",
+                                    FieldVisit.scheduled_date >= start_of_week,
+                                    FieldVisit.scheduled_date <= end_of_week
+                                )
+                            )
+                            week_apps = (await db.execute(stmt_week)).scalars().all()
+                            taluk_scheduled_count = len(week_apps)
+                            taluk_cases = [wa.application_number for wa in week_apps]
+                
+                    reschedule_date = None
+                    for offset in range(1, 10):
+                        test_date = datetime.now(timezone.utc).date() + timedelta(days=offset)
+                        if test_date.weekday() >= 5:
+                            continue
+                        visit_count = (await db.execute(
+                            select(func.count(FieldVisit.id)).where(
+                                and_(
+                                    FieldVisit.officer_id == officer.officer_id,
+                                    FieldVisit.scheduled_date == test_date
+                                )
+                            )
+                        )).scalar() or 0
+                        if visit_count == 0:
+                            reschedule_date = test_date.isoformat()
+                            break
+                    if not reschedule_date:
+                        reschedule_date = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+                
+                    sub_date = a.submission_date
+                    today = datetime.now(timezone.utc).date()
+                    working_days = 0
+                    curr = sub_date
+                    while curr < today:
+                        curr += timedelta(days=1)
+                        if curr.weekday() < 5:
+                            working_days += 1
+                
+                    overdue_visits_stmt = select(func.count(FieldVisit.id)).where(
+                        and_(
+                            FieldVisit.officer_id == officer.officer_id,
+                            FieldVisit.status == "overdue"
+                        )
+                    )
+                    overdue_visits_count = (await db.execute(overdue_visits_stmt)).scalar() or 0
+                
+                    unassigned_visits_stmt = select(func.count(FieldVisit.id)).where(
+                        and_(
+                            FieldVisit.officer_id == officer.officer_id,
+                            FieldVisit.status.in_(["unscheduled"])
+                        )
+                    )
+                    unassigned_visits_count = (await db.execute(unassigned_visits_stmt)).scalar() or 0
+                
+                    # Fetch actual unassigned applications with details for table display
+                    from backend.models import Applicant, ApplicationSubDivision
+                    from sqlalchemy.orm import joinedload
+                    unassigned_apps_list = []
+                    unassigned_apps_stmt = select(Application).options(
+                        joinedload(Application.applicant),
+                        joinedload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
+                        joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
+                    ).join(
+                        FieldVisit, FieldVisit.application_id == Application.id
+                    ).where(
+                        and_(
+                            FieldVisit.officer_id == officer.officer_id,
+                            FieldVisit.status.in_(["unscheduled"])
+                        )
+                    )
+                    unassigned_apps_res = (await db.execute(unassigned_apps_stmt)).unique().scalars().all()
+                    for ua in unassigned_apps_res:
+                        days_p = (date.today() - ua.submission_date).days if ua.submission_date else 0
+                        block_n = ua.survey_number.block.block_number if (ua.survey_number and ua.survey_number.block) else "N/A"
+                        ward_n = ua.survey_number.block.ward.ward_number if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward) else "N/A"
+                        town_n = ua.survey_number.block.ward.town.name if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward and ua.survey_number.block.ward.town) else "N/A"
+                        survey_n = ua.survey_number.survey_no if ua.survey_number else "N/A"
+                        # SIS temporary number (proposed by SIS during field visit)
+                        sis_temp_nos = ", ".join(
+                            sd.proposed_sub_division_no for sd in ua.application_sub_divisions
+                            if sd.proposed_sub_division_no
+                        ) or "N/A"
+                        # DIS permanent/fixed number (from SubDivision record assigned by DIS)
+                        dis_fixed_nos = ", ".join(
+                            sd.sub_division.sub_division_no for sd in ua.application_sub_divisions
+                            if sd.sub_division and sd.sub_division.sub_division_no
+                        ) or "N/A"
+                        unassigned_apps_list.append({
+                            "application_number": ua.application_number,
+                            "applicant_name": ua.applicant.name if ua.applicant else "N/A",
+                            "survey_no": survey_n,
+                            "sis_temp_sub_div": sis_temp_nos,
+                            "dis_fixed_sub_div": dis_fixed_nos,
+                            "town_name": town_n,
+                            "ward_number": ward_n,
+                            "block_number": block_n,
+                            "current_stage": ua.current_stage or "N/A",
+                            "current_status": ua.current_status or "N/A",
+                            "submission_date": ua.submission_date.isoformat() if ua.submission_date else "N/A",
+                            "days_pending": days_p,
+                            "priority": "High" if ua.priority_flag else "Normal"
+                        })
+                
+                    recently_rescheduled_count = (await db.execute(
                         select(func.count(FieldVisit.id)).where(
                             and_(
                                 FieldVisit.officer_id == officer.officer_id,
-                                FieldVisit.scheduled_date == test_date
+                                FieldVisit.updated_at >= datetime.now(timezone.utc) - timedelta(days=7)
                             )
                         )
                     )).scalar() or 0
-                    if visit_count == 0:
-                        reschedule_date = test_date.isoformat()
-                        break
-                if not reschedule_date:
-                    reschedule_date = (datetime.utcnow().date() + timedelta(days=1)).isoformat()
                 
-                sub_date = a.submission_date
-                today = datetime.utcnow().date()
-                working_days = 0
-                curr = sub_date
-                while curr < today:
-                    curr += timedelta(days=1)
-                    if curr.weekday() < 5:
-                        working_days += 1
-                
-                overdue_visits_stmt = select(func.count(FieldVisit.id)).where(
-                    and_(
-                        FieldVisit.officer_id == officer.officer_id,
-                        FieldVisit.status == "overdue"
-                    )
-                )
-                overdue_visits_count = (await db.execute(overdue_visits_stmt)).scalar() or 0
-                
-                unassigned_visits_stmt = select(func.count(FieldVisit.id)).where(
-                    and_(
-                        FieldVisit.officer_id == officer.officer_id,
-                        FieldVisit.status.in_(["unscheduled"])
-                    )
-                )
-                unassigned_visits_count = (await db.execute(unassigned_visits_stmt)).scalar() or 0
-                
-                # Fetch actual unassigned applications with details for table display
-                from backend.models import Applicant, ApplicationSubDivision
-                from sqlalchemy.orm import joinedload
-                unassigned_apps_list = []
-                unassigned_apps_stmt = select(Application).options(
-                    joinedload(Application.applicant),
-                    joinedload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
-                    joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
-                ).join(
-                    FieldVisit, FieldVisit.application_id == Application.id
-                ).where(
-                    and_(
-                        FieldVisit.officer_id == officer.officer_id,
-                        FieldVisit.status.in_(["unscheduled"])
-                    )
-                )
-                unassigned_apps_res = (await db.execute(unassigned_apps_stmt)).unique().scalars().all()
-                for ua in unassigned_apps_res:
-                    days_p = (date.today() - ua.submission_date).days if ua.submission_date else 0
-                    block_n = ua.survey_number.block.block_number if (ua.survey_number and ua.survey_number.block) else "N/A"
-                    ward_n = ua.survey_number.block.ward.ward_number if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward) else "N/A"
-                    town_n = ua.survey_number.block.ward.town.name if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward and ua.survey_number.block.ward.town) else "N/A"
-                    survey_n = ua.survey_number.survey_no if ua.survey_number else "N/A"
-                    # SIS temporary number (proposed by SIS during field visit)
-                    sis_temp_nos = ", ".join(
-                        sd.proposed_sub_division_no for sd in ua.application_sub_divisions
-                        if sd.proposed_sub_division_no
-                    ) or "N/A"
-                    # DIS permanent/fixed number (from SubDivision record assigned by DIS)
-                    dis_fixed_nos = ", ".join(
-                        sd.sub_division.sub_division_no for sd in ua.application_sub_divisions
-                        if sd.sub_division and sd.sub_division.sub_division_no
-                    ) or "N/A"
-                    unassigned_apps_list.append({
-                        "application_number": ua.application_number,
-                        "applicant_name": ua.applicant.name if ua.applicant else "N/A",
-                        "survey_no": survey_n,
-                        "sis_temp_sub_div": sis_temp_nos,
-                        "dis_fixed_sub_div": dis_fixed_nos,
-                        "town_name": town_n,
-                        "ward_number": ward_n,
-                        "block_number": block_n,
-                        "current_stage": ua.current_stage or "N/A",
-                        "current_status": ua.current_status or "N/A",
-                        "submission_date": ua.submission_date.isoformat() if ua.submission_date else "N/A",
-                        "days_pending": days_p,
-                        "priority": "High" if ua.priority_flag else "Normal"
-                    })
-                
-                recently_rescheduled_count = (await db.execute(
-                    select(func.count(FieldVisit.id)).where(
+                    overlap_date = None
+                    overlap_stmt = select(FieldVisit.scheduled_date).where(
                         and_(
                             FieldVisit.officer_id == officer.officer_id,
-                            FieldVisit.updated_at >= datetime.utcnow() - timedelta(days=7)
+                            FieldVisit.status == "scheduled"
                         )
-                    )
-                )).scalar() or 0
+                    ).group_by(FieldVisit.scheduled_date).having(func.count(FieldVisit.id) > 1)
+                    overlap_res = (await db.execute(overlap_stmt)).scalars().first()
+                    if overlap_res:
+                        overlap_date = overlap_res.isoformat()
                 
-                overlap_date = None
-                overlap_stmt = select(FieldVisit.scheduled_date).where(
-                    and_(
-                        FieldVisit.officer_id == officer.officer_id,
-                        FieldVisit.status == "scheduled"
-                    )
-                ).group_by(FieldVisit.scheduled_date).having(func.count(FieldVisit.id) > 1)
-                overlap_res = (await db.execute(overlap_stmt)).scalars().first()
-                if overlap_res:
-                    overlap_date = overlap_res.isoformat()
-                
-                structured_data = {
-                    "found": True,
-                    "application_number": a.application_number,
-                    "current_stage": a.current_stage,
-                    "submission_date": a.submission_date.isoformat(),
-                    "missing_documents": missing_docs,
-                    "field_visit_present": visit is not None,
-                    "field_visit_date": visit.scheduled_date.isoformat() if (visit and visit.scheduled_date) else None,
-                    "encroachment_found": visit.encroachment_found if visit else False,
-                    "area_verified": visit.area_verified if visit else None,
-                    "visit_notes_present": bool(visit.visit_notes) if visit else False,
-                    "sd_clarification": sd_clarification,
-                    "sd_remarks": sd_remarks,
-                    "forwarded_to_sd_date": forwarded_to_sd_date,
-                    "nearby_count": nearby_count,
-                    "ward_number": ward_num,
-                    "block_number": block_num,
-                    "taluk_name": taluk_name,
-                    "taluk_scheduled_count": taluk_scheduled_count,
-                    "taluk_cases": taluk_cases,
-                    "reschedule_date": reschedule_date,
-                    "working_days": working_days,
-                    "overdue_visits_count": overdue_visits_count,
-                    "unassigned_visits_count": unassigned_visits_count,
-                    "unassigned_applications": unassigned_apps_list,
-                    "recently_rescheduled_count": recently_rescheduled_count,
-                    "overlap_date": overlap_date,
-                    "query_type": "Workflow Check"
-                }
+                    structured_data = {
+                        "found": True,
+                        "application_number": a.application_number,
+                        "current_stage": a.current_stage,
+                        "submission_date": a.submission_date.isoformat(),
+                        "missing_documents": missing_docs,
+                        "field_visit_present": visit is not None,
+                        "field_visit_date": visit.scheduled_date.isoformat() if (visit and visit.scheduled_date) else None,
+                        "encroachment_found": visit.encroachment_found if visit else False,
+                        "area_verified": visit.area_verified if visit else None,
+                        "visit_notes_present": bool(visit.visit_notes) if visit else False,
+                        "sd_clarification": sd_clarification,
+                        "sd_remarks": sd_remarks,
+                        "forwarded_to_sd_date": forwarded_to_sd_date,
+                        "nearby_count": nearby_count,
+                        "ward_number": ward_num,
+                        "block_number": block_num,
+                        "taluk_name": taluk_name,
+                        "taluk_scheduled_count": taluk_scheduled_count,
+                        "taluk_cases": taluk_cases,
+                        "reschedule_date": reschedule_date,
+                        "working_days": working_days,
+                        "overdue_visits_count": overdue_visits_count,
+                        "unassigned_visits_count": unassigned_visits_count,
+                        "unassigned_applications": unassigned_apps_list,
+                        "recently_rescheduled_count": recently_rescheduled_count,
+                        "overlap_date": overlap_date,
+                        "query_type": "Workflow Check"
+                    }
             
-        elif intent == "isd_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="ISD")
-            structured_data["query_type"] = "ISD Applications"
 
-        elif intent == "nisd_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="NISD")
-            structured_data["query_type"] = "NISD Applications"
-
-        elif intent == "both_applications":
-            import re as _re
-            _msg_l = message.lower()
-            _fetch_isd   = bool(_re.search(r'\bisd\b', _msg_l))
-            _fetch_nisd  = bool(_re.search(r'\bnisd\b', _msg_l))
-            _fetch_merge = bool(_re.search(r'\bmerge?\b', _msg_l))
-            # Default to ISD+NISD if nothing explicit detected
-            if not any([_fetch_isd, _fetch_nisd, _fetch_merge]):
-                _fetch_isd = _fetch_nisd = True
-            
-            _results, _labels = [], []
-            if _fetch_isd:
-                _res_isd = await get_officer_applications(db, officer, application_type="ISD")
-                _results.append(_res_isd)
-                _labels.append("ISD")
-            if _fetch_nisd:
-                _res_nisd = await get_officer_applications(db, officer, application_type="NISD")
-                _results.append(_res_nisd)
-                _labels.append("NISD")
-            if _fetch_merge:
-                _res_merge = await get_officer_applications(db, officer, application_type="MERGE")
-                _results.append(_res_merge)
-                _labels.append("MERGE")
-
-            _all_apps = [app for r in _results for app in r.get("applications", [])]
-            structured_data = {
-                "query_type": " & ".join(_labels) + " Applications",
-                "applications": _all_apps,
-                "count": sum(r.get("count", 0) for r in _results),
-            }
-
-        elif intent == "merge_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="MERGE")
-            structured_data["query_type"] = "MERGE Applications"
 
         elif intent == "all_surveys_in_jurisdiction":
             structured_data = await get_all_surveys_in_jurisdiction(db, officer)
@@ -1393,14 +2100,36 @@ async def process_chat(
 
         elif intent == "application_status":
             # Extract from current message first; only check history if user uses reference words
-            app_number = extract_application_number(message)
-            if not app_number:
+            # Use findall to support multi-app queries like "Show details for A and B"
+            _app_numbers_in_msg = extract_application_numbers(message)
+            if len(_app_numbers_in_msg) > 1:
+                # Multiple application numbers detected — fetch details for each
+                _multi_details = []
+                for _an in _app_numbers_in_msg:
+                    _det = await get_application_detail(db, _an)
+                    _multi_details.append(_det)
+                structured_data = {
+                    "multi_applications": _multi_details,
+                    "query_type": "Application Status"
+                }
+                app_number = None
+            else:
+                app_number = _app_numbers_in_msg[0] if _app_numbers_in_msg else None
+            if not app_number and "multi_applications" not in structured_data:
                 # Check for explicit reference patterns OR implicit continuation for field queries
                 # Implicit continuation: if user just discussed an app, next field query refers to it
                 _field_keywords = [
                     "name", "address", "mobile", "phone", "email", "status", "stage",
                     "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
-                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்"
+                    "survey", "patta", "can", "reason", "charge", "fee", "priority",
+                    "igrs", "form 6", "form6", "igrs form 6", "igrs_form6",
+                    "subdivision", "subdiv", "renewal", "parent", "user", "role",
+                    "service", "department", "source", "district", "taluk", "ward", "block",
+                    "dispatch", "received", "generated", "workflow", "return", "ip",
+                    "camp", "serial", "applicant", "type", "date", "year",
+                    "auto mutated", "auto_mutated", "mutation",
+                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்",
+                    "கணக்கெண்", "பட்டா", "காரணம்", "கட்டணம்", "முன்னுரிமை", "படிவம்"
                 ]
                 is_field_query = any(kw in message.lower() for kw in _field_keywords)
                 app_number = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=is_field_query)
@@ -1432,7 +2161,7 @@ async def process_chat(
                     app_res = await db.execute(select(Application).where(Application.application_number == app_number))
                     a = app_res.scalar_one_or_none()
                     if not a:
-                        structured_data = {"found": False, "message": f"Application {app_number} not found."}
+                        structured_data = {"found": False, "message": f"Application {app_number} not found.", "searched_number": app_number}
                     else:
                         history_res = await db.execute(
                             select(WorkflowHistory)
@@ -1638,7 +2367,7 @@ async def process_chat(
             app_res = await db.execute(select(Application).where(Application.application_number == app_number))
             a = app_res.scalar_one_or_none()
             if not a:
-                structured_data = {"found": False, "message": f"Application {app_number} not found."}
+                structured_data = {"found": False, "message": f"Application {app_number} not found.", "searched_number": app_number}
             else:
                 history_res = await db.execute(
                     select(WorkflowHistory)
@@ -1878,7 +2607,7 @@ async def process_chat(
             and structured_data.get("found", True)
             and structured_data.get("count", 0) > 0
         )
-        rag_context = get_rag_context(message, language, n_results=5) if not has_db_results else ""
+        rag_context = await get_rag_context_async(message, language, n_results=5) if not has_db_results else ""
         context_used = len(rag_context) > 0
 
         # Step 5: Try to build HTML directly from structured data (no LLM needed).
@@ -1897,11 +2626,27 @@ async def process_chat(
             "address", "mobile", "phone", "email", "name", "status", "type",
             "stage", "date", "year", "survey", "applicant", "priority", "aadhaar",
             "reason", "overdue", "nisd", "isd", "merge", "pending", "long", "duration",
-            "days", "since", "how long",
+            "days", "since", "how long", "serial", "serial number", "serial_number",
+            "can", "can number", "can_number", "patta", "patta number", "patta_number",
+            "subdivision", "subdivision number", "subdivision_number", "current subdivision",
+            "current_subdivision_number", "renewal", "renewal number", "renewal_number",
+            "parent", "parent application", "parent_application_id", "role", "role id",
+            "role_id", "user", "user id", "user_id", "department", "department_code",
+            "service", "service_code", "district_code", "taluk_code", "village_code",
+            "urban_unit_code", "ward_code", "block_code", "ward", "block", "charge",
+            "charges", "fee", "fees", "cost", "csc_service_charge", "government_service_charge",
+            "ip", "ip address", "ip_address", "dispatch", "dispatch_date", "received",
+            "received_date", "last updated", "last_updated_datetime", "generated_datetime",
+            "source", "source_code", "source_name", "return_status", "workflow_state",
+            "auto_mutated", "auto_mutated_flag", "is_auto_mutated", "igrs_auto_mutation_flag",
+            "camp", "camp_flag", "camp_code", "camp_correction_id", "igrs", "form6", "form 6",
+            "igrs_form6_number", "declared reason", "declared_reason",
             # Tamil field keywords
             "முகவரி", "தொலைபேசி", "மின்னஞ்சல்", "பெயர்", "நாமாகும்", "நாமம்", "நிலை", "வகை",
-            "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
+            "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "சர்வே எண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
             "காரணம்", "காலதாமத", "நிலுவை", "நிலுவையில்", "எவ்வளவு", "எத்தனை", "நாட்கள்", "நாள்", "ஆச்சு",
+            "வரிசை எண்", "பட்டா எண்", "உட்பிரிவு எண்", "கட்டணம்", "புதுப்பித்தல் எண்", "பயனர் ஐடி",
+            "பங்கு ஐடி", "முகாம்", "படிவம் 6", "ஆதாரம்",
             "niluvai", "evvalavu", "ethanai", "naal", "naatkal",
             # Stage/location keywords
             "sd", "dis", "tahsildar", "sis", "department", "office",
@@ -1921,25 +2666,19 @@ async def process_chat(
                                          "where", "which", "currently", "right now", "is this",
                                          "how", "how many", "days", "overdue"]
         )
-        _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
-        _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
+        _has_app_number = bool(extract_application_number(message))
+        _has_context_app = bool(_extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True))
+        _is_short_field_query = _has_field_keyword and len(_msg_lower.split()) <= 6
+        _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number or _has_context_app or _is_short_field_query)
         _is_interrogative = _is_interrogative or _asking_specific_field
-        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info")
-        _count_keywords = ["how many", "number of", "count", "total", "no of", "no.", "no ", "num", "எத்தனை", "எண்ணிக்கை", "தொகை"]
-        _asking_for_count = any(kw in _msg_lower for kw in _count_keywords)
+        _is_multi_app = bool(structured_data and "multi_applications" in structured_data)
+        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info") and not _is_multi_app
+        _asking_for_count = _is_count_only_query(message)
 
-        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
-            count = structured_data.get("count", len(structured_data.get("applications", []))) if structured_data else 0
-            qtype = structured_data.get("query_type", "applications").lower() if structured_data else "applications"
-            is_tamil = language in ("ta", "tanglish")
-            if count == 0:
-                html_response = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype} in your jurisdiction."
-            elif count == 1:
-                html_response = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')} in your jurisdiction."
-            else:
-                html_response = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype} in your jurisdiction."
+        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications", "overdue_applications"):
+            html_response = _format_count_intro(structured_data, language, message)
         else:
-            html_response = "" if _bypass_html else build_html_response(structured_data, language)
+            html_response = "" if _bypass_html else build_html_response(structured_data, language, query=message)
 
         if html_response:
             response_text = html_response
@@ -1950,7 +2689,9 @@ async def process_chat(
         # the LLM to correctly extract and present specific fields.
         if not html_response and _bypass_html and structured_data and structured_data.get("found", True):
             sd = structured_data
-            app_no   = sd.get("application_number", "")
+            _direct_answer_text = None
+            is_tamil = language in ("ta", "tanglish")
+            app_no   = sd.get("application_number") or sd.get("application_id") or extract_application_number(message) or ""
             app_type = sd.get("type", "")
             survey_no = sd.get("survey_no", "")
             subdivisions = sd.get("subdivisions_being_merged") or []
@@ -2060,7 +2801,6 @@ async def process_chat(
                                 response_text = f"Application {app_no} has been pending for **{app_sub_days} days** (submitted on {str(sub_date_str)[:10]}). It has **{rem} days remaining** within the 15-day SLA."
                         logger.info(f"Responded pending duration ({app_sub_days} days) for {app_no}")
 
-                    # Overdue questions or default overdue calculations
                     elif fv_days_overdue is not None and fv_days_overdue > 0:
                         if is_tamil:
                             response_text = f"விண்ணப்பம் {app_no}-ன் கள ஆய்வு ({str(fv_date_str)[:10]}) {fv_days_overdue} நாட்கள் தாமதமாக (overdue) உள்ளது."
@@ -2106,27 +2846,152 @@ async def process_chat(
                             response_text = f"Application {app_no} is currently on schedule and not overdue."
                         logger.info(f"Responded not overdue for {app_no}")
 
-                # Check for NISD/ISD type questions next
-                elif ("nisd" in _msg_lower or "isd" in _msg_lower):
-                    app_type_value = sd.get("type", "N/A")
-                    response_text = f"Application {app_no} is of type: {app_type_value}"
-                    logger.info(f"Responded with application type '{app_type_value}' for {app_no}")
-                
-            # Map user keywords to structured_data fields (English + Tamil)
-            if not response_text and _asking_specific_field and intent == "application_status" and app_no:
+            if not _direct_answer_text:
+                # Map question field keyword to structured_data key
                 _field_map = {
+                    # Serial Number
+                    "serial number": ("serial_number", "Serial Number"),
+                    "serial_number": ("serial_number", "Serial Number"),
+                    "serial": ("serial_number", "Serial Number"),
+                    "வரிசை எண்": ("serial_number", "Serial Number"),
+                    "வரிசை": ("serial_number", "Serial Number"),
+                    # CAN Number
+                    "can number": ("can_number", "CAN Number"),
+                    "can_number": ("can_number", "CAN Number"),
+                    "can": ("can_number", "CAN Number"),
+                    "can எண்": ("can_number", "CAN Number"),
+                    # Patta Number
+                    "patta number": ("patta_number", "Patta Number"),
+                    "patta_number": ("patta_number", "Patta Number"),
+                    "patta": ("patta_number", "Patta Number"),
+                    "பட்டா எண்": ("patta_number", "Patta Number"),
+                    "பட்டா": ("patta_number", "Patta Number"),
+                    # Subdivision Number
+                    "subdivision number": ("subdivision_number", "Subdivision Number"),
+                    "subdivision_number": ("subdivision_number", "Subdivision Number"),
+                    "subdivision": ("subdivision_number", "Subdivision Number"),
+                    "current subdivision": ("current_subdivision_number", "Current Subdivision Number"),
+                    "current_subdivision_number": ("current_subdivision_number", "Current Subdivision Number"),
+                    "உட்பிரிவு எண்": ("subdivision_number", "Subdivision Number"),
+                    "உட்பிரிவு": ("subdivision_number", "Subdivision Number"),
+                    # Area / SQM
+                    "area sq": ("area_sqm", "Area (sq.m)"),
+                    "area sqm": ("area_sqm", "Area (sq.m)"),
+                    "area in sq": ("area_sqm", "Area (sq.m)"),
+                    "area in sq m": ("area_sqm", "Area (sq.m)"),
+                    "total area": ("area_sqm", "Area (sq.m)"),
+                    "total area sq": ("area_sqm", "Area (sq.m)"),
+                    "merge area": ("area_sqm", "Area (sq.m)"),
+                    "survey area": ("area_sqm", "Area (sq.m)"),
+                    "area": ("area_sqm", "Area (sq.m)"),
+                    "sqm": ("area_sqm", "Area (sq.m)"),
+                    "sq m": ("area_sqm", "Area (sq.m)"),
+                    "square meter": ("area_sqm", "Area (sq.m)"),
+                    "square meters": ("area_sqm", "Area (sq.m)"),
+                    "பரப்பளவு": ("area_sqm", "Area (sq.m)"),
+                    "சதுர மீட்டர்": ("area_sqm", "Area (sq.m)"),
+                    # User ID & Role ID
+                    "user id": ("user_id", "User ID"),
+                    "user_id": ("user_id", "User ID"),
+                    "user": ("user_id", "User ID"),
+                    "பயனர் ஐடி": ("user_id", "User ID"),
+                    "பயனர்": ("user_id", "User ID"),
+                    "role id": ("role_id", "Role ID"),
+                    "role_id": ("role_id", "Role ID"),
+                    "role": ("role_id", "Role ID"),
+                    "பங்கு ஐடி": ("role_id", "Role ID"),
+                    # Service & Department
+                    "service code": ("service_code", "Service Code"),
+                    "service_code": ("service_code", "Service Code"),
+                    "department code": ("department_code", "Department Code"),
+                    "department_code": ("department_code", "Department Code"),
+                    "renewal number": ("renewal_number", "Renewal Number"),
+                    "renewal_number": ("renewal_number", "Renewal Number"),
+                    "renewal": ("renewal_number", "Renewal Number"),
+                    "புதுப்பித்தல் எண்": ("renewal_number", "Renewal Number"),
+                    "parent application": ("parent_application_id", "Parent Application ID"),
+                    "parent_application_id": ("parent_application_id", "Parent Application ID"),
+                    "parent": ("parent_application_id", "Parent Application ID"),
+                    "தாய் விண்ணப்பம்": ("parent_application_id", "Parent Application ID"),
+                    # Charges & Financials
+                    "csc service charge": ("csc_service_charge", "CSC Service Charge"),
+                    "csc_service_charge": ("csc_service_charge", "CSC Service Charge"),
+                    "csc charge": ("csc_service_charge", "CSC Service Charge"),
+                    "csc கட்டணம்": ("csc_service_charge", "CSC Service Charge"),
+                    "government service charge": ("government_service_charge", "Government Service Charge"),
+                    "government_service_charge": ("government_service_charge", "Government Service Charge"),
+                    "government charge": ("government_service_charge", "Government Service Charge"),
+                    "அரசு கட்டணம்": ("government_service_charge", "Government Service Charge"),
+                    "fee": ("government_service_charge", "Service Charge"),
+                    "fees": ("government_service_charge", "Service Charge"),
+                    "charges": ("government_service_charge", "Service Charge"),
+                    "charge": ("government_service_charge", "Service Charge"),
+                    "கட்டணம்": ("government_service_charge", "Service Charge"),
+                    # IP Address & Security
+                    "ip address": ("ip_address", "IP Address"),
+                    "ip_address": ("ip_address", "IP Address"),
+                    "ip": ("ip_address", "IP Address"),
+                    "ஐபி முகவரி": ("ip_address", "IP Address"),
+                    # Auto mutation & flags
+                    "auto mutated flag": ("auto_mutated_flag", "Auto Mutated Flag"),
+                    "auto_mutated_flag": ("auto_mutated_flag", "Auto Mutated Flag"),
+                    "is auto mutated": ("is_auto_mutated", "Is Auto Mutated"),
+                    "is_auto_mutated": ("is_auto_mutated", "Is Auto Mutated"),
+                    "igrs auto mutation flag": ("igrs_auto_mutation_flag", "IGRS Auto Mutation Flag"),
+                    "igrs_auto_mutation_flag": ("igrs_auto_mutation_flag", "IGRS Auto Mutation Flag"),
+                    # Special camps
+                    "camp flag": ("camp_flag", "Camp Flag"),
+                    "camp_flag": ("camp_flag", "Camp Flag"),
+                    "camp code": ("camp_code", "Camp Code"),
+                    "camp_code": ("camp_code", "Camp Code"),
+                    "camp correction id": ("camp_correction_id", "Camp Correction ID"),
+                    "camp_correction_id": ("camp_correction_id", "Camp Correction ID"),
+                    "camp": ("camp_flag", "Camp Flag"),
+                    "முகாம்": ("camp_flag", "Camp Flag"),
+                    # IGRS Form 6
+                    "igrs form 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "igrs form 6 number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "igrs_form6_number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form 6 number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "படிவம் 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    # Dates & Logistics
+                    "dispatch date": ("dispatch_date", "Dispatch Date"),
+                    "dispatch_date": ("dispatch_date", "Dispatch Date"),
+                    "அனுப்பிய தேதி": ("dispatch_date", "Dispatch Date"),
+                    "received date": ("received_date", "Received Date"),
+                    "received_date": ("received_date", "Received Date"),
+                    "பெறப்பட்ட தேதி": ("received_date", "Received Date"),
+                    "last updated": ("last_updated_datetime", "Last Updated Datetime"),
+                    "last_updated_datetime": ("last_updated_datetime", "Last Updated Datetime"),
+                    "last_updated": ("last_updated_datetime", "Last Updated Datetime"),
+                    "generated datetime": ("generated_datetime", "Generated Datetime"),
+                    "generated_datetime": ("generated_datetime", "Generated Datetime"),
+                    "return status": ("return_status", "Return Status"),
+                    "return_status": ("return_status", "Return Status"),
+                    "workflow state": ("workflow_state", "Workflow State"),
+                    "workflow_state": ("workflow_state", "Workflow State"),
+                    "source code": ("source_code", "Source Code"),
+                    "source_code": ("source_code", "Source Code"),
+                    "source name": ("source_name", "Source Name"),
+                    "source_name": ("source_name", "Source Name"),
+                    "source": ("source_name", "Source Name"),
+                    "ஆதாரம்": ("source_name", "Source Name"),
                     # Address
                     "address": ("applicant_address", "Address"),
                     "முகவரி": ("applicant_address", "Address"),
-                    "virivu": ("applicant_address", "Address"),
                     "mugavari": ("applicant_address", "Address"),
                     # Mobile/Phone
+                    "mobile number": ("applicant_mobile", "Mobile"),
+                    "phone number": ("applicant_mobile", "Phone"),
                     "mobile": ("applicant_mobile", "Mobile"),
                     "phone": ("applicant_mobile", "Phone"),
+                    "தொலைபேசி எண்": ("applicant_mobile", "Mobile"),
                     "தொலைபேசி": ("applicant_mobile", "Mobile"),
-                    "எண்": ("applicant_mobile", "Mobile"),
+                    "கைபேசி": ("applicant_mobile", "Mobile"),
+                    "கைபேசி எண்": ("applicant_mobile", "Mobile"),
                     "tholaipaesi": ("applicant_mobile", "Mobile"),
-                    "number": ("applicant_mobile", "Mobile"),
                     "contact": ("applicant_mobile", "Mobile"),
                     # Email
                     "email": ("applicant_email", "Email"),
@@ -2185,25 +3050,49 @@ async def process_chat(
                     "eppodhu": ("submission_date", "Submission Date"),
                     # Priority
                     "priority": ("priority_flag", "Priority"),
+                    "high priority": ("priority_flag", "Priority"),
+                    "priority flag": ("priority_flag", "Priority"),
                     "முன்னுரிமை": ("priority_flag", "Priority"),
                     "munnurimai": ("priority_flag", "Priority"),
                     "urgent": ("priority_flag", "Priority"),
                     # Overdue
                     "overdue": ("is_overdue", "Overdue"),
+                    "is overdue": ("is_overdue", "Overdue"),
+                    "is it overdue": ("is_overdue", "Overdue"),
                     "காலதாமத": ("is_overdue", "Overdue"),
                     "kaalathamadha": ("is_overdue", "Overdue"),
                     "delayed": ("is_overdue", "Overdue"),
-                    # Aadhaar
-                    "aadhaar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
-                    "aadhar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
-                    "adhaar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
+                    # Field visit
+                    "field visit": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "field visit scheduled": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "field visit date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "visit date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "inspection date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "கள ஆய்வு": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "கள ஆய்வு தேதி": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    # Location Codes
+                    "district code": ("district_code", "District Code"),
+                    "taluk code": ("taluk_code", "Taluk Code"),
+                    "ward code": ("ward_code", "Ward Code"),
+                    "block code": ("block_code", "Block Code"),
+                    "village code": ("village_code", "Village Code"),
+                    "urban unit code": ("urban_unit_code", "Urban Unit Code"),
+                    # Aadhaar / CAN mapping (schema uses CAN number as citizen identifier)
+                    "aadhaar": ("can_number", "CAN Number"),
+                    "aadhar": ("can_number", "CAN Number"),
+                    "adhaar": ("can_number", "CAN Number"),
                     # Reason
                     "reason": ("declared_reason", "Declared Reason"),
+                    "declared reason": ("declared_reason", "Declared Reason"),
+                    "purpose": ("declared_reason", "Declared Reason"),
                     "காரணம்": ("declared_reason", "Declared Reason"),
                     "kaaranam": ("declared_reason", "Declared Reason"),
                     "karanum": ("declared_reason", "Declared Reason"),
                     # Location / stage keywords
                     "where": ("stage", "Current Stage"),
+                    "where is it": ("stage", "Current Stage"),
+                    "where is": ("stage", "Current Stage"),
+                    "where is it currently": ("stage", "Current Stage"),
                     "எங்கே": ("stage", "Current Stage"),
                     "engae": ("stage", "Current Stage"),
                     "enge": ("stage", "Current Stage"),
@@ -2239,10 +3128,46 @@ async def process_chat(
                 }
                 
                 # Use fuzzy matching for spelling error tolerance
-                match_result = _fuzzy_match_keywords(_msg_lower, _field_map, threshold=0.75)
+                all_matches = _fuzzy_match_all_fields(_msg_lower, _field_map, threshold=0.75)
                 
-                if match_result:
-                    field_key, field_label, matched_kw = match_result
+                if len(all_matches) > 1:
+                    is_tamil = language in ("ta", "tanglish")
+                    labels_to_use = _stage_labels_ta if is_tamil else _stage_labels
+                    ta_labels = {
+                        "Address": "முகவரி", "Mobile": "தொலைபேசி", "Email": "மின்னஞ்சல்",
+                        "Applicant Name": "விண்ணப்பதாரர் பெயர்", "Status": "நிலை",
+                        "Application Type": "விண்ணப்ப வகை", "Survey Number": "கணக்கெண்",
+                        "Submission Date": "சமர்ப்பித்த தேதி", "Priority": "முன்னுரிமை",
+                        "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்",
+                        "Serial Number": "வரிசை எண்", "CAN Number": "CAN எண்",
+                        "Patta Number": "பட்டா எண்", "Subdivision Number": "உட்பிரிவு எண்",
+                        "Current Subdivision Number": "தற்போதைய உட்பிரிவு எண்",
+                        "User ID": "பயனர் ஐடி", "Role ID": "பங்கு ஐடி",
+                        "Renewal Number": "புதுப்பித்தல் எண்", "Parent Application ID": "தாய் விண்ணப்ப எண்",
+                        "CSC Service Charge": "CSC சேவை கட்டணம்", "Government Service Charge": "அரசு சேவை கட்டணம்",
+                        "IP Address": "IP முகவரி", "Camp Flag": "முகாம் குறியீடு", "Camp Code": "முகாம் எண்",
+                        "IGRS Form 6 Number": "IGRS படிவம் 6 எண்", "Dispatch Date": "அனுப்பிய தேதி",
+                        "Received Date": "பெறப்பட்ட தேதி", "Last Updated Datetime": "கடைசியாக புதுப்பிக்கப்பட்ட தேதி",
+                        "Workflow State": "பணிப்பாய்வு நிலை", "Return Status": "திரும்பிய நிலை",
+                        "Source Name": "ஆதாரம்", "Current Stage": "தற்போதைய கட்டம்"
+                    }
+                    items = []
+                    for field_key, field_label, _ in all_matches:
+                        value = sd.get(field_key)
+                        if value is None or value == "":
+                            value = "N/A"
+                        elif isinstance(value, bool):
+                            value = ("ஆம்" if value else "இல்லை") if is_tamil else ("Yes" if value else "No")
+                        elif field_key == "stage" and isinstance(value, str):
+                            value = labels_to_use.get(value.upper(), value)
+                        display_label = ta_labels.get(field_label, field_label) if is_tamil else field_label
+                        items.append(f"• **{display_label}**: {value}")
+                    
+                    header = f"விண்ணப்பம் {app_no} விவரங்கள்:" if is_tamil else f"Details for application {app_no}:"
+                    response_text = header + "\n" + "\n".join(items)
+                    logger.info(f"Responded with multiple fields ({len(all_matches)}) for {app_no}")
+                elif len(all_matches) == 1:
+                    field_key, field_label, matched_kw = all_matches[0]
                     value = sd.get(field_key)
                     if value is not None and value != "":
                         if isinstance(value, bool):
@@ -2285,7 +3210,18 @@ async def process_chat(
                                     "Applicant Name": "விண்ணப்பதாரர் பெயர்", "Status": "நிலை",
                                     "Application Type": "விண்ணப்ப வகை", "Survey Number": "கணக்கெண்",
                                     "Submission Date": "சமர்ப்பித்த தேதி", "Priority": "முன்னுரிமை",
-                                    "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்"
+                                    "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்",
+                                    "Serial Number": "வரிசை எண்", "CAN Number": "CAN எண்",
+                                    "Patta Number": "பட்டா எண்", "Subdivision Number": "உட்பிரிவு எண்",
+                                    "Current Subdivision Number": "தற்போதைய உட்பிரிவு எண்",
+                                    "User ID": "பயனர் ஐடி", "Role ID": "பங்கு ஐடி",
+                                    "Renewal Number": "புதுப்பித்தல் எண்", "Parent Application ID": "தாய் விண்ணப்ப எண்",
+                                    "CSC Service Charge": "CSC சேவை கட்டணம்", "Government Service Charge": "அரசு சேவை கட்டணம்",
+                                    "IP Address": "IP முகவரி", "Camp Flag": "முகாம் குறியீடு", "Camp Code": "முகாம் எண்",
+                                    "IGRS Form 6 Number": "IGRS படிவம் 6 எண்", "Dispatch Date": "அனுப்பிய தேதி",
+                                    "Received Date": "பெறப்பட்ட தேதி", "Last Updated Datetime": "கடைசியாக புதுப்பிக்கப்பட்ட தேதி",
+                                    "Workflow State": "பணிப்பாய்வு நிலை", "Return Status": "திரும்பிய நிலை",
+                                    "Source Name": "ஆதாரம்", "Area (sq.m)": "பரப்பளவு (ச.மீ)"
                                 }
                                 ta_field_label = ta_labels.get(field_label, field_label)
                                 # More natural Tamil phrasing based on field type
@@ -2293,10 +3229,15 @@ async def process_chat(
                                     response_text = f"{app_no} விண்ணப்பதாரரின் பெயர்: {value}"
                                 elif field_key == "status":
                                     response_text = f"{app_no} நிலை: {value}"
+                                elif field_key == "serial_number":
+                                    response_text = f"விண்ணப்பம் {app_no}-ன் வரிசை எண்: {value}"
                                 else:
                                     response_text = f"{app_no} {ta_field_label}: {value}"
                             else:
-                                response_text = f"The {field_label} for {app_no} is: {value}"
+                                if field_key == "serial_number":
+                                    response_text = f"The serial number for application {app_no} is: {value}"
+                                else:
+                                    response_text = f"The {field_label} for {app_no} is: {value}"
                     else:
                         is_tamil = language in ("ta", "tanglish")
                         if is_tamil:
@@ -2425,7 +3366,7 @@ async def process_chat(
                     response_text = f"MERGE — application is for merging subdivisions under survey no. {survey_no}."
         elif intent == "check_documents":
             if not structured_data or not structured_data.get("found", True):
-                response_text = f"Application not found."
+                response_text = "Application not found."
             else:
                 missing = [d["document_type"] for d in structured_data.get("documents", []) if not d["is_uploaded"]]
                 if missing:
@@ -2435,7 +3376,7 @@ async def process_chat(
                     response_text = "No issues detected. All required documents are present."
         elif intent == "check_sale_deed":
             if not structured_data or not structured_data.get("found", True):
-                response_text = f"Application not found."
+                response_text = "Application not found."
             else:
                 deed_no = structured_data.get("sale_deed_number") or "N/A"
                 sub_date = structured_data.get("submission_date") or "2025-06-25"
@@ -2475,6 +3416,63 @@ async def process_chat(
                         response_text = f"{prefix}: {len(joint_owners)} கூட்டு உரிமையாளர்கள் உள்ளனர்: {', '.join(joint_names)}."
                     else:
                         response_text = f"{prefix}: There are {len(joint_owners)} joint owner(s) listed: {', '.join(joint_names)}."
+
+        elif intent == "application_status":
+            # Deterministic answer for application lookups — in particular the
+            # "you gave me an application number that does not exist" case, which
+            # must never be handed to the LLM.
+            if not structured_data:
+                response_text = build_app_not_found_message({}, language)
+            elif "multi_applications" in structured_data:
+                _details_list = structured_data["multi_applications"]
+                _found = [d for d in _details_list if d.get("found", True)]
+                _missing = [d for d in _details_list if not d.get("found", True)]
+                if not _found:
+                    response_text = build_app_not_found_message(_missing[0] if _missing else {}, language)
+                else:
+                    _summaries = []
+                    for _d in _found:
+                        _an = _d.get("application_number", "N/A")
+                        _st = (_d.get("status") or "N/A").capitalize()
+                        _sg = _d.get("stage", "N/A")
+                        _summaries.append(f"{_an} (Status: {_st}, Stage: {_sg})")
+                    response_text = f"Here are the details for {len(_found)} application(s): {'; '.join(_summaries)}."
+                    if _missing:
+                        _missing_nos = ", ".join(d.get("searched_number", "N/A") for d in _missing)
+                        response_text += f" Not found: {_missing_nos}."
+            elif not structured_data.get("found", True):
+                response_text = build_app_not_found_message(structured_data, language)
+            elif "history" in structured_data:
+                hist = structured_data.get("history", [])
+                app_no_h = structured_data.get("application_number", "")
+                response_text = f"Workflow history for {app_no_h}: {len(hist)} stage(s) recorded."
+            else:
+                app_no_d = structured_data.get("application_number", "N/A")
+                app_type_d = structured_data.get("type", "N/A")
+                status_d = (structured_data.get("status") or "N/A").capitalize()
+                stage_d = structured_data.get("stage", "N/A")
+                applicant_d = structured_data.get("applicant_name") or "N/A"
+                survey_d = structured_data.get("survey_no", "N/A")
+                response_text = (
+                    f"Here are the details for {app_no_d}. "
+                    f"Type: {app_type_d}, Status: {status_d}, Stage: {stage_d}, "
+                    f"Applicant: {applicant_d}, Survey No: {survey_d}."
+                )
+
+        elif intent == "officer_workload":
+            total = structured_data.get("total_active", 0) if structured_data else 0
+            isd = structured_data.get("ISD", 0)
+            nisd = structured_data.get("NISD", 0)
+            merge = structured_data.get("MERGE", 0)
+            overdue = structured_data.get("overdue", 0)
+            response_text = (
+                f"Your workload: {total} active application(s) — "
+                f"ISD: {isd}, NISD: {nisd}, Merge: {merge}, Overdue: {overdue}."
+            )
+
+        elif intent == "isd_processing":
+            response_text = build_isd_processing_answer(message, structured_data, _isd_app_no)
+
         elif intent == "sd_additional_info":
             if not structured_data or not structured_data.get("found", True):
                 response_text = "Application not found."
@@ -2582,115 +3580,46 @@ async def process_chat(
             else:
                 response_text = f"You have {count} field visits scheduled in {taluk} this week{date_range}: {cases_str}."
             
+        elif intent == "fv_change_date":
+            if language == "ta":
+                response_text = "கள ஆய்வு தேதியை மாற்றுவதற்கு தாசில்தாரிடம் (Tahsildar) கேட்க வேண்டும். தாசில்தாரின் அனுமதியுடன் மட்டுமே கள ஆய்வு தேதியை மாற்ற இயலும்."
+            elif language == "tanglish":
+                response_text = "Field visit date change பண்ண நீங்கள் Tahsildar கிட்ட கேட்க வேண்டும் (You should ask the Tahsildar about field visit date change)."
+            else:
+                response_text = "To change the field visit date, you should ask the Tahsildar. The Tahsildar has the authority to approve field visit date changes."
+
         elif intent == "fv_reschedule_availability":
-            res_date = structured_data.get("reschedule_date")
-            response_text = f"Schedule available on {res_date}. The field visit can be rescheduled."
+            res_date = structured_data.get("reschedule_date", "the next available working day") if structured_data else "the next available working day"
+            response_text = f"Schedule available on {res_date}. Note: You should ask the Tahsildar about field visit date change."
             
         elif intent == "fv_deadline_check":
             if not structured_data or not structured_data.get("found", True):
-                response_text = structured_data.get("message", "Application not found.") if structured_data else "Please specify an application number."
+                response_text = structured_data.get("message", "Please specify an application number to check the deadline.") if structured_data else "Please specify an application number."
             else:
                 app_no_dl = structured_data.get("application_number", "")
                 working_days = structured_data.get("working_days", 0)
                 sub_date = structured_data.get("submission_date", "")
                 if structured_data.get("is_overdue", False):
-                    overdue = structured_data.get("days_overdue", working_days - 15)
+                    overdue = structured_data.get("days_overdue", max(0, working_days - 15))
                     response_text = (
                         f"Yes — {app_no_dl} is past the 15-working-day deadline. "
                         f"It has been {working_days} working days since submission ({sub_date}), "
                         f"{overdue} day(s) overdue. Recommend escalating or scheduling immediately."
                     )
                 else:
-                    remaining = structured_data.get("days_remaining", 15 - working_days)
+                    remaining = structured_data.get("days_remaining", max(0, 15 - working_days))
                     response_text = (
                         f"No — {app_no_dl} is on working day {working_days} of 15 "
                         f"(submitted {sub_date}). {remaining} working day(s) remaining within the window."
                     )
                     
         elif intent == "fv_overdue_inspections":
-            # Get field visits that are overdue (scheduled date in past, not completed)
-            try:
-                from backend.models import FieldVisit, Application
-                from sqlalchemy.orm import joinedload
-                from datetime import date
-                
-                today = date.today()
-                logger.info(f"=== OVERDUE FIELD VISITS QUERY ===")
-                logger.info(f"Today: {today}")
-                logger.info(f"Officer ID: {officer.officer_id}")
-                logger.info(f"Query conditions:")
-                logger.info(f"  - officer_id == {officer.officer_id}")
-                logger.info(f"  - scheduled_date < {today}")
-                logger.info(f"  - status IN ['scheduled', 'rescheduled', 'overdue']")
-                
-                # First, get ALL field visits for this officer to debug
-                all_visits_stmt = select(FieldVisit).where(
-                    FieldVisit.officer_id == officer.officer_id
-                )
-                all_visits = (await db.execute(all_visits_stmt)).scalars().all()
-                logger.info(f"Total field visits for officer: {len(all_visits)}")
-                for v in all_visits:
-                    logger.info(f"  Visit: scheduled={v.scheduled_date}, status='{v.status}'")
-                
-                # Now the actual overdue query
-                # Add jurisdiction filter to ensure only applications within officer's jurisdiction
-                from backend.services.postgres import get_jurisdiction_filter
-                jurisdiction_filter = await get_jurisdiction_filter(db, officer)
-                # jurisdiction_filter returns a list, we need to unpack it
-                jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
-                
-                overdue_visits_stmt = select(FieldVisit).options(
-                    joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block)
-                ).join(
-                    Application, FieldVisit.application_id == Application.id
-                ).join(
-                    SurveyNumber, Application.survey_number_id == SurveyNumber.id
-                ).where(
-                    and_(
-                        FieldVisit.officer_id == officer.officer_id,
-                        FieldVisit.scheduled_date.isnot(None),
-                        FieldVisit.scheduled_date < today,
-                        FieldVisit.status.in_(['scheduled', 'rescheduled', 'overdue']),
-                        *jur_conditions  # Unpack list of conditions
-                    )
-                ).order_by(FieldVisit.scheduled_date.asc())
-                
-                overdue_visits = (await db.execute(overdue_visits_stmt)).unique().scalars().all()
-                logger.info(f"Overdue visits found: {len(overdue_visits)}")
-                
-                overdue_list = []
-                for visit in overdue_visits:
-                    app = visit.application
-                    if app:
-                        app_type = app.application_type if app.application_type else "N/A"
-                        logger.info(f"Overdue visit: App={app.application_number}, Type={app_type}, Scheduled={visit.scheduled_date}, Status={visit.status}")
-                        overdue_list.append({
-                            "application_number": app.application_number,
-                            "type": app_type,  # Use variable with fallback
-                            "status": visit.status,  # Field visit status, not application status
-                            "stage": app.current_stage if app.current_stage else "N/A",
-                            "survey_no": app.survey_number.survey_no if app.survey_number else "N/A",
-                            "scheduled_date": visit.scheduled_date.isoformat() if visit.scheduled_date else "Not Scheduled",
-                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A"
-                        })
-                        logger.info(f"  Complete data: {overdue_list[-1]}")
-                
-                structured_data = {
-                    "overdue_visits_count": len(overdue_list),
-                    "field_visits": overdue_list,
-                    "query_type": "Overdue Field Visits"
-                }
-                
-                count = len(overdue_list)
-                if count == 0:
-                    response_text = "No field visits are currently overdue. All field visits are on schedule."
-                else:
-                    response_text = f"Found {count} overdue field visit(s). See the table below for details."
-            except Exception as e:
-                logger.error(f"Error getting overdue field visits: {e}", exc_info=True)
-                structured_data = {"error": str(e), "field_visits": []}
-                response_text = f"Error retrieving overdue field visits: {str(e)}"
-            
+            count = structured_data.get("overdue_visits_count", 0) if structured_data else 0
+            if count == 0:
+                response_text = "No field visits are currently overdue. All field visits are on schedule."
+            else:
+                response_text = f"Found {count} overdue field visit(s). See the table below for details."
+
         elif intent == "fv_unassigned_awaiting":
             count = structured_data.get("unassigned_visits_count", 0)
             apps_list = structured_data.get("unassigned_applications", [])
@@ -2710,13 +3639,22 @@ async def process_chat(
                     response_text = f"There are {count} applications with unassigned field visits awaiting scheduling."
             
         elif intent == "fv_recently_rescheduled":
-            count = structured_data.get("recently_rescheduled_count", 0)
-            response_text = f"{count} field visits were rescheduled during the last 7 days."
+            count = structured_data.get("recently_rescheduled_count", 0) if structured_data else 0
+            if count == 0:
+                response_text = "No field visits were rescheduled during the last 7 days."
+            elif count == 1:
+                response_text = "1 field visit was rescheduled during the last 7 days."
+            else:
+                response_text = f"{count} field visits were rescheduled during the last 7 days."
             
         elif intent == "fv_scheduling_conflicts":
-            overlap_date = structured_data.get("overlap_date")
+            overlap_date = structured_data.get("overlap_date") if structured_data else None
             if overlap_date:
-                response_text = f"Two field visits overlap on {overlap_date} between 10:00 AM and 11:00 AM."
+                response_text = (
+                    f"Scheduling conflict detected: two or more field visits are scheduled on "
+                    f"{overlap_date}. Please reschedule one of them — note that a field visit date "
+                    f"change must be approved by the Tahsildar."
+                )
             else:
                 response_text = "No scheduling conflicts identified in the current inspection calendar."
         
@@ -2760,6 +3698,45 @@ async def process_chat(
                         o_type = o.get("ownership_type", "Primary")
                         owner_lines.append(f"  • {name} — Sub-division: {sub_div}, Share: {share}, Type: {o_type}")
                     response_text = f"Owners for Survey No. {survey_no} ({len(owners)} record(s)):\n" + "\n".join(owner_lines)
+        elif intent == "service_code_lookup":
+            from backend.utils.helpers import SIS_URBAN_SERVICES
+            _sc_match = re.search(r'\b(0?1[5-9][0-9]|0?[0-9]{3})\b', message)
+            _prefix_raw = _sc_match.group(1) if _sc_match else ""
+            # Normalise to 4 digits with leading zero if needed
+            _prefix_norm = _prefix_raw.zfill(4) if _prefix_raw else ""
+            # Match codes that START with the supplied prefix
+            _matches = {
+                code: info for code, info in SIS_URBAN_SERVICES.items()
+                if code.startswith(_prefix_norm)
+            }
+            # Fallback: try matching last 3 digits (e.g. "161" → codes like "0161x")
+            if _prefix_norm and not _matches:
+                _prefix3 = _prefix_raw[-3:] if len(_prefix_raw) >= 3 else _prefix_raw
+                _matches = {
+                    code: info for code, info in SIS_URBAN_SERVICES.items()
+                    if code[1:].startswith(_prefix3) or code.startswith(_prefix3)
+                }
+            _count = len(_matches)
+            if _count == 0:
+                response_text = (
+                    f"There are no SIS urban service codes matching '{_prefix_raw}'. "
+                    f"The available service codes are: "
+                    + ", ".join(f"{c} ({v['short']} — {v['name']})" for c, v in SIS_URBAN_SERVICES.items())
+                    + "."
+                )
+            elif _count == 1:
+                _code, _info = next(iter(_matches.items()))
+                response_text = (
+                    f"There is 1 service code matching '{_prefix_raw}': "
+                    f"{_code} — {_info['name']} ({_info['short']})."
+                )
+            else:
+                _lines = [f"{c} — {v['name']} ({v['short']})" for c, v in sorted(_matches.items())]
+                response_text = (
+                    f"There are {_count} service codes matching '{_prefix_raw}':\n"
+                    + "\n".join(f"  • {l}" for l in _lines)
+                )
+
         elif any(ph in message.lower() for ph in [
             "uploaded", "word document", "pdf document", "question bank",
             "answer all", "answer for all", "from the document", "in the document",
@@ -2773,6 +3750,71 @@ async def process_chat(
                 "Please copy and paste the relevant text from the document into the chat, "
                 "and I'll answer your questions from it."
             )
+        # Deterministic table intro — mirrors process_chat_stream so both
+        # paths introduce a rendered table with the same wording.
+        elif not response_text and intent in ("pending_applications", "field_visits", "fv_scheduled_this_week",
+                        "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled",
+                        "ward_surveys", "block_surveys", "survey_detail", "next_subdivision",
+                        "jurisdiction_summary", "rejection_info", "taluk_summary",
+                        "litigation_check", "highest_priority_applications",
+                        "merge_info", "town_applications", "block_applications",
+                        "isd_applications", "nisd_applications", "merge_applications",
+                        "both_applications"):
+            # Table is rendered on the frontend. Just emit a short natural intro.
+            found = structured_data.get("found", True) if structured_data else False
+            if not found:
+                response_text = structured_data.get("message", "No records found.")
+            else:
+                asking_for_count = _is_count_only_query(message)
+                
+                if asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
+                    response_text = _format_count_intro(structured_data, language, message)
+                # Special message for priority applications
+                elif intent == "highest_priority_applications":
+                    count = len(structured_data.get("applications", []))
+                    stage_filter = structured_data.get("query_type", "").split("—")[-1].strip().replace(" Stage", "") if "—" in structured_data.get("query_type", "") else None
+                    is_tamil = language in ("ta", "tanglish")
+                    
+                    stage_text = f" in {stage_filter} stage" if stage_filter and stage_filter != "High Priority Applications" else ""
+                    
+                    if count == 0:
+                        response_text = (
+                            f"உயர் முன்னுரிமை விண்ணப்பங்கள் எதுவும் இல்லை{stage_text}." if is_tamil
+                            else f"There are no high priority applications{stage_text} at this time."
+                        )
+                    elif count == 1:
+                        response_text = (
+                            f"1 உயர் முன்னுரிமை விண்ணப்பம் உள்ளது{stage_text} (⚠️ warning அல்லது overdue)." if is_tamil
+                            else f"Found 1 high priority application{stage_text} (⚠️ warning or overdue)."
+                        )
+                    else:
+                        response_text = (
+                            f"{count} உயர் முன்னுரிமை விண்ணப்பங்கள் உள்ளன{stage_text} (⚠️ warning அல்லது overdue)." if is_tamil
+                            else f"Found {count} high priority applications{stage_text} (⚠️ warning or overdue)."
+                        )
+                elif intent in ("field_visits", "fv_between_dates"):
+                    count = structured_data.get("count", len(structured_data.get("field_visits", [])))
+                    qtype = structured_data.get("query_type", "Field Visits")
+                    start_date = structured_data.get("start_date")
+                    end_date = structured_data.get("end_date")
+                    date_range = f" ({start_date} to {end_date})" if (start_date and end_date) else ""
+                    if count == 0:
+                        response_text = f"No field visits found{date_range}."
+                    elif count == 1:
+                        response_text = f"Found 1 field visit{date_range}."
+                    else:
+                        response_text = f"Found {count} field visit(s){date_range}."
+                else:
+                    qtype = structured_data.get("query_type", "") if structured_data else ""
+                    if qtype:
+                        response_text = f"Here are the {qtype.lower()} results."
+                    else:
+                        response_text = "Results are shown in the table below."
+
+        elif not response_text and structured_data and "applications" in structured_data:
+            count = structured_data.get("count", len(structured_data.get("applications", [])))
+            qtype = structured_data.get("query_type", "Pending Applications")
+            response_text = f"Found {count} application(s) ({qtype})."
         elif not response_text:
             # Only call LLM if response_text hasn't been set by intent handlers
             response_text = await call_llama(full_prompt)
@@ -2787,7 +3829,8 @@ async def process_chat(
             user_message=message,
             assistant_message=response_text,
             language=language,
-            response_time_ms=response_time_ms
+            response_time_ms=response_time_ms,
+            officer_id=officer.officer_id if officer else None
         )
         
         logger.info(f"Chat processed successfully in {response_time_ms}ms")
@@ -2804,7 +3847,7 @@ async def process_chat(
             "language": language,
             "intent": intent,
             "sources": [],
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "context_used": context_used,
             "response_time_ms": response_time_ms,
             "table_data": _td
@@ -2818,7 +3861,14 @@ async def process_chat(
         
     except Exception as e:
         logger.error(f"Error in process_chat: {e}", exc_info=True)
-        
+
+        # A failed statement leaves the session in an aborted transaction —
+        # every later use of it errors out until it is rolled back.
+        try:
+            await db.rollback()
+        except Exception as rb_err:
+            logger.warning(f"Rollback after process_chat failure also failed: {rb_err}")
+
         # Return error message in appropriate language
         error_messages = {
             "en": "I apologize, but I encountered an error processing your request. Please try again.",
@@ -2829,13 +3879,17 @@ async def process_chat(
         language = detect_language(message)
         error_msg = error_messages.get(language, error_messages["en"])
         
-        return {
+        response = {
             "response": error_msg,
             "language": language,
             "context_used": False,
-            "error": str(e),
             "response_time_ms": int((time.time() - start_time) * 1000)
         }
+        # Raw exception text can carry SQL, table names and connection details —
+        # only expose it outside production.
+        if settings.ENVIRONMENT != "production":
+            response["error"] = str(e)
+        return response
 
 
 async def process_chat_stream(
@@ -2865,7 +3919,36 @@ async def process_chat_stream(
         # Step 1: Detect language
         language = detect_language(message)
         logger.info(f"Detected language: {language}")
-        
+
+        # Direct Handler for District Code reference queries (bypasses jurisdiction checks)
+        # Mirrors the non-streaming path — answered from DISTRICT_NAME_MAP so the
+        # LLM never invents a district code.
+        _msg_lower_dc = message.lower()
+        if any(w in _msg_lower_dc for w in ["district code", "code of", "district_code", "குறியீடு", "மாவட்டம் கோடு"]) or ("code" in _msg_lower_dc and any(d in _msg_lower_dc for d in DISTRICT_NAME_MAP)):
+            matched_dist = None
+            for d_name, d_code in DISTRICT_NAME_MAP.items():
+                if d_name in _msg_lower_dc:
+                    matched_dist = (d_name.title(), d_code)
+                    break
+
+            if matched_dist:
+                import json as _json_dc
+                d_title, d_code = matched_dist
+                is_ta = language == "ta" or any(w in _msg_lower_dc for w in ["enapa", "enna", "oda", "sollo", "kudunga", "குறியீடு"])
+                if is_ta:
+                    res_txt = f"{d_title} மாவட்டத்தின் அதிகாரப்பூர்வ குறியீடு (District Code): **{d_code}**."
+                else:
+                    res_txt = f"The official district code for **{d_title}** is **{d_code}**."
+
+                yield f"data: {_json_dc.dumps({'content': res_txt})}\n\n".encode('utf-8')
+                await save_chat_messages(
+                    db=db, session_id=session_id, user_message=message,
+                    assistant_message=res_txt, language=language,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    officer_id=officer.officer_id if officer else None
+                )
+                return
+
         # Step 2: Parse intent to determine which DB query to run
         _prev_intent = None
         if chat_history:
@@ -2917,7 +4000,8 @@ async def process_chat_stream(
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=message, assistant_message=response_text,
-                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
             )
             return
 
@@ -2933,16 +4017,16 @@ async def process_chat_stream(
         }
         _FIELD_VISIT_INTENTS_S = {
             "fv_scheduled_this_week", "fv_date_select", "fv_nearby_pending",
-            "fv_reschedule_availability", "fv_deadline_check", "fv_overdue_inspections",
+            "fv_reschedule_availability", "fv_change_date", "fv_deadline_check", "fv_overdue_inspections",
             "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts",
             "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
             "sd_forward_check", "sd_remarks", "application_status", "isd_processing",
-            "pending_applications", "officer_workload", "field_visits",
+            "officer_workload", "field_visits",
             "general_query", "rag", "greeting", "help", "district_code"
         }
         _msg_lower_jur = message.lower()
         _is_code_reference_query_s = any(w in _msg_lower_jur for w in ["code", "கோடு", "service code", "district code"])
-        _skip_keyword_check_s = (intent in _FIELD_VISIT_INTENTS_S) or _is_code_reference_query_s
+        _skip_keyword_check_s = (intent in _FIELD_VISIT_INTENTS_S) or _is_code_reference_query_s or intent == "service_code_lookup"
         _requested_broader = False
         _broader_reason = ""
         if _officer_level == 0 and not _skip_keyword_check_s:
@@ -2953,7 +4037,9 @@ async def process_chat_stream(
             elif any(w in _msg_lower_jur for w in ["district", "மாவட்டம்"]):
                 _requested_broader = True; _broader_reason = "district-level"
         elif _officer_level == 1 and not _skip_keyword_check_s:
-            if any(w in _msg_lower_jur for w in ["taluk", "தாலுகா"]):
+            if any(w in _msg_lower_jur for w in ["town", "நகரம்"]):
+                _requested_broader = True; _broader_reason = "town-level"
+            elif any(w in _msg_lower_jur for w in ["taluk", "தாலுகா"]):
                 _requested_broader = True; _broader_reason = "taluk-level"
             elif any(w in _msg_lower_jur for w in ["district", "மாவட்டம்"]):
                 _requested_broader = True; _broader_reason = "district-level"
@@ -2978,33 +4064,90 @@ async def process_chat_stream(
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=message, assistant_message=_access_msg,
-                language=language, response_time_ms=int((time.time() - start_time) * 1000)
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return
+
+        # ── Step 2d: Application number format validation (streaming) ──────
+        # Mirrors the non-streaming path: a mistyped application number is
+        # reported as such rather than answered about a different application.
+        _bad_app_token = detect_invalid_app_number(message)
+        if _bad_app_token and intent in _APP_NUMBER_INTENTS:
+            import json as _json_badapp
+            _bad_msg = build_invalid_app_number_message(_bad_app_token, language)
+            logger.info(f"Rejected malformed application number '{_bad_app_token}' (intent={intent})")
+            yield f"data: {_json_badapp.dumps({'content': _bad_msg})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=_bad_msg,
+                language=language, response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
             )
             return
 
         # Step 3: Execute structured database queries based on intent
         structured_data = {}
-        
-        if intent == "pending_applications":
-            # Extract application type if mentioned in message
-            app_type = None
+        _isd_app_no = ""
+        # Answer text a fetch handler may set directly (mirrors how process_chat
+        # pre-sets response_text). Picked up by _direct_answer_text below.
+        _prefetch_text = ""
+
+        if intent in ("pending_applications", "isd_applications", "nisd_applications", "both_applications", "merge_applications"):
             message_lower = message.lower()
-            if "isd" in message_lower:
-                app_type = "ISD"
-            elif "nisd" in message_lower:
-                app_type = "NISD"
-            elif "merge" in message_lower:
-                app_type = "MERGE"
+
+            # Detect one or multiple application types (e.g. "isd", "merge", "isd and merge")
+            app_type = _extract_app_types(message_lower, intent=intent)  # str, list, or None
             
-            # Extract year from message (e.g., "2025", "2026")
-            year_match = re.search(r'\b(20\d{2})\b', message)
-            submission_year = int(year_match.group(1)) if year_match else None
-            
-            # Extract month from message (handles English/Tamil with fuzzy matching)
-            submission_month = extract_month_from_query(message)
-                
-            # For MERGE apps show all statuses; for others default to pending
-            if app_type == "MERGE":
+
+            # Detect time of day session
+            session_label = ""
+            if any(w in message_lower for w in ["morning", "காலை"]):
+                session_label = " (Morning Session: 09:00 AM – 01:00 PM)"
+            elif any(w in message_lower for w in ["afternoon", "பிற்பகல்", "மதியம்"]):
+                session_label = " (Afternoon Session: 02:00 PM – 05:00 PM)"
+            elif any(w in message_lower for w in ["evening", "மாலை"]):
+                session_label = " (Evening Session: 04:00 PM – 06:00 PM)"
+
+            # Extract date range first (e.g. "between 2026-07-03 and 2026-07-20", "today", "yesterday")
+            start_d, end_d = extract_date_range(message)
+            if session_label and not start_d and not end_d:
+                start_d = date.today()
+                end_d = date.today()
+
+            has_date_range = start_d is not None and end_d is not None
+            is_negated_date_range = any(w in message_lower for w in [
+                "not between", "not in", "outside", "other than", "இடைப்பட்டவை அல்ல", "இடையில் இல்லாத", "தவிர"
+            ])
+
+            # Extract year/month only when NO full date range present
+            submission_year = None
+            submission_month = None
+            if not has_date_range:
+                year_match = re.search(r'\b(20\d{2})\b', message)
+                submission_year = int(year_match.group(1)) if year_match else None
+                submission_month = extract_month_from_query(message)
+
+            # Extract geography filters
+            taluk_name = extract_taluk_name(message)
+            ward_num = extract_ward_number(message) if "ward" in message_lower else None
+            block_num = extract_block_number(message) if "block" in message_lower else None
+
+            # Detect whether overdue vs non-overdue (on-time) filter is requested
+            is_not_overdue = any(w in message_lower for w in [
+                "not overdue", "non overdue", "non-overdue", "on time", "not late",
+                "not delayed", "within sla", "தாமதமில்லாத", "தாமதம் இல்லாத", "காலதாமதமாகாத"
+            ])
+            is_overdue_requested = any(w in message_lower for w in ["overdue", "late", "delayed"]) and not is_not_overdue
+            is_overdue_filter = False if is_not_overdue else (True if is_overdue_requested else None)
+
+            # Determine status filter
+            is_merge_only = (app_type == "MERGE")
+            if has_date_range or is_overdue_filter is not None:
+                status_filter = None  # show all statuses within the scope
+            elif submission_year:
+                status_filter = None  # show all statuses for a specific year
+            elif is_merge_only:
                 status_filter = None
             else:
                 status_filter = "pending"
@@ -3017,18 +4160,95 @@ async def process_chat_stream(
                 elif "reject" in message_lower:
                     status_filter = "rejected"
                 
-            structured_data = await get_pending_applications(
-                db, officer, 
-                application_type=app_type, 
-                status=status_filter, 
-                submission_year=submission_year,
-                submission_month=submission_month
-            )
+            # Check if this is a follow-up query on an active/previously discussed single application.
+            # IMPORTANT: For list intents (pending_applications etc.), we must NOT use implicit
+            # continuation — that would cause "show applications" to pull the last-discussed app
+            # from chat history and fetch only that single app's detail.
+            # Only use allow_implicit_continuation if the message itself has an explicit reference
+            # like "this application" / "that app" / "previous application".
+            target_app_num = extract_application_number(message)
+            if not target_app_num:
+                _has_explicit_app_ref = any(p in message_lower for p in [
+                    "this application", "that application", "same application",
+                    "this app", "that app", "the application", "the app",
+                    "prev application", "previous application", "prev app", "previous app",
+                    "last application", "last app", "above application",
+                    "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
+                ])
+                if _has_explicit_app_ref:
+                    target_app_num = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=False)
+            has_projected_cols = _get_projected_application_columns(message) is not None
+            is_explicit_plural = any(w in message_lower for w in ["all", "every", "list all", "show all", "between", "today", "yesterday", "this week", "last week", "month", "முழு", "அனைத்து"])
+
+            if target_app_num and not is_explicit_plural and has_projected_cols:
+                app_detail = await get_application_detail(db, target_app_num, officer=officer)
+                if app_detail and app_detail.get("found", True):
+                    structured_data = {
+                        "applications": [app_detail],
+                        "count": 1,
+                        "query_type": f"Application {target_app_num}"
+                    }
+                else:
+                    structured_data = await get_pending_applications(
+                        db, officer, 
+                        application_type=app_type, 
+                        status=status_filter, 
+                        submission_year=submission_year,
+                        submission_month=submission_month,
+                        taluk_name=taluk_name,
+                        ward_number=ward_num,
+                        block_number=block_num,
+                        start_date=start_d,
+                        end_date=end_d,
+                        is_overdue=is_overdue_filter,
+                        exclude_date_range=is_negated_date_range
+                    )
+            else:
+                structured_data = await get_pending_applications(
+                    db, officer, 
+                    application_type=app_type, 
+                    status=status_filter, 
+                    submission_year=submission_year,
+                    submission_month=submission_month,
+                    taluk_name=taluk_name,
+                    ward_number=ward_num,
+                    block_number=block_num,
+                    start_date=start_d,
+                    end_date=end_d,
+                    is_overdue=is_overdue_filter,
+                    exclude_date_range=is_negated_date_range
+                )
+            if is_negated_date_range:
+                structured_data["exclude_date_range"] = True
             
-            # Determine appropriate query title
-            type_str = f" {app_type}" if app_type else ""
+            # Build human-readable type label for the query title
+            if isinstance(app_type, list):
+                type_str = " " + " & ".join(app_type)  # e.g. " ISD & MERGE"
+            elif app_type:
+                type_str = f" {app_type}"
+            else:
+                type_str = ""
+
             year_str = f" in {submission_year}" if submission_year else ""
             
+            date_range_str = ""
+            if has_date_range:
+                if is_negated_date_range:
+                    date_range_str = f" (not {start_d} to {end_d})"
+                elif start_d == end_d:
+                    if start_d == date.today():
+                        date_range_str = f" Received Today ({start_d}){session_label}"
+                    elif start_d == date.today() - timedelta(days=1):
+                        date_range_str = f" Received Yesterday ({start_d}){session_label}"
+                    elif start_d == date.today() - timedelta(days=2):
+                        date_range_str = f" Received Day Before Yesterday ({start_d}){session_label}"
+                    elif start_d == date.today() + timedelta(days=1):
+                        date_range_str = f" for Tomorrow ({start_d}){session_label}"
+                    else:
+                        date_range_str = f" Received on {start_d}{session_label}"
+                else:
+                    date_range_str = f" ({start_d} to {end_d}){session_label}"
+
             # Add month string to title if month filter is present
             month_str = ""
             if submission_month:
@@ -3036,47 +4256,74 @@ async def process_chat_stream(
                              "July", "August", "September", "October", "November", "December"]
                 month_str = f" {month_names[submission_month]}" if submission_year else f" in {month_names[submission_month]}"
             
-            if app_type == "MERGE":
-                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}"
+            if is_not_overdue:
+                structured_data["query_type"] = f"Non-Overdue{type_str} Applications{month_str}{year_str}{date_range_str}"
+            elif is_overdue_requested:
+                structured_data["query_type"] = f"Overdue{type_str} Applications{month_str}{year_str}{date_range_str}"
+            elif taluk_name:
+                structured_data["query_type"] = f"Applications in {taluk_name}{type_str}{month_str}{year_str}{date_range_str}"
+            elif is_merge_only:
+                structured_data["query_type"] = f"MERGE Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == ["approved", "rejected"]:
-                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}"
+                structured_data["query_type"] = f"SIS{type_str} History (Approved & Rejected){month_str}{year_str}{date_range_str}"
             elif status_filter is None:
-                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"All{type_str} Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == "approved":
-                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Approved{type_str} Applications{month_str}{year_str}{date_range_str}"
             elif status_filter == "rejected":
-                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Rejected{type_str} Applications{month_str}{year_str}{date_range_str}"
             else:
-                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}"
+                structured_data["query_type"] = f"Pending{type_str} Applications{month_str}{year_str}{date_range_str}"
             
+
         elif intent == "overdue_applications":
             # Extract application type if mentioned in message
             app_type = None
             message_lower = message.lower()
-            if "isd" in message_lower:
+            if any(w in message_lower for w in ["isd", "0154"]):
                 app_type = "ISD"
-            elif "nisd" in message_lower:
+            elif any(w in message_lower for w in ["nisd", "0153"]):
                 app_type = "NISD"
             elif "merge" in message_lower:
                 app_type = "MERGE"
-                
-            structured_data = await get_overdue_applications(db, officer, application_type=app_type)
+
+            min_days_overdue = None
+            match_days = re.search(r'(?:overdue|late|delayed)\s+(?:by\s+)?(\d+)\s*days?', message_lower) or \
+                         re.search(r'(\d+)\s*days?\s+(?:overdue|late|delayed)', message_lower)
+            if match_days:
+                min_days_overdue = int(match_days.group(1))
+
+            start_d, end_d = extract_date_range(message)
+            structured_data = await get_overdue_applications(
+                db, officer,
+                application_type=app_type,
+                min_days_overdue=min_days_overdue,
+                start_date=start_d,
+                end_date=end_d
+            )
+            structured_data["min_days_overdue"] = min_days_overdue
+            days_str = f" by {min_days_overdue}+ Days" if min_days_overdue else ""
+            range_str = f" ({start_d} to {end_d})" if (start_d and end_d and start_d != end_d) else ""
             if app_type:
-                structured_data["query_type"] = f"Overdue {app_type} Applications"
+                structured_data["query_type"] = f"Overdue {app_type} Applications{days_str}{range_str}"
             else:
-                structured_data["query_type"] = "Overdue Applications"
+                structured_data["query_type"] = f"Overdue Applications{days_str}{range_str}"
             
         elif intent == "officer_workload":
             structured_data = await get_officer_workload(db, officer)
             structured_data["query_type"] = "Officer Workload Summary"
             
         elif intent in ("field_visits", "fv_between_dates"):
-            from backend.services.rag import extract_date_range
-            from datetime import date as _dt_date
             import calendar
 
             msg_lower = message.lower()
             start_d, end_d = extract_date_range(message)
+
+            # Detect negation: "not between", "outside", "except between", "not in"
+            exclude_range = any(w in msg_lower for w in [
+                "not between", "outside", "except between", "not in range",
+                "outside the range", "exclude", "excluding"
+            ])
 
             # Extract application type filter(s) from message — supports multi-type queries
             # e.g. "isd and nisd", "merge and isd", "all types"
@@ -3097,19 +4344,49 @@ async def process_chat_stream(
                 "pending visit", "yet to visit", "upcoming"
             ])
 
+            # Detect morning / afternoon / evening time session
+            session_label = ""
+            if any(w in msg_lower for w in ["morning", "காலை"]):
+                session_label = " (Morning Session: 09:00 AM – 01:00 PM)"
+            elif any(w in msg_lower for w in ["afternoon", "பிற்பகல்", "மதியம்"]):
+                session_label = " (Afternoon Session: 02:00 PM – 05:00 PM)"
+            elif any(w in msg_lower for w in ["evening", "மாலை"]):
+                session_label = " (Evening Session: 04:00 PM – 06:00 PM)"
+
+            # If user asked for morning/afternoon without specific date, default to today
+            if session_label and not start_d and not end_d:
+                start_d = date.today()
+                end_d = date.today()
+
             status_filter = None
-            if "unscheduled" in msg_lower or "not scheduled" in msg_lower or "yet to schedule" in msg_lower:
+            if "unscheduled" in msg_lower or ("not scheduled" in msg_lower and not exclude_range) or "yet to schedule" in msg_lower:
                 status_filter = "unscheduled"
                 query_type = "Unscheduled Field Visits"
             elif intent == "fv_between_dates" or start_d or end_d or "between" in msg_lower or to_be_visited:
                 if not start_d and not end_d:
-                    today = _dt_date.today()
+                    today = date.today()
                     start_d = today.replace(day=1)
                     _, last_day = calendar.monthrange(today.year, today.month)
                     end_d = today.replace(day=last_day)
                 type_label = f" {'+'.join(app_type_filter)}" if app_type_filter else ""
-                query_type = ("Field Visits Needed To Be Visited" if to_be_visited
-                              else f"{type_label} Field Visits Between Dates".strip())
+                if exclude_range and start_d and end_d:
+                    query_type = (f"{type_label} Field Visits Outside Dates".strip())
+                elif start_d and end_d and start_d == end_d:
+                    if start_d == date.today() + timedelta(days=2):
+                        query_type = (f"{type_label} Field Visits for Day After Tomorrow ({start_d}){session_label}".strip())
+                    elif start_d == date.today() + timedelta(days=1):
+                        query_type = (f"{type_label} Field Visits for Tomorrow ({start_d}){session_label}".strip())
+                    elif start_d == date.today():
+                        query_type = (f"{type_label} Field Visits for Today ({start_d}){session_label}".strip())
+                    elif start_d == date.today() - timedelta(days=1):
+                        query_type = (f"{type_label} Field Visits for Yesterday ({start_d}){session_label}".strip())
+                    elif start_d == date.today() - timedelta(days=2):
+                        query_type = (f"{type_label} Field Visits for Day Before Yesterday ({start_d}){session_label}".strip())
+                    else:
+                        query_type = (f"{type_label} Field Visits on {start_d}{session_label}".strip())
+                else:
+                    query_type = ("Field Visits Needed To Be Visited" if to_be_visited
+                                  else f"{type_label} Field Visits Between Dates".strip())
             elif "scheduled" in msg_lower or "visit date" in msg_lower or "when" in msg_lower or "schedule" in msg_lower:
                 status_filter = "scheduled"
                 query_type = "Scheduled Field Visits"
@@ -3123,7 +4400,8 @@ async def process_chat_stream(
                 start_date=start_d,
                 end_date=end_d,
                 to_be_visited_only=to_be_visited,
-                application_type=app_type_filter
+                application_type=app_type_filter,
+                exclude_date_range=exclude_range
             )
             structured_data["query_type"] = query_type
             if start_d:
@@ -3148,6 +4426,7 @@ async def process_chat_stream(
             ).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             )
@@ -3188,6 +4467,7 @@ async def process_chat_stream(
             query = select(func.count(Application.id)).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.submission_date == today
                 )
             )
@@ -3198,43 +4478,144 @@ async def process_chat_stream(
             }
 
         elif intent == "immediate_action":
-            from backend.models import Application
-            from datetime import date as _date_imm, timedelta as _td_imm
-            
+            from backend.models import Application, FieldVisit, SurveyNumber, Block, Ward, Town
+            from sqlalchemy.orm import joinedload
+            from datetime import date as _date_imm
+
             # Get all pending/in-progress applications assigned to this officer
-            query = select(Application).where(
+            apps_query = select(Application).options(
+                joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
+            ).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             ).order_by(Application.submission_date.asc())
-            
-            result = await db.execute(query)
-            all_apps = result.scalars().all()
-            
-            # Calculate working days and identify overdue applications
+
+            res_apps = await db.execute(apps_query)
+            all_apps = res_apps.scalars().all()
+
+            # Calculate working days and identify overdue applications (>15 working days)
             _today_imm = _date_imm.today()
-            overdue_apps = []
-            
-            for app in all_apps:
-                if not app.submission_date:
+            rows = []
+
+            for a in all_apps:
+                if not a.submission_date:
                     continue
-                    
+
                 # Calculate working days (exclude weekends)
                 working_days = 0
-                current_date = app.submission_date
+                current_date = a.submission_date
                 while current_date < _today_imm:
-                    current_date += _td_imm(days=1)
+                    current_date += timedelta(days=1)
                     if current_date.weekday() < 5:  # Monday = 0, Sunday = 6
                         working_days += 1
-                
+
                 # Consider overdue if more than 15 working days have elapsed
                 if working_days > 15:
-                    overdue_apps.append(app.application_number)
-            
+                    sn = a.survey_number
+                    bl = sn.block if sn else None
+                    w = bl.ward if bl else None
+                    t = w.town if w else None
+
+                    rows.append({
+                        "application_number": a.application_number,
+                        "type": a.application_type,
+                        "town_name": t.name if t else "N/A",
+                        "ward_number": w.ward_number if w else "N/A",
+                        "status": "Action Required",
+                        "current_stage": a.current_stage,
+                        "submission_date": a.submission_date.isoformat(),
+                        "working_days_elapsed": working_days,
+                        "days_overdue": working_days - 15
+                    })
+
             structured_data = {
-                "apps": overdue_apps,
-                "query_type": "Immediate Action Applications"
+                "applications": rows,
+                # "apps" kept alongside "applications" so both response phases
+                # can read either key without drifting apart again.
+                "apps": [r["application_number"] for r in rows],
+                "query_type": "Immediate Action Required — Overdue Applications"
+            }
+
+        elif intent == "ip_address_analysis":
+            apps_result = await get_officer_applications(db, officer)
+            apps = apps_result.get("applications", [])
+            ip_groups = {}
+            for a in apps:
+                ip = a.get("ip_address") or "Unknown"
+                if ip not in ip_groups:
+                    ip_groups[ip] = []
+                ip_groups[ip].append(a)
+
+            structured_data = {
+                "ip_analysis": [
+                    {
+                        "ip_address": ip,
+                        "submission_count": len(app_list),
+                        "source": next(
+                            ("Common Service Center (CSC)" if a.get("submission_channel") == "CSC"
+                             else ("Citizen Portal" if a.get("submission_channel") == "citizen"
+                                   else ("Sub Registrar (IGRS)" if a.get("submission_channel") == "sub_registrar"
+                                         else "Unknown Source")))
+                            for a in app_list[:1]
+                        ),
+                        "applications": [a["application_number"] for a in app_list],
+                        "applicants": [a.get("applicant_name", "N/A") for a in app_list],
+                        "status": "Data from DB" if ip != "Unknown" else "IP Not Recorded"
+                    }
+                    for ip, app_list in ip_groups.items()
+                ],
+                "total_unique_ips": len(ip_groups),
+                "total_applications": len(apps),
+                "query_type": "IP Address & Submission Channel Analysis"
+            }
+
+        elif intent == "can_number_info":
+            structured_data = {
+                "can_summary": {
+                    "assigned_by": "Common Service Center (CSC) / Citizen Portal",
+                    "description": "Citizen Access Number (CAN) is a unique citizen identity number assigned through CSC or citizen self-registration.",
+                    "role_in_patta_transfer": "CAN links the citizen's Aadhaar, mobile number, and identity across all Patta transfer requests (ISD, NISD, MERGE).",
+                    "csc_charges": "₹60.00 CSC service fee for application submission with CAN registration.",
+                    "service_codes_linked": "0153 (NISD), 0154 (ISD), 0155 (MERGE)"
+                },
+                "query_type": "CAN Number & CSC Assignment Guide"
+            }
+
+        elif intent == "service_code_guide":
+            structured_data = {
+                "service_codes": [
+                    {
+                        "service_code": "0153",
+                        "type": "NISD (Not Involving Sub-Division)",
+                        "tamil_name": "உட்பிரிவு இல்லாத பட்டா மாறுதல்",
+                        "govt_fee": "₹100.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "15-20 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Document Verification) → Deputy Tahsildar (Review) → Tahsildar (Digital Signature / DSC) [No field visit required]"
+                    },
+                    {
+                        "service_code": "0154",
+                        "type": "ISD (Involving Sub-Division)",
+                        "tamil_name": "உட்பிரிவு உள்ள பட்டா மாறுதல்",
+                        "govt_fee": "₹400.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "30-35 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Mandatory Field Visit within 15 days) → Survey Dept (SD Sketch) → DIS (Approval) → Tahsildar (Digital Signature / DSC)"
+                    },
+                    {
+                        "service_code": "0155",
+                        "type": "MERGE (Subdivision Merger)",
+                        "tamil_name": "உட்பிரிவு இணைப்பு பட்டா மாறுதல்",
+                        "govt_fee": "₹0.00",
+                        "csc_fee": "₹60.00",
+                        "sla_days": "15 working days",
+                        "workflow": "Citizen / CSC → SIS Officer (Field Boundary & Total Merged Area Verification) → Tahsildar (Digital Signature / DSC)"
+                    }
+                ],
+                "query_type": "Service Codes Workflow & Fee Comparison (0153 / 0154 / 0155)"
             }
 
         elif intent == "escalation_check":
@@ -3289,7 +4670,6 @@ async def process_chat_stream(
             try:
                 from backend.models import FieldVisit, Application, SurveyNumber, Block
                 from sqlalchemy.orm import joinedload
-                from datetime import date
                 from backend.services.postgres import get_jurisdiction_filter
                 
                 today = date.today()
@@ -3308,6 +4688,19 @@ async def process_chat_stream(
                     Application, FieldVisit.application_id == Application.id
                 ).join(
                     SurveyNumber, Application.survey_number_id == SurveyNumber.id
+                ).join(
+                    # The geography chain must be joined explicitly: jur_conditions reference
+                    # Block/Ward/Town/Taluk/District, and without these joins SQLAlchemy adds
+                    # them as an uncorrelated FROM (cartesian product), silently voiding the filter.
+                    Block, SurveyNumber.block_id == Block.id
+                ).join(
+                    Ward, Block.ward_id == Ward.id
+                ).join(
+                    Town, Ward.town_id == Town.id
+                ).join(
+                    Taluk, Town.taluk_id == Taluk.id
+                ).join(
+                    District, Taluk.district_id == District.id
                 ).where(
                     and_(
                         FieldVisit.officer_id == officer.officer_id,
@@ -3415,6 +4808,7 @@ async def process_chat_stream(
             query = select(Application).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
                     Application.current_status.in_(["pending", "in_progress"])
                 )
             ).order_by(Application.submission_date.asc())
@@ -3440,51 +4834,522 @@ async def process_chat_stream(
                 structured_data = await get_application_detail(db, app_number)
                 structured_data["query_type"] = "Application Details"
             else:
-                # No app number provided - return empty structured_data
-                structured_data = {"found": False, "message": "Please provide an application number"}
+                # No app number provided — prompt in the officer's language,
+                # same wording as the non-streaming path.
+                is_tamil_lang = language in ("ta", "tanglish")
+                if is_tamil_lang:
+                    _prefetch_text = "தயவுசெய்து விண்ணப்ப எண்ணை குறிப்பிடவும். (எ.கா: APP-2024-000001)"
+                else:
+                    _prefetch_text = "Please specify which application you're asking about. For example: APP-2024-000001"
+                structured_data = {"found": False, "query_type": "Application Details"}
 
-        elif intent == "isd_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="ISD")
-            structured_data["query_type"] = "ISD Applications"
 
-        elif intent == "nisd_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="NISD")
-            structured_data["query_type"] = "NISD Applications"
 
-        elif intent == "both_applications":
-            import re as _re
-            _msg_l = message.lower()
-            _fetch_isd   = bool(_re.search(r'\bisd\b', _msg_l))
-            _fetch_nisd  = bool(_re.search(r'\bnisd\b', _msg_l))
-            _fetch_merge = bool(_re.search(r'\bmerge?\b', _msg_l))
-            # Default to ISD+NISD if nothing explicit detected
-            if not any([_fetch_isd, _fetch_nisd, _fetch_merge]):
-                _fetch_isd = _fetch_nisd = True
+        # ── SD / field-visit workflow checks (ported from process_chat) ──
+        # Only the intents the streaming path does not already handle above;
+        # fv_scheduled_this_week / fv_unassigned_awaiting / fv_deadline_check /
+        # fv_change_date / fv_recently_rescheduled / fv_scheduling_conflicts /
+        # fv_overdue_inspections have their own branches earlier in this chain.
+        elif intent in ["sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness",
+                        "sd_forward_check", "sd_remarks", "fv_date_select",
+                        "fv_nearby_pending", "fv_reschedule_availability"]:
+            app_number = extract_application_number(message) or _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True)
+            if not app_number:
+                from backend.models import Application
+                res_app = await db.execute(select(Application).order_by(Application.created_at.desc()).limit(1))
+                a = res_app.scalar_one_or_none()
+                app_number = a.application_number if a else "APP-2024-000001"
             
-            _results, _labels = [], []
-            if _fetch_isd:
-                _res_isd = await get_officer_applications(db, officer, application_type="ISD")
-                _results.append(_res_isd)
-                _labels.append("ISD")
-            if _fetch_nisd:
-                _res_nisd = await get_officer_applications(db, officer, application_type="NISD")
-                _results.append(_res_nisd)
-                _labels.append("NISD")
-            if _fetch_merge:
-                _res_merge = await get_officer_applications(db, officer, application_type="MERGE")
-                _results.append(_res_merge)
-                _labels.append("MERGE")
+            from backend.models import Application, ApplicationDocument, WorkflowHistory, FieldVisit, SurveyNumber, Block, Ward, Town
+            from sqlalchemy.orm import joinedload
+            
+            app_res = await db.execute(
+                select(Application)
+                .options(joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town).joinedload(Town.taluk))
+                .where(Application.application_number == app_number)
+            )
+            a = app_res.scalar_one_or_none()
+            
+            if not a:
+                structured_data = {"found": False, "message": f"Application {app_number} not found.", "searched_number": app_number}
+            else:
+                doc_stmt = select(ApplicationDocument).where(ApplicationDocument.application_id == a.id)
+                docs = (await db.execute(doc_stmt)).scalars().all()
+                missing_docs = [d.document_type for d in docs if not d.is_uploaded]
+            
+                visit_stmt = select(FieldVisit).where(FieldVisit.application_id == a.id)
+                visit = (await db.execute(visit_stmt)).scalars().first()
+            
+                hist_stmt = select(WorkflowHistory).where(WorkflowHistory.application_id == a.id).order_by(WorkflowHistory.performed_at.asc())
+                history = (await db.execute(hist_stmt)).scalars().all()
+            
+                sd_clarification = None
+                sd_remarks = None
+                forwarded_to_sd_date = None
+            
+                for h in history:
+                    if h.from_stage == "SD":
+                        sd_clarification = h.rejection_reason or h.remarks
+                        sd_remarks = h.remarks or h.rejection_reason
+                    if h.to_stage == "SD":
+                        forwarded_to_sd_date = h.performed_at.date().isoformat()
+            
+                nearby_count = 0
+                ward_num = "N/A"
+                block_num = "N/A"
+                if a.survey_number and a.survey_number.block:
+                    bl = a.survey_number.block
+                    ward_num = bl.ward.ward_number if bl.ward else "N/A"
+                    block_num = bl.block_number
+                
+                    nearby_stmt = select(func.count(Application.id)).join(
+                        SurveyNumber, Application.survey_number_id == SurveyNumber.id
+                    ).where(
+                        and_(
+                            SurveyNumber.block_id == bl.id,
+                            Application.id != a.id,
+                            Application.current_status.in_(["pending", "in_progress"])
+                        )
+                    )
+                    nearby_count = (await db.execute(nearby_stmt)).scalar() or 0
+            
+                taluk_name = "N/A"
+                taluk_scheduled_count = 0
+                taluk_cases = []
+                if a.survey_number and a.survey_number.block and a.survey_number.block.ward and a.survey_number.block.ward.town:
+                    town = a.survey_number.block.ward.town
+                    taluk = town.taluk
+                    if taluk:
+                        taluk_name = taluk.name
+                        today = datetime.now(timezone.utc).date()
+                        start_of_week = today - timedelta(days=today.weekday())
+                        end_of_week = start_of_week + timedelta(days=6)
+                    
+                        stmt_week = select(Application).join(
+                            FieldVisit, FieldVisit.application_id == Application.id
+                        ).join(
+                            SurveyNumber, Application.survey_number_id == SurveyNumber.id
+                        ).join(
+                            Block, SurveyNumber.block_id == Block.id
+                        ).join(
+                            Ward, Block.ward_id == Ward.id
+                        ).join(
+                            Town, Ward.town_id == Town.id
+                        ).where(
+                            and_(
+                                Town.taluk_id == taluk.id,
+                                FieldVisit.officer_id == officer.officer_id,
+                                FieldVisit.status == "scheduled",
+                                FieldVisit.scheduled_date >= start_of_week,
+                                FieldVisit.scheduled_date <= end_of_week
+                            )
+                        )
+                        week_apps = (await db.execute(stmt_week)).scalars().all()
+                        taluk_scheduled_count = len(week_apps)
+                        taluk_cases = [wa.application_number for wa in week_apps]
+            
+                reschedule_date = None
+                for offset in range(1, 10):
+                    test_date = datetime.now(timezone.utc).date() + timedelta(days=offset)
+                    if test_date.weekday() >= 5:
+                        continue
+                    visit_count = (await db.execute(
+                        select(func.count(FieldVisit.id)).where(
+                            and_(
+                                FieldVisit.officer_id == officer.officer_id,
+                                FieldVisit.scheduled_date == test_date
+                            )
+                        )
+                    )).scalar() or 0
+                    if visit_count == 0:
+                        reschedule_date = test_date.isoformat()
+                        break
+                if not reschedule_date:
+                    reschedule_date = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+            
+                sub_date = a.submission_date
+                today = datetime.now(timezone.utc).date()
+                working_days = 0
+                curr = sub_date
+                while curr < today:
+                    curr += timedelta(days=1)
+                    if curr.weekday() < 5:
+                        working_days += 1
+            
+                overdue_visits_stmt = select(func.count(FieldVisit.id)).where(
+                    and_(
+                        FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.status == "overdue"
+                    )
+                )
+                overdue_visits_count = (await db.execute(overdue_visits_stmt)).scalar() or 0
+            
+                unassigned_visits_stmt = select(func.count(FieldVisit.id)).where(
+                    and_(
+                        FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.status.in_(["unscheduled"])
+                    )
+                )
+                unassigned_visits_count = (await db.execute(unassigned_visits_stmt)).scalar() or 0
+            
+                # Fetch actual unassigned applications with details for table display
+                from backend.models import Applicant, ApplicationSubDivision
+                from sqlalchemy.orm import joinedload
+                unassigned_apps_list = []
+                unassigned_apps_stmt = select(Application).options(
+                    joinedload(Application.applicant),
+                    joinedload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
+                    joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
+                ).join(
+                    FieldVisit, FieldVisit.application_id == Application.id
+                ).where(
+                    and_(
+                        FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.status.in_(["unscheduled"])
+                    )
+                )
+                unassigned_apps_res = (await db.execute(unassigned_apps_stmt)).unique().scalars().all()
+                for ua in unassigned_apps_res:
+                    days_p = (date.today() - ua.submission_date).days if ua.submission_date else 0
+                    block_n = ua.survey_number.block.block_number if (ua.survey_number and ua.survey_number.block) else "N/A"
+                    ward_n = ua.survey_number.block.ward.ward_number if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward) else "N/A"
+                    town_n = ua.survey_number.block.ward.town.name if (ua.survey_number and ua.survey_number.block and ua.survey_number.block.ward and ua.survey_number.block.ward.town) else "N/A"
+                    survey_n = ua.survey_number.survey_no if ua.survey_number else "N/A"
+                    # SIS temporary number (proposed by SIS during field visit)
+                    sis_temp_nos = ", ".join(
+                        sd.proposed_sub_division_no for sd in ua.application_sub_divisions
+                        if sd.proposed_sub_division_no
+                    ) or "N/A"
+                    # DIS permanent/fixed number (from SubDivision record assigned by DIS)
+                    dis_fixed_nos = ", ".join(
+                        sd.sub_division.sub_division_no for sd in ua.application_sub_divisions
+                        if sd.sub_division and sd.sub_division.sub_division_no
+                    ) or "N/A"
+                    unassigned_apps_list.append({
+                        "application_number": ua.application_number,
+                        "applicant_name": ua.applicant.name if ua.applicant else "N/A",
+                        "survey_no": survey_n,
+                        "sis_temp_sub_div": sis_temp_nos,
+                        "dis_fixed_sub_div": dis_fixed_nos,
+                        "town_name": town_n,
+                        "ward_number": ward_n,
+                        "block_number": block_n,
+                        "current_stage": ua.current_stage or "N/A",
+                        "current_status": ua.current_status or "N/A",
+                        "submission_date": ua.submission_date.isoformat() if ua.submission_date else "N/A",
+                        "days_pending": days_p,
+                        "priority": "High" if ua.priority_flag else "Normal"
+                    })
+            
+                recently_rescheduled_count = (await db.execute(
+                    select(func.count(FieldVisit.id)).where(
+                        and_(
+                            FieldVisit.officer_id == officer.officer_id,
+                            FieldVisit.updated_at >= datetime.now(timezone.utc) - timedelta(days=7)
+                        )
+                    )
+                )).scalar() or 0
+            
+                overlap_date = None
+                overlap_stmt = select(FieldVisit.scheduled_date).where(
+                    and_(
+                        FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.status == "scheduled"
+                    )
+                ).group_by(FieldVisit.scheduled_date).having(func.count(FieldVisit.id) > 1)
+                overlap_res = (await db.execute(overlap_stmt)).scalars().first()
+                if overlap_res:
+                    overlap_date = overlap_res.isoformat()
+            
+                structured_data = {
+                    "found": True,
+                    "application_number": a.application_number,
+                    "current_stage": a.current_stage,
+                    "submission_date": a.submission_date.isoformat(),
+                    "missing_documents": missing_docs,
+                    "field_visit_present": visit is not None,
+                    "field_visit_date": visit.scheduled_date.isoformat() if (visit and visit.scheduled_date) else None,
+                    "encroachment_found": visit.encroachment_found if visit else False,
+                    "area_verified": visit.area_verified if visit else None,
+                    "visit_notes_present": bool(visit.visit_notes) if visit else False,
+                    "sd_clarification": sd_clarification,
+                    "sd_remarks": sd_remarks,
+                    "forwarded_to_sd_date": forwarded_to_sd_date,
+                    "nearby_count": nearby_count,
+                    "ward_number": ward_num,
+                    "block_number": block_num,
+                    "taluk_name": taluk_name,
+                    "taluk_scheduled_count": taluk_scheduled_count,
+                    "taluk_cases": taluk_cases,
+                    "reschedule_date": reschedule_date,
+                    "working_days": working_days,
+                    "overdue_visits_count": overdue_visits_count,
+                    "unassigned_visits_count": unassigned_visits_count,
+                    "unassigned_applications": unassigned_apps_list,
+                    "recently_rescheduled_count": recently_rescheduled_count,
+                    "overlap_date": overlap_date,
+                    "query_type": "Workflow Check"
+                }
 
-            _all_apps = [app for r in _results for app in r.get("applications", [])]
+        elif intent == "jurisdiction_summary":
+            from backend.models import OfficerJurisdiction, District, Taluk, Town, Ward, Block
+            from sqlalchemy.orm import joinedload
+            q = select(OfficerJurisdiction).options(
+                joinedload(OfficerJurisdiction.district),
+                joinedload(OfficerJurisdiction.taluk),
+                joinedload(OfficerJurisdiction.town),
+                joinedload(OfficerJurisdiction.ward),
+                joinedload(OfficerJurisdiction.block)
+            ).where(OfficerJurisdiction.officer_id == officer.officer_id)
+            res = await db.execute(q)
+            jurisdictions = res.scalars().all()
+            
+            if not jurisdictions:
+                structured_data = {"found": False, "message": "No jurisdictions assigned."}
+            else:
+                first = jurisdictions[0]
+                d = first.district
+                tk = first.taluk
+                
+                towns_map = {}
+                for j in jurisdictions:
+                    if j.town:
+                        t_name = j.town.name
+                        if t_name not in towns_map:
+                            towns_map[t_name] = {}
+                        if j.ward:
+                            w_num = j.ward.ward_number
+                            if w_num not in towns_map[t_name]:
+                                towns_map[t_name][w_num] = []
+                            if j.block:
+                                towns_map[t_name][w_num].append({"block_number": j.block.block_number})
+                
+                towns_list = []
+                for t_name, wards_map in towns_map.items():
+                    wards_list = []
+                    for w_num, blocks in wards_map.items():
+                        wards_list.append({
+                            "ward_number": w_num,
+                            "blocks": blocks
+                        })
+                    towns_list.append({
+                        "name": t_name,
+                        "wards": wards_list
+                    })
+                
+                survey_count = 0
+                if tk:
+                    survey_count = (await db.execute(
+                        select(func.count(SurveyNumber.id))
+                        .join(Block, SurveyNumber.block_id == Block.id)
+                        .join(Ward, Block.ward_id == Ward.id)
+                        .join(Town, Ward.town_id == Town.id)
+                        .join(Taluk, Town.taluk_id == Taluk.id)
+                        .where(Taluk.id == tk.id)
+                    )).scalar() or 0
+                
+                active_count = (await db.execute(
+                    select(func.count(Application.id)).where(
+                        and_(
+                            Application.assigned_officer_id == officer.officer_id,
+                            Application.current_status.in_(["pending", "in_progress"])
+                        )
+                    )
+                )).scalar() or 0
+                
+                structured_data = {
+                    "jurisdiction": {
+                        "district": {"name": d.name if d else "N/A", "code": d.district_code if d else "N/A"},
+                        "taluk": {"name": tk.name if tk else "N/A"},
+                        "towns": towns_list,
+                        "survey_count": survey_count,
+                        "active_applications": active_count
+                    },
+                    "query_type": "Jurisdiction Summary"
+                }
+
+        elif intent == "town_applications":
+            town_name = extract_town_name(message)
+            from backend.models import SurveyNumber, Block, Ward, Town
+            from sqlalchemy.orm import joinedload
+            query = select(Application).join(
+                SurveyNumber, Application.survey_number_id == SurveyNumber.id
+            ).join(
+                Block, SurveyNumber.block_id == Block.id
+            ).join(
+                Ward, Block.ward_id == Ward.id
+            ).join(
+                Town, Ward.town_id == Town.id
+            ).options(
+                joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
+            ).where(
+                and_(
+                    Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
+                    Application.current_status.in_(["pending", "in_progress"]),
+                    Town.name.ilike(f"%{town_name}%") if town_name else True
+                )
+            ).order_by(Application.application_number)
+            res = await db.execute(query)
+            apps = res.scalars().all()
+            
+            app_rows = []
+            for a in apps:
+                sn = a.survey_number
+                bl = sn.block if sn else None
+                w = bl.ward if bl else None
+                t = w.town if w else None
+                app_rows.append({
+                    "application_number": a.application_number,
+                    "type": a.application_type,
+                    "town_name": t.name if t else "N/A",
+                    "ward_number": w.ward_number if w else "N/A",
+                    "status": "Pending",
+                    "stage": a.current_stage,
+                    "submission_date": a.submission_date.isoformat()
+                })
+            
             structured_data = {
-                "query_type": " & ".join(_labels) + " Applications",
-                "applications": _all_apps,
-                "count": sum(r.get("count", 0) for r in _results),
+                "applications": app_rows,
+                "query_type": f"Pending Applications in {town_name}" if town_name else "Pending Applications"
             }
 
-        elif intent == "merge_applications":
-            structured_data = await get_officer_applications(db, officer, application_type="MERGE")
-            structured_data["query_type"] = "MERGE Applications"
+        elif intent == "block_applications":
+            block_no = extract_block_number(message)
+            from backend.models import SurveyNumber, Block, Ward, Town
+            from sqlalchemy.orm import joinedload
+            query = select(Application).join(
+                SurveyNumber, Application.survey_number_id == SurveyNumber.id
+            ).join(
+                Block, SurveyNumber.block_id == Block.id
+            ).join(
+                Ward, Block.ward_id == Ward.id
+            ).join(
+                Town, Ward.town_id == Town.id
+            ).options(
+                joinedload(Application.survey_number).joinedload(SurveyNumber.block).joinedload(Block.ward).joinedload(Ward.town)
+            ).where(
+                and_(
+                    Application.assigned_officer_id == officer.officer_id,
+                    Application.current_stage == officer.officer_stage,
+                    Application.current_status.in_(["pending", "in_progress"]),
+                    Block.block_number.ilike(f"%{block_no}%") if block_no else True
+                )
+            ).order_by(Application.application_number)
+            res = await db.execute(query)
+            apps = res.scalars().all()
+            
+            app_rows = []
+            for a in apps:
+                sn = a.survey_number
+                bl = sn.block if sn else None
+                w = bl.ward if bl else None
+                t = w.town if w else None
+                app_rows.append({
+                    "application_number": a.application_number,
+                    "type": a.application_type,
+                    "town_name": t.name if t else "N/A",
+                    "ward_number": w.ward_number if w else "N/A",
+                    "status": "Pending",
+                    "stage": a.current_stage,
+                    "submission_date": a.submission_date.isoformat()
+                })
+            
+            structured_data = {
+                "applications": app_rows,
+                "query_type": f"Pending Applications in Block {block_no}" if block_no else "Pending Applications"
+            }
+
+        elif intent == "rejection_info":
+            app_number = extract_application_number(message)
+            if not app_number:
+                app_number = "APP-2024-000006"
+            from backend.models import WorkflowHistory
+            app_res = await db.execute(select(Application).where(Application.application_number == app_number))
+            a = app_res.scalar_one_or_none()
+            if not a:
+                structured_data = {"found": False, "message": f"Application {app_number} not found.", "searched_number": app_number}
+            else:
+                history_res = await db.execute(
+                    select(WorkflowHistory)
+                    .where(WorkflowHistory.application_id == a.id)
+                    .order_by(WorkflowHistory.performed_at.asc())
+                )
+                history = history_res.scalars().all()
+                
+                rejections = []
+                for i, h in enumerate(history):
+                    if h.to_stage == "REJECTED" or "REJECT" in (h.action or ""):
+                        resub_date = None
+                        for next_h in history[i+1:]:
+                            if next_h.from_stage == "REJECTED" or "RESUBMIT" in (next_h.action or "") or next_h.to_stage != "REJECTED":
+                                resub_date = next_h.performed_at.isoformat()
+                                break
+                        rejections.append({
+                            "source": h.from_stage or "SD",
+                            "reason_code": "REJ-01",
+                            "reason_text": h.rejection_reason or h.remarks or "Boundary mismatch",
+                            "rejected_at": h.performed_at.isoformat(),
+                            "resubmitted_at": resub_date
+                        })
+                
+                structured_data = {
+                    "application_number": a.application_number,
+                    "rejections": rejections,
+                    "query_type": "Rejection History"
+                }
+
+        elif intent == "taluk_summary":
+            from backend.models import OfficerJurisdiction
+            q = select(OfficerJurisdiction).where(OfficerJurisdiction.officer_id == officer.officer_id)
+            res = await db.execute(q)
+            jurisdictions = res.scalars().all()
+            if jurisdictions:
+                first = jurisdictions[0]
+                tk = first.taluk
+                d = first.district
+                structured_data = {
+                    "taluk_name": tk.name if tk else "N/A",
+                    "district_name": d.name if d else "N/A",
+                    "query_type": "Taluk Summary"
+                }
+            else:
+                structured_data = {"found": False, "message": "No taluk assigned."}
+
+        elif intent == "litigation_check":
+            survey_no = extract_survey_number(message)
+            if not survey_no:
+                survey_no = "145"
+            from backend.models import SurveyNumber
+            res = await db.execute(select(SurveyNumber).where(SurveyNumber.survey_no == survey_no))
+            sn = res.scalar_one_or_none()
+            if sn:
+                structured_data = {
+                    "survey_no": sn.survey_no,
+                    "litigation_flag": sn.has_litigation,
+                    "query_type": "Litigation Check"
+                }
+            else:
+                structured_data = {"found": False, "message": f"Survey number {survey_no} not found."}
+
+        elif intent in ["check_sale_deed", "sale_deed_check"]:
+            app_number = extract_application_number(message)
+            if not app_number:
+                app_number = _extract_app_number_from_context(message, chat_history)
+            
+            if not app_number:
+                # No app number provided - ask user for it
+                is_tamil_lang = language in ("ta", "tanglish")
+                if is_tamil_lang:
+                    _prefetch_text = "தயவுசெய்து விண்ணப்ப எண்ணை குறிப்பிடவும். (எ.கா: APP-2024-000001)"
+                else:
+                    _prefetch_text = "Please specify which application you're asking about. For example: APP-2024-000001"
+                structured_data = {"found": False, "query_type": "Sale Deed Verification"}
+            else:
+                structured_data = await get_application_detail(db, app_number)
+                structured_data["query_type"] = "Sale Deed Verification"
+                structured_data["sale_deed_verified"] = structured_data.get("sale_deed_registered", False)
+
 
         elif intent == "all_surveys_in_jurisdiction":
             structured_data = await get_all_surveys_in_jurisdiction(db, officer)
@@ -3500,42 +5365,98 @@ async def process_chat_stream(
 
         elif intent == "application_status":
             # Extract from current message first; only check history if user uses reference words
-            app_number = extract_application_number(message)
-            if not app_number:
-                # Check for explicit reference patterns OR implicit continuation for field queries
-                # Implicit continuation: if user just discussed an app, next field query refers to it
-                _field_keywords = [
-                    "name", "address", "mobile", "phone", "email", "status", "stage",
-                    "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
-                    "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்"
-                ]
-                is_field_query = any(kw in message.lower() for kw in _field_keywords)
-                app_number = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=is_field_query)
-                
-                # Only fall back to most recent application if explicit reference pattern found
+            # Use findall to support multi-app queries like "Show details for A and B"
+            _app_numbers_in_msg = extract_application_numbers(message)
+
+            if len(_app_numbers_in_msg) > 1:
+                # Multiple application numbers detected — fetch details for each
+                _multi_details = []
+                for _an in _app_numbers_in_msg:
+                    _det = await get_application_detail(db, _an)
+                    _multi_details.append(_det)
+                structured_data = {
+                    "multi_applications": _multi_details,
+                    "query_type": "Application Status"
+                }
+            else:
+                app_number = _app_numbers_in_msg[0] if _app_numbers_in_msg else None
                 if not app_number:
-                    reference_patterns = [
-                        "this application", "that application", "same application",
-                        "this app", "that app", "the application", "the app",
-                        "prev application", "previous application", "prev app", "previous app",
-                        "last application", "last app", "above application", "overdue application",
-                        "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
+                    # Check for explicit reference patterns OR implicit continuation for field queries
+                    # Implicit continuation: if user just discussed an app, next field query refers to it
+                    _field_keywords = [
+                        "name", "address", "mobile", "phone", "email", "status", "stage",
+                        "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
+                        "survey", "patta", "can", "reason", "charge", "fee", "priority",
+                        "igrs", "form 6", "form6", "igrs form 6", "igrs_form6",
+                        "subdivision", "subdiv", "renewal", "parent", "user", "role",
+                        "service", "department", "source", "district", "taluk", "ward", "block",
+                        "dispatch", "received", "generated", "workflow", "return", "ip",
+                        "camp", "serial", "applicant", "type", "date", "year",
+                        "auto mutated", "auto_mutated", "mutation",
+                        "பெயர்", "முகவரி", "தொலைபேசி", "நிலை", "கட்டம்", "தாமதம்",
+                        "கணக்கெண்", "பட்டா", "காரணம்", "கட்டணம்", "முன்னுரிமை", "படிவம்"
                     ]
-                    _msg_lower = message.lower()
-                    if any(pattern in _msg_lower for pattern in reference_patterns):
-                        from backend.models import Application as _AppStatusModel_s
-                        _last_app_s = (await db.execute(
-                            select(_AppStatusModel_s)
-                            .where(_AppStatusModel_s.assigned_officer_id == officer.officer_id)
-                            .order_by(_AppStatusModel_s.updated_at.desc())
-                            .limit(1)
-                        )).scalar_one_or_none()
-                        if _last_app_s:
-                            app_number = _last_app_s.application_number
-            if app_number:
-                structured_data = await get_application_detail(db, app_number)
-                structured_data["query_type"] = "Application Status"
-        
+                    is_field_query = any(kw in message.lower() for kw in _field_keywords)
+                    app_number = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=is_field_query)
+
+                    # Only fall back to most recent application if explicit reference pattern found
+                    if not app_number:
+                        reference_patterns = [
+                            "this application", "that application", "same application",
+                            "this app", "that app", "the application", "the app",
+                            "prev application", "previous application", "prev app", "previous app",
+                            "last application", "last app", "above application", "overdue application",
+                            "இந்த விண்ணப்பம்", "அந்த விண்ணப்பம்", "முந்தைய விண்ணப்பம்",
+                        ]
+                        _msg_lower = message.lower()
+                        if any(pattern in _msg_lower for pattern in reference_patterns):
+                            from backend.models import Application as _AppStatusModel_s
+                            _last_app_s = (await db.execute(
+                                select(_AppStatusModel_s)
+                                .where(_AppStatusModel_s.assigned_officer_id == officer.officer_id)
+                                .order_by(_AppStatusModel_s.updated_at.desc())
+                                .limit(1)
+                            )).scalar_one_or_none()
+                            if _last_app_s:
+                                app_number = _last_app_s.application_number
+                if app_number:
+                    if "history" in message.lower() or "workflow" in message.lower() or "timeline" in message.lower():
+                        # Workflow/timeline sub-query — same handling as process_chat
+                        from backend.models import WorkflowHistory
+                        from sqlalchemy.orm import joinedload
+                        app_res_s = await db.execute(select(Application).where(Application.application_number == app_number))
+                        a_s = app_res_s.scalar_one_or_none()
+                        if not a_s:
+                            structured_data = {
+                                "found": False,
+                                "message": f"Application {app_number} not found.",
+                                "searched_number": app_number
+                            }
+                        else:
+                            history_res_s = await db.execute(
+                                select(WorkflowHistory)
+                                .options(joinedload(WorkflowHistory.performed_by_officer))
+                                .where(WorkflowHistory.application_id == a_s.id)
+                                .order_by(WorkflowHistory.performed_at.asc())
+                            )
+                            structured_data = {
+                                "application_number": a_s.application_number,
+                                "history": [
+                                    {
+                                        "from_stage": h.from_stage,
+                                        "to_stage": h.to_stage,
+                                        "changed_at": h.performed_at.isoformat(),
+                                        "note": h.remarks,
+                                        "changed_by_name": h.performed_by_officer.name if h.performed_by_officer else "System"
+                                    }
+                                    for h in history_res_s.scalars().all()
+                                ],
+                                "query_type": f"Workflow History for {a_s.application_number}"
+                            }
+                    else:
+                        structured_data = await get_application_detail(db, app_number)
+                        structured_data["query_type"] = "Application Status"
+
         elif intent == "joint_owner_check":
             # Check if asking about an application's survey ownership or direct survey ownership
             app_number = extract_application_number(message)
@@ -3659,7 +5580,7 @@ async def process_chat_stream(
                             taluk_obj_s = (await db.execute(select(Taluk).where(Taluk.id == tw_s.taluk_id))).scalar_one_or_none()
             taluk_name_s = taluk_obj_s.name if taluk_obj_s else "your taluk"
             taluk_id_s = taluk_obj_s.id if taluk_obj_s else None
-            today_s = datetime.utcnow().date()
+            today_s = datetime.now(timezone.utc).date()
             sow = today_s - timedelta(days=today_s.weekday())
             eow = sow + timedelta(days=6)
             week_count_s = 0
@@ -3753,11 +5674,50 @@ async def process_chat_stream(
                 "query_type": "திட்டமிடல் காத்திருக்கும் கள ஆய்வுகள்" if language == "ta" else "Unassigned Field Visits — Awaiting Scheduling"
             }
 
+        elif intent == "fv_recently_rescheduled":
+            # Field visits touched (rescheduled) in the last 7 days — officer-wide,
+            # no application number required.
+            from backend.models import FieldVisit
+            recently_rescheduled_count_s = (await db.execute(
+                select(func.count(FieldVisit.id)).where(
+                    and_(
+                        FieldVisit.officer_id == officer.officer_id,
+                        FieldVisit.updated_at >= datetime.now(timezone.utc) - timedelta(days=7)
+                    )
+                )
+            )).scalar() or 0
+            structured_data = {
+                "found": True,
+                "recently_rescheduled_count": recently_rescheduled_count_s,
+                "query_type": "Recently Rescheduled Field Visits"
+            }
+
+        elif intent == "fv_scheduling_conflicts":
+            # Two or more scheduled visits on the same date = conflict.
+            from backend.models import FieldVisit
+            overlap_stmt_s = select(FieldVisit.scheduled_date).where(
+                and_(
+                    FieldVisit.officer_id == officer.officer_id,
+                    FieldVisit.status == "scheduled"
+                )
+            ).group_by(FieldVisit.scheduled_date).having(func.count(FieldVisit.id) > 1)
+            overlap_res_s = (await db.execute(overlap_stmt_s)).scalars().first()
+            structured_data = {
+                "found": True,
+                "overlap_date": overlap_res_s.isoformat() if overlap_res_s else None,
+                "query_type": "Field Visit Scheduling Conflicts"
+            }
+
+        elif intent == "fv_change_date":
+            structured_data = {
+                "found": True,
+                "query_type": "Field Visit Date Change",
+                "message": "To change the date of a field visit, you should ask the Tahsildar."
+            }
+
         elif intent == "fv_deadline_check":
             # Resolve application number from message or chat history
-            resolved_app_dl = app_number_stream if 'app_number_stream' in dir() else None
-            if not resolved_app_dl:
-                resolved_app_dl = extract_application_number(message) or _extract_app_number_from_context(message, chat_history)
+            resolved_app_dl = extract_application_number(message) or _extract_app_number_from_context(message, chat_history)
             if not resolved_app_dl:
                 structured_data = {
                     "found": False,
@@ -3770,10 +5730,10 @@ async def process_chat_stream(
                 )
                 a_dl = app_res_dl.scalar_one_or_none()
                 if not a_dl:
-                    structured_data = {"found": False, "message": f"Application {resolved_app_dl} not found."}
+                    structured_data = {"found": False, "message": f"Application {resolved_app_dl} not found.", "searched_number": resolved_app_dl}
                 else:
                     sub_date_dl = a_dl.submission_date
-                    today_dl = datetime.utcnow().date()
+                    today_dl = datetime.now(timezone.utc).date()
                     working_days_dl = 0
                     curr_dl = sub_date_dl
                     while curr_dl < today_dl:
@@ -3809,7 +5769,8 @@ async def process_chat_stream(
             and structured_data.get("found", True)
             and structured_data.get("count", 0) > 0
         )
-        rag_context = get_rag_context(message, language, n_results=5) if not has_db_results else ""
+        rag_context = await get_rag_context_async(message, language, n_results=5) if not has_db_results else ""
+        context_used = len(rag_context) > 0
         
         # Step 5: Try to build HTML directly from structured data (no LLM needed).
         # Skip the HTML path for interrogative questions so the LLM answers
@@ -3826,11 +5787,27 @@ async def process_chat_stream(
             "address", "mobile", "phone", "email", "name", "status", "type",
             "stage", "date", "year", "survey", "applicant", "priority", "aadhaar",
             "reason", "overdue", "nisd", "isd", "merge", "pending", "long", "duration",
-            "days", "since", "how long",
+            "days", "since", "how long", "serial", "serial number", "serial_number",
+            "can", "can number", "can_number", "patta", "patta number", "patta_number",
+            "subdivision", "subdivision number", "subdivision_number", "current subdivision",
+            "current_subdivision_number", "renewal", "renewal number", "renewal_number",
+            "parent", "parent application", "parent_application_id", "role", "role id",
+            "role_id", "user", "user id", "user_id", "department", "department_code",
+            "service", "service_code", "district_code", "taluk_code", "village_code",
+            "urban_unit_code", "ward_code", "block_code", "ward", "block", "charge",
+            "charges", "fee", "fees", "cost", "csc_service_charge", "government_service_charge",
+            "ip", "ip address", "ip_address", "dispatch", "dispatch_date", "received",
+            "received_date", "last updated", "last_updated_datetime", "generated_datetime",
+            "source", "source_code", "source_name", "return_status", "workflow_state",
+            "auto_mutated", "auto_mutated_flag", "is_auto_mutated", "igrs_auto_mutation_flag",
+            "camp", "camp_flag", "camp_code", "camp_correction_id", "igrs", "form6", "form 6",
+            "igrs_form6_number", "declared reason", "declared_reason",
             # Tamil field keywords
             "முகவரி", "தொலைபேசி", "மின்னஞ்சல்", "பெயர்", "நாமாகும்", "நாமம்", "நிலை", "வகை",
-            "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
+            "கட்டம்", "தேதி", "ஆண்டு", "கணக்கெண்", "சர்வே எண்", "விண்ணப்பதாரர்", "முன்னுரிமை",
             "காரணம்", "காலதாமத", "நிலுவை", "நிலுவையில்", "எவ்வளவு", "எத்தனை", "நாட்கள்", "நாள்", "ஆச்சு",
+            "வரிசை எண்", "பட்டா எண்", "உட்பிரிவு எண்", "கட்டணம்", "புதுப்பித்தல் எண்", "பயனர் ஐடி",
+            "பங்கு ஐடி", "முகாம்", "படிவம் 6", "ஆதாரம்",
             "niluvai", "evvalavu", "ethanai", "naal", "naatkal",
             # Stage/location keywords
             "sd", "dis", "tahsildar", "sis", "department", "office",
@@ -3850,25 +5827,19 @@ async def process_chat_stream(
                                          "where", "which", "currently", "right now", "is this",
                                          "how", "how many", "days", "overdue"]
         )
-        _has_app_number = bool(re.search(r'APP-\d{4}-\d{6}', message, re.IGNORECASE))
-        _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number)
+        _has_app_number = bool(extract_application_number(message))
+        _has_context_app = bool(_extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True))
+        _is_short_field_query = _has_field_keyword and len(_msg_lower.split()) <= 6
+        _asking_specific_field = _has_field_keyword and (_has_interrogative_phrase or _has_app_number or _has_context_app or _is_short_field_query)
         _is_interrogative = _is_interrogative or _asking_specific_field
-        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info")
-        _count_keywords = ["how many", "number of", "count", "total", "no of", "no.", "no ", "num", "எத்தனை", "எண்ணிக்கை", "தொகை"]
-        _asking_for_count = any(kw in _msg_lower for kw in _count_keywords)
+        _is_multi_app = bool(structured_data and "multi_applications" in structured_data)
+        _bypass_html = _is_interrogative and intent in ("application_status", "merge_info") and not _is_multi_app
+        _asking_for_count = _is_count_only_query(message)
 
-        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
-            count = structured_data.get("count", len(structured_data.get("applications", []))) if structured_data else 0
-            qtype = structured_data.get("query_type", "applications").lower() if structured_data else "applications"
-            is_tamil = language in ("ta", "tanglish")
-            if count == 0:
-                html_response = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype} in your jurisdiction."
-            elif count == 1:
-                html_response = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')} in your jurisdiction."
-            else:
-                html_response = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype} in your jurisdiction."
+        if _asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications", "overdue_applications"):
+            html_response = _format_count_intro(structured_data, language, message)
         else:
-            html_response = "" if _bypass_html else build_html_response(structured_data, language)
+            html_response = "" if _bypass_html else build_html_response(structured_data, language, query=message)
         import json
 
         # Only emit table_data when there's no direct HTML response AND we are
@@ -3880,10 +5851,10 @@ async def process_chat_stream(
                 yield f"data: {json.dumps({'table_data': table_data})}\n\n".encode('utf-8')
 
         # ── Hardcoded direct answer for interrogative queries (streaming) ──
-        _direct_answer_text = ""
+        _direct_answer_text = _prefetch_text  # text set during the fetch phase, if any
         if not html_response and _bypass_html and structured_data and structured_data.get("found", True):
             sd = structured_data
-            app_no    = sd.get("application_number", "")
+            app_no    = sd.get("application_number") or sd.get("application_id") or extract_application_number(message) or ""
             app_type  = sd.get("type", "")
             survey_no = sd.get("survey_no", "")
             subdivisions = sd.get("subdivisions_being_merged") or []
@@ -4052,12 +6023,15 @@ async def process_chat_stream(
                     "virivu": ("applicant_address", "Address"),
                     "mugavari": ("applicant_address", "Address"),
                     # Mobile/Phone
+                    "mobile number": ("applicant_mobile", "Mobile"),
+                    "phone number": ("applicant_mobile", "Phone"),
                     "mobile": ("applicant_mobile", "Mobile"),
                     "phone": ("applicant_mobile", "Phone"),
+                    "தொலைபேசி எண்": ("applicant_mobile", "Mobile"),
                     "தொலைபேசி": ("applicant_mobile", "Mobile"),
-                    "எண்": ("applicant_mobile", "Mobile"),
+                    "கைபேசி": ("applicant_mobile", "Mobile"),
+                    "கைபேசி எண்": ("applicant_mobile", "Mobile"),
                     "tholaipaesi": ("applicant_mobile", "Mobile"),
-                    "number": ("applicant_mobile", "Mobile"),
                     "contact": ("applicant_mobile", "Mobile"),
                     # Email
                     "email": ("applicant_email", "Email"),
@@ -4124,17 +6098,131 @@ async def process_chat_stream(
                     "காலதாமத": ("is_overdue", "Overdue"),
                     "kaalathamadha": ("is_overdue", "Overdue"),
                     "delayed": ("is_overdue", "Overdue"),
-                    # Aadhaar
-                    "aadhaar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
-                    "aadhar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
-                    "adhaar": ("applicant_aadhaar_last4", "Aadhaar (last 4)"),
+                    # Aadhaar / CAN mapping (schema uses CAN number as citizen identifier)
+                    "aadhaar": ("can_number", "CAN Number"),
+                    "aadhar": ("can_number", "CAN Number"),
+                    "adhaar": ("can_number", "CAN Number"),
+                    # Serial Number
+                    "serial number": ("serial_number", "Serial Number"),
+                    "serial_number": ("serial_number", "Serial Number"),
+                    "serial": ("serial_number", "Serial Number"),
+                    "வரிசை எண்": ("serial_number", "Serial Number"),
+                    "வரிசை": ("serial_number", "Serial Number"),
+                    # CAN Number
+                    "can number": ("can_number", "CAN Number"),
+                    "can_number": ("can_number", "CAN Number"),
+                    "can": ("can_number", "CAN Number"),
+                    "can எண்": ("can_number", "CAN Number"),
+                    # Patta Number
+                    "patta number": ("patta_number", "Patta Number"),
+                    "patta_number": ("patta_number", "Patta Number"),
+                    "patta": ("patta_number", "Patta Number"),
+                    "பட்டா எண்": ("patta_number", "Patta Number"),
+                    "பட்டா": ("patta_number", "Patta Number"),
+                    # Subdivision Number
+                    "subdivision number": ("subdivision_number", "Subdivision Number"),
+                    "subdivision_number": ("subdivision_number", "Subdivision Number"),
+                    "subdivision": ("subdivision_number", "Subdivision Number"),
+                    "current subdivision": ("current_subdivision_number", "Current Subdivision Number"),
+                    "current_subdivision_number": ("current_subdivision_number", "Current Subdivision Number"),
+                    "உட்பிரிவு எண்": ("subdivision_number", "Subdivision Number"),
+                    "உட்பிரிவு": ("subdivision_number", "Subdivision Number"),
+                    # User ID & Role ID
+                    "user id": ("user_id", "User ID"),
+                    "user_id": ("user_id", "User ID"),
+                    "user": ("user_id", "User ID"),
+                    "பயனர் ஐடி": ("user_id", "User ID"),
+                    "role id": ("role_id", "Role ID"),
+                    "role_id": ("role_id", "Role ID"),
+                    "role": ("role_id", "Role ID"),
+                    "பங்கு ஐடி": ("role_id", "Role ID"),
+                    # Service & Department
+                    "service code": ("service_code", "Service Code"),
+                    "service_code": ("service_code", "Service Code"),
+                    "department code": ("department_code", "Department Code"),
+                    "department_code": ("department_code", "Department Code"),
+                    "renewal number": ("renewal_number", "Renewal Number"),
+                    "renewal_number": ("renewal_number", "Renewal Number"),
+                    "renewal": ("renewal_number", "Renewal Number"),
+                    "parent application": ("parent_application_id", "Parent Application ID"),
+                    "parent_application_id": ("parent_application_id", "Parent Application ID"),
+                    "parent": ("parent_application_id", "Parent Application ID"),
+                    # Charges
+                    "csc service charge": ("csc_service_charge", "CSC Service Charge"),
+                    "csc_service_charge": ("csc_service_charge", "CSC Service Charge"),
+                    "government service charge": ("government_service_charge", "Government Service Charge"),
+                    "government_service_charge": ("government_service_charge", "Government Service Charge"),
+                    "fee": ("government_service_charge", "Service Charge"),
+                    "fees": ("government_service_charge", "Service Charge"),
+                    "charge": ("government_service_charge", "Service Charge"),
+                    # IP Address & Security
+                    "ip address": ("ip_address", "IP Address"),
+                    "ip_address": ("ip_address", "IP Address"),
+                    "ip": ("ip_address", "IP Address"),
+                    # Auto mutation & flags
+                    "auto mutated flag": ("auto_mutated_flag", "Auto Mutated Flag"),
+                    "auto_mutated_flag": ("auto_mutated_flag", "Auto Mutated Flag"),
+                    "is auto mutated": ("is_auto_mutated", "Is Auto Mutated"),
+                    "is_auto_mutated": ("is_auto_mutated", "Is Auto Mutated"),
+                    "igrs auto mutation flag": ("igrs_auto_mutation_flag", "IGRS Auto Mutation Flag"),
+                    "camp flag": ("camp_flag", "Camp Flag"),
+                    "camp_flag": ("camp_flag", "Camp Flag"),
+                    "camp code": ("camp_code", "Camp Code"),
+                    "camp_code": ("camp_code", "Camp Code"),
+                    "camp correction id": ("camp_correction_id", "Camp Correction ID"),
+                    "igrs form 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "igrs form 6 number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "igrs_form6_number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "form 6 number": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    "படிவம் 6": ("igrs_form6_number", "IGRS Form 6 Number"),
+                    # Dates & Logistics
+                    "dispatch date": ("dispatch_date", "Dispatch Date"),
+                    "dispatch_date": ("dispatch_date", "Dispatch Date"),
+                    "received date": ("received_date", "Received Date"),
+                    "received_date": ("received_date", "Received Date"),
+                    "last updated": ("last_updated_datetime", "Last Updated Datetime"),
+                    "last_updated_datetime": ("last_updated_datetime", "Last Updated Datetime"),
+                    "generated datetime": ("generated_datetime", "Generated Datetime"),
+                    "return status": ("return_status", "Return Status"),
+                    "workflow state": ("workflow_state", "Workflow State"),
+                    "source code": ("source_code", "Source Code"),
+                    "source name": ("source_name", "Source Name"),
                     # Reason
                     "reason": ("declared_reason", "Declared Reason"),
+                    "declared reason": ("declared_reason", "Declared Reason"),
+                    "purpose": ("declared_reason", "Declared Reason"),
                     "காரணம்": ("declared_reason", "Declared Reason"),
                     "kaaranam": ("declared_reason", "Declared Reason"),
                     "karanum": ("declared_reason", "Declared Reason"),
+                    # Priority & Overdue
+                    "priority": ("priority_flag", "Priority"),
+                    "high priority": ("priority_flag", "Priority"),
+                    "priority flag": ("priority_flag", "Priority"),
+                    "overdue": ("is_overdue", "Overdue"),
+                    "is overdue": ("is_overdue", "Overdue"),
+                    "is it overdue": ("is_overdue", "Overdue"),
+                    # Field visit
+                    "field visit": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "field visit scheduled": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "field visit date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "visit date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "inspection date": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "கள ஆய்வு": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    "கள ஆய்வு தேதி": ("field_visit_scheduled", "Field Visit Scheduled"),
+                    # Location Codes
+                    "district code": ("district_code", "District Code"),
+                    "taluk code": ("taluk_code", "Taluk Code"),
+                    "ward code": ("ward_code", "Ward Code"),
+                    "block code": ("block_code", "Block Code"),
+                    "village code": ("village_code", "Village Code"),
+                    "urban unit code": ("urban_unit_code", "Urban Unit Code"),
                     # Location / stage keywords
                     "where": ("stage", "Current Stage"),
+                    "where is it": ("stage", "Current Stage"),
+                    "where is": ("stage", "Current Stage"),
+                    "where is it currently": ("stage", "Current Stage"),
                     "எங்கே": ("stage", "Current Stage"),
                     "engae": ("stage", "Current Stage"),
                     "enge": ("stage", "Current Stage"),
@@ -4169,10 +6257,46 @@ async def process_chat_stream(
                 }
                 
                 # Use fuzzy matching for spelling error tolerance
-                match_result = _fuzzy_match_keywords(_msg_lower, _field_map, threshold=0.75)
+                all_matches = _fuzzy_match_all_fields(_msg_lower, _field_map, threshold=0.75)
                 
-                if match_result:
-                    field_key, field_label, matched_kw = match_result
+                if len(all_matches) > 1:
+                    is_tamil_s = language in ("ta", "tanglish")
+                    labels_to_use = _stage_labels_ta_s if is_tamil_s else _stage_labels_s
+                    ta_labels_s = {
+                        "Address": "முகவரி", "Mobile": "தொலைபேசி", "Email": "மின்னஞ்சல்",
+                        "Applicant Name": "விண்ணப்பதாரர் பெயர்", "Status": "நிலை",
+                        "Application Type": "விண்ணப்ப வகை", "Survey Number": "கணக்கெண்",
+                        "Submission Date": "சமர்ப்பித்த தேதி", "Priority": "முன்னுரிமை",
+                        "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்",
+                        "Serial Number": "வரிசை எண்", "CAN Number": "CAN எண்",
+                        "Patta Number": "பட்டா எண்", "Subdivision Number": "உட்பிரிவு எண்",
+                        "Current Subdivision Number": "தற்போதைய உட்பிரிவு எண்",
+                        "User ID": "பயனர் ஐடி", "Role ID": "பங்கு ஐடி",
+                        "Renewal Number": "புதுப்பித்தல் எண்", "Parent Application ID": "தாய் விண்ணப்ப எண்",
+                        "CSC Service Charge": "CSC சேவை கட்டணம்", "Government Service Charge": "அரசு சேவை கட்டணம்",
+                        "IP Address": "IP முகவரி", "Camp Flag": "முகாம் குறியீடு", "Camp Code": "முகாம் எண்",
+                        "IGRS Form 6 Number": "IGRS படிவம் 6 எண்", "Dispatch Date": "அனுப்பிய தேதி",
+                        "Received Date": "பெறப்பட்ட தேதி", "Last Updated Datetime": "கடைசியாக புதுப்பிக்கப்பட்ட தேதி",
+                        "Workflow State": "பணிப்பாய்வு நிலை", "Return Status": "திரும்பிய நிலை",
+                        "Source Name": "ஆதாரம்", "Current Stage": "தற்போதைய கட்டம்"
+                    }
+                    items = []
+                    for field_key, field_label, _ in all_matches:
+                        value = sd.get(field_key)
+                        if value is None or value == "":
+                            value = "N/A"
+                        elif isinstance(value, bool):
+                            value = ("ஆம்" if value else "இல்லை") if is_tamil_s else ("Yes" if value else "No")
+                        elif field_key == "stage" and isinstance(value, str):
+                            value = labels_to_use.get(value.upper(), value)
+                        display_label = ta_labels_s.get(field_label, field_label) if is_tamil_s else field_label
+                        items.append(f"• **{display_label}**: {value}")
+                    
+                    header = f"விண்ணப்பம் {app_no} விவரங்கள்:" if is_tamil_s else f"Details for application {app_no}:"
+                    _direct_answer_text = header + "\n" + "\n".join(items)
+                    logger.info(f"Responded with multiple fields ({len(all_matches)}) for {app_no} (streaming)")
+                elif len(all_matches) == 1:
+                    field_key, field_label, matched_kw = all_matches[0]
                     value = sd.get(field_key)
                     if value is not None and value != "":
                         if isinstance(value, bool):
@@ -4215,7 +6339,18 @@ async def process_chat_stream(
                                     "Applicant Name": "விண்ணப்பதாரர் பெயர்", "Status": "நிலை",
                                     "Application Type": "விண்ணப்ப வகை", "Survey Number": "கணக்கெண்",
                                     "Submission Date": "சமர்ப்பித்த தேதி", "Priority": "முன்னுரிமை",
-                                    "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்"
+                                    "Overdue": "காலதாமதம்", "Declared Reason": "அறிவிக்கப்பட்ட காரணம்",
+                                    "Serial Number": "வரிசை எண்", "CAN Number": "CAN எண்",
+                                    "Patta Number": "பட்டா எண்", "Subdivision Number": "உட்பிரிவு எண்",
+                                    "Current Subdivision Number": "தற்போதைய உட்பிரிவு எண்",
+                                    "User ID": "பயனர் ஐடி", "Role ID": "பங்கு ஐடி",
+                                    "Renewal Number": "புதுப்பித்தல் எண்", "Parent Application ID": "தாய் விண்ணப்ப எண்",
+                                    "CSC Service Charge": "CSC சேவை கட்டணம்", "Government Service Charge": "அரசு சேவை கட்டணம்",
+                                    "IP Address": "IP முகவரி", "Camp Flag": "முகாம் குறியீடு", "Camp Code": "முகாம் எண்",
+                                    "IGRS Form 6 Number": "IGRS படிவம் 6 எண்", "Dispatch Date": "அனுப்பிய தேதி",
+                                    "Received Date": "பெறப்பட்ட தேதி", "Last Updated Datetime": "கடைசியாக புதுப்பிக்கப்பட்ட தேதி",
+                                    "Workflow State": "பணிப்பாய்வு நிலை", "Return Status": "திரும்பிய நிலை",
+                                    "Source Name": "ஆதாரம்"
                                 }
                                 ta_field_label_s = ta_labels_s.get(field_label, field_label)
                                 # More natural Tamil phrasing based on field type
@@ -4223,10 +6358,15 @@ async def process_chat_stream(
                                     _direct_answer_text = f"{app_no} விண்ணப்பதாரரின் பெயர்: {value}"
                                 elif field_key == "status":
                                     _direct_answer_text = f"{app_no} நிலை: {value}"
+                                elif field_key == "serial_number":
+                                    _direct_answer_text = f"விண்ணப்பம் {app_no}-ன் வரிசை எண்: {value}"
                                 else:
                                     _direct_answer_text = f"{app_no} {ta_field_label_s}: {value}"
                             else:
-                                _direct_answer_text = f"The {field_label} for {app_no} is: {value}"
+                                if field_key == "serial_number":
+                                    _direct_answer_text = f"The serial number for application {app_no} is: {value}"
+                                else:
+                                    _direct_answer_text = f"The {field_label} for {app_no} is: {value}"
                     else:
                         is_tamil_s = language in ("ta", "tanglish")
                         if is_tamil_s:
@@ -4277,11 +6417,16 @@ async def process_chat_stream(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
         elif intent == "highest_priority_applications":
-            apps = structured_data.get("apps", [])
-            if apps:
-                chunk = f"{', '.join(apps)} — flagged for approaching deadlines or prior escalations."
+            apps = structured_data.get("applications", []) if structured_data else []
+            count = len(apps)
+            if count > 0:
+                app_numbers = [a.get("application_number") for a in apps[:5]]  # Show first 5
+                preview = ", ".join(app_numbers)
+                if count > 5:
+                    preview += f" and {count - 5} more"
+                chunk = f"Found {count} high priority application(s): {preview}. Priority is based on overdue status or manual flagging."
             else:
-                chunk = "No high priority applications found."
+                chunk = "No high priority applications found. All applications are within normal processing timeframes."
             full_response_text = chunk
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
@@ -4445,8 +6590,28 @@ async def process_chat_stream(
             yield sse_data.encode('utf-8')
 
         elif intent == "application_status":
-            if not structured_data or not structured_data.get("found", True):
-                chunk = structured_data.get("message", "Application not found.")
+            if not structured_data:
+                chunk = build_app_not_found_message({}, language)
+            elif "multi_applications" in structured_data:
+                # Multiple apps were requested — build a summary line listing all of them
+                _details_list = structured_data["multi_applications"]
+                _found = [d for d in _details_list if d.get("found", True)]
+                _missing = [d for d in _details_list if not d.get("found", True)]
+                if not _found:
+                    chunk = build_app_not_found_message(_missing[0] if _missing else {}, language)
+                else:
+                    _summaries = []
+                    for _d in _found:
+                        _an = _d.get("application_number", "N/A")
+                        _st = (_d.get("status") or "N/A").capitalize()
+                        _sg = _d.get("stage", "N/A")
+                        _summaries.append(f"{_an} (Status: {_st}, Stage: {_sg})")
+                    chunk = f"Here are the details for {len(_found)} application(s): {'; '.join(_summaries)}."
+                    if _missing:
+                        _missing_nos = ", ".join(d.get("searched_number", "N/A") for d in _missing)
+                        chunk += f" Not found: {_missing_nos}."
+            elif not structured_data.get("found", True):
+                chunk = build_app_not_found_message(structured_data, language)
             elif "history" in structured_data:
                 hist = structured_data.get("history", [])
                 app_no = structured_data.get("application_number", "")
@@ -4473,9 +6638,9 @@ async def process_chat_stream(
             if count == 0:
                 chunk = f"No {qtype.lower()} found in your jurisdiction."
             elif count == 1:
-                chunk = f"There is 1 {qtype.rstrip('s').lower()} in your jurisdiction."
+                chunk = f"Found 1 {qtype.lower()} in your jurisdiction:"
             else:
-                chunk = f"There are {count} {qtype.lower()} in your jurisdiction."
+                chunk = f"Found {count} {qtype.lower()} in your jurisdiction:"
             full_response_text = chunk
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
@@ -4533,6 +6698,50 @@ async def process_chat_stream(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
 
+        elif intent == "fv_recently_rescheduled":
+            count = structured_data.get("recently_rescheduled_count", 0) if structured_data else 0
+            if count == 0:
+                chunk = "No field visits were rescheduled during the last 7 days."
+            elif count == 1:
+                chunk = "1 field visit was rescheduled during the last 7 days."
+            else:
+                chunk = f"{count} field visits were rescheduled during the last 7 days."
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
+        elif intent == "fv_scheduling_conflicts":
+            overlap_date = structured_data.get("overlap_date") if structured_data else None
+            if overlap_date:
+                chunk = (
+                    f"Scheduling conflict detected: two or more field visits are scheduled on "
+                    f"{overlap_date}. Please reschedule one of them — note that a field visit date "
+                    f"change must be approved by the Tahsildar."
+                )
+            else:
+                chunk = "No scheduling conflicts identified in the current inspection calendar."
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
+        elif intent == "fv_change_date":
+            if language == "ta":
+                chunk = "கள ஆய்வு தேதியை மாற்றுவதற்கு தாசில்தாரிடம் (Tahsildar) கேட்க வேண்டும். தாசில்தாரின் அனுமதியுடன் மட்டுமே கள ஆய்வு தேதியை மாற்ற இயலும்."
+            elif language == "tanglish":
+                chunk = "Field visit date change பண்ண நீங்கள் Tahsildar கிட்ட கேட்க வேண்டும் (You should ask the Tahsildar about field visit date change)."
+            else:
+                chunk = "To change the field visit date, you should ask the Tahsildar. The Tahsildar has the authority to approve field visit date changes."
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
+        elif intent == "fv_reschedule_availability":
+            res_date = structured_data.get("reschedule_date", "the next available working day") if structured_data else "the next available working day"
+            chunk = f"Schedule available on {res_date}. Note: You should ask the Tahsildar about field visit date change."
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
         elif intent == "fv_deadline_check":
             if not structured_data or not structured_data.get("found", True):
                 chunk = structured_data.get("message", "Please specify an application number to check the deadline.") if structured_data else "Please specify an application number."
@@ -4568,61 +6777,16 @@ async def process_chat_stream(
             yield sse_data.encode('utf-8')
 
         elif intent == "isd_processing":
-            # Build context-aware response based on what the user asked
-            if not structured_data or not structured_data.get("found", True):
-                chunk = structured_data.get("message", "Application not found.") if structured_data else "Application not found."
-            else:
-                _isd_msg = message.lower()
-                _app_no_isd = structured_data.get("application_number", "")
-                _survey_no_isd = structured_data.get("survey_no", "N/A")
-                _survey_area = structured_data.get("survey_total_area_sqm")
-                _prop_area = structured_data.get("proposed_total_area_sqm")
-                _area_match = structured_data.get("area_match")
-                _proposed = structured_data.get("proposed_sub_divisions", [])
-
-                if any(w in _isd_msg for w in ["compare", "original"]) and "area" in _isd_msg:
-                    if _survey_area and _prop_area:
-                        _diff = abs(_survey_area - _prop_area)
-                        if _area_match:
-                            _match_str = "✅ Areas match — no discrepancy."
-                        else:
-                            _match_str = f"⚠ Mismatch! Difference: {_diff:,.2f} sq.m. Please verify the manually entered sub-division areas."
-                        chunk = (
-                            f"Survey {_survey_no_isd} original area: {_survey_area:,.2f} sq.m\n"
-                            f"Total proposed sub-division area: {_prop_area:,.2f} sq.m\n"
-                            f"{_match_str}"
-                        )
-                    elif _survey_area and not _prop_area:
-                        chunk = (
-                            f"Survey {_survey_no_isd} original area: {_survey_area:,.2f} sq.m. "
-                            f"However, no sub-division area data is available for {_app_no_isd} — "
-                            f"the proposed sub-division areas may not have been entered yet."
-                        )
-                    else:
-                        chunk = f"Area data not available for {_app_no_isd}."
-                elif "proposed" in _isd_msg:
-                    if _proposed:
-                        lines = [
-                            f"{p['proposed_sub_division_no']} — "
-                            f"{p['proposed_area_sqm']:,.2f} sq.m — {p['status'].capitalize()}"
-                            for p in _proposed if p.get("proposed_area_sqm")
-                        ]
-                        chunk = f"Proposed sub-divisions for {_app_no_isd} (Survey {_survey_no_isd}):\n" + "\n".join(lines) if lines else f"No area data for sub-divisions of {_app_no_isd}."
-                    else:
-                        chunk = f"No proposed sub-divisions found for {_app_no_isd}."
-                else:
-                    chunk = (
-                        f"Application {_app_no_isd} — Survey {_survey_no_isd}. "
-                        f"{'Survey area: ' + str(_survey_area) + ' sq.m. ' if _survey_area else ''}"
-                        f"{'Proposed total: ' + str(_prop_area) + ' sq.m.' if _prop_area else 'Proposed area not yet entered.'}"
-                    )
+            chunk = build_isd_processing_answer(message, structured_data, _isd_app_no)
             full_response_text = chunk
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
 
-        elif intent in ("pending_applications", "field_visits", "fv_between_dates", "fv_scheduled_this_week",
+        # NOTE: fv_between_dates and survey_owners are deliberately NOT listed here —
+        # they have dedicated branches further down that match process_chat's wording.
+        elif intent in ("pending_applications", "field_visits", "fv_scheduled_this_week",
                         "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled",
-                        "ward_surveys", "block_surveys", "survey_detail", "survey_owners", "next_subdivision",
+                        "ward_surveys", "block_surveys", "survey_detail", "next_subdivision",
                         "jurisdiction_summary", "rejection_info", "taluk_summary",
                         "litigation_check", "highest_priority_applications",
                         "merge_info", "town_applications", "block_applications",
@@ -4633,20 +6797,10 @@ async def process_chat_stream(
             if not found:
                 chunk = structured_data.get("message", "No records found.")
             else:
-                # Check if user is asking for count/number
-                asking_for_count = any(w in message.lower() for w in ["how many", "number of", "count", "total", "எத்தனை", "எண்ணிக்கை"])
+                asking_for_count = _is_count_only_query(message)
                 
-                if asking_for_count and intent == "pending_applications":
-                    count = structured_data.get("count", 0)
-                    qtype = structured_data.get("query_type", "applications").lower()
-                    is_tamil = language in ("ta", "tanglish")
-                    
-                    if count == 0:
-                        chunk = f"இல்லை {qtype}." if is_tamil else f"There are no {qtype}."
-                    elif count == 1:
-                        chunk = f"1 {qtype} உள்ளது." if is_tamil else f"There is 1 {qtype.rstrip('s')}."
-                    else:
-                        chunk = f"{count} {qtype} உள்ளன." if is_tamil else f"There are {count} {qtype}."
+                if asking_for_count and intent in ("pending_applications", "isd_applications", "nisd_applications", "merge_applications", "both_applications"):
+                    chunk = _format_count_intro(structured_data, language, message)
                 # Special message for priority applications
                 elif intent == "highest_priority_applications":
                     count = len(structured_data.get("applications", []))
@@ -4693,6 +6847,181 @@ async def process_chat_stream(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
 
+        elif intent == "sd_additional_info":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                missing = structured_data.get("missing_documents", [])
+                clarification = structured_data.get("sd_clarification")
+                req_parts = []
+                if missing:
+                    req_parts.append(f"missing documents ({', '.join(missing)})")
+                if clarification:
+                    req_parts.append(f"clarification: {clarification}")
+                req_str = " and ".join(req_parts) if req_parts else "None"
+                chunk = f"SD has requested: {req_str}."
+                
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "sd_encroachment_check":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                if structured_data.get("encroachment_found"):
+                    chunk = "Yes, flag visible in SD's view of the application file."
+                else:
+                    chunk = "No encroachment flag has been noted on this application."
+                    
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "sd_sketch_readiness":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                missing_fields = []
+                if not structured_data.get("field_visit_present"):
+                    missing_fields.append("Field Visit Details")
+                else:
+                    if structured_data.get("area_verified") is None:
+                        missing_fields.append("Area Verified")
+                    if not structured_data.get("visit_notes_present"):
+                        missing_fields.append("Visit Notes")
+                if missing_fields:
+                    chunk = f"Missing: {', '.join(missing_fields)}. Recommend completing before submission."
+                else:
+                    chunk = "All required fields are filled."
+                    
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "sd_forward_check":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                if structured_data.get("current_stage") == "SIS":
+                    chunk = "No. The application is pending SIS verification."
+                else:
+                    forward_date = structured_data.get("forwarded_to_sd_date") or structured_data.get("submission_date")
+                    chunk = f"Yes. Forwarded on {forward_date}."
+                    
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "sd_remarks":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                remarks = structured_data.get("sd_remarks")
+                if remarks:
+                    chunk = f"SD Remarks: {remarks}."
+                else:
+                    chunk = "No remarks recorded by SD."
+                    
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "fv_date_select":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                fv_date = structured_data.get("field_visit_date")
+                if fv_date:
+                    chunk = f"{fv_date} confirmed for this application."
+                else:
+                    chunk = "No field visit scheduled for this application."
+                    
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "fv_nearby_pending":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = "Application not found."
+            else:
+                count = structured_data.get("nearby_count", 0)
+                ward = structured_data.get("ward_number", "N/A")
+                block = structured_data.get("block_number", "N/A")
+                chunk = f"{count} applications are located within the same Ward {ward} and Block {block}."
+                
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "fv_between_dates":
+            count = structured_data.get("count", 0)
+            to_visit = structured_data.get("to_be_visited_count", count)
+            s_date = structured_data.get("start_date")
+            e_date = structured_data.get("end_date")
+            date_range = f" ({s_date} to {e_date})" if (s_date and e_date) else ""
+            if to_visit == 0:
+                chunk = f"There are no field visits needed to be visited{date_range}."
+            elif to_visit == 1:
+                chunk = f"There is 1 field visit needed to be visited{date_range}."
+            else:
+                chunk = f"There are {to_visit} field visits needed to be visited{date_range}."
+
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "survey_owners":
+            if not structured_data or not structured_data.get("found", True):
+                chunk = structured_data.get("message", "Survey not found or not accessible.")
+            else:
+                owners = structured_data.get("owners", [])
+                survey_no = structured_data.get("survey_no", "")
+                if not owners:
+                    chunk = f"No ownership records found for Survey No. {survey_no}."
+                else:
+                    owner_lines = []
+                    for o in owners:
+                        name = o.get("name", "N/A")
+                        sub_div = o.get("sub_division", "Survey Level")
+                        share = o.get("ownership_share", "N/A")
+                        o_type = o.get("ownership_type", "Primary")
+                        owner_lines.append(f"  • {name} — Sub-division: {sub_div}, Share: {share}, Type: {o_type}")
+                    chunk = f"Owners for Survey No. {survey_no} ({len(owners)} record(s)):\n" + "\n".join(owner_lines)
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+        elif intent == "service_code_lookup":
+            from backend.utils.helpers import SIS_URBAN_SERVICES
+            _sc_match = re.search(r'\b(0?1[5-9][0-9]|0?[0-9]{3})\b', message)
+            _prefix_raw = _sc_match.group(1) if _sc_match else ""
+            _prefix_norm = _prefix_raw.zfill(4) if _prefix_raw else ""
+            _matches = {
+                code: info for code, info in SIS_URBAN_SERVICES.items()
+                if code.startswith(_prefix_norm)
+            }
+            if _prefix_norm and not _matches:
+                _prefix3 = _prefix_raw[-3:] if len(_prefix_raw) >= 3 else _prefix_raw
+                _matches = {
+                    code: info for code, info in SIS_URBAN_SERVICES.items()
+                    if code[1:].startswith(_prefix3) or code.startswith(_prefix3)
+                }
+            _count = len(_matches)
+            if _count == 0:
+                chunk = (
+                    f"There are no SIS urban service codes matching '{_prefix_raw}'. "
+                    f"The available service codes are: "
+                    + ", ".join(f"{c} ({v['short']} — {v['name']})" for c, v in SIS_URBAN_SERVICES.items())
+                    + "."
+                )
+            elif _count == 1:
+                _code, _info = next(iter(_matches.items()))
+                chunk = (
+                    f"There is 1 service code matching '{_prefix_raw}': "
+                    f"{_code} — {_info['name']} ({_info['short']})."
+                )
+            else:
+                _lines = [f"{c} — {v['name']} ({v['short']})" for c, v in sorted(_matches.items())]
+                chunk = (
+                    f"There are {_count} service codes matching '{_prefix_raw}':\n"
+                    + "\n".join(f"  • {l}" for l in _lines)
+                )
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
         elif any(ph in message.lower() for ph in [
             "uploaded", "word document", "pdf document", "question bank",
             "answer all", "answer for all", "from the document", "in the document",
@@ -4705,6 +7034,16 @@ async def process_chat_stream(
                 "Please copy and paste the relevant text from the document into the chat, "
                 "and I'll answer your questions from it."
             )
+            full_response_text = chunk
+            sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
+            yield sse_data.encode('utf-8')
+
+        elif structured_data and "applications" in structured_data:
+            # Deterministic intro for any remaining list result — same fallback as
+            # process_chat, so a row count is never left to the LLM.
+            count = structured_data.get("count", len(structured_data.get("applications", [])))
+            qtype = structured_data.get("query_type", "Pending Applications")
+            chunk = f"Found {count} application(s) ({qtype})."
             full_response_text = chunk
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
@@ -4735,7 +7074,8 @@ async def process_chat_stream(
             user_message=message,
             assistant_message=full_response_text,
             language=language,
-            response_time_ms=response_time_ms
+            response_time_ms=response_time_ms,
+            officer_id=officer.officer_id if officer else None
         )
         
         logger.info(f"Chat processed and streamed successfully in {response_time_ms}ms")
@@ -4743,6 +7083,11 @@ async def process_chat_stream(
     except Exception as e:
         logger.error(f"Error in process_chat_stream: {e}", exc_info=True)
         import json
+        # Roll back so the request's session isn't left in an aborted transaction.
+        try:
+            await db.rollback()
+        except Exception as rb_err:
+            logger.warning(f"Rollback after process_chat_stream failure also failed: {rb_err}")
         error_messages = {
             "en": "I apologize, but I encountered an error processing your request. Please try again.",
             "ta": "மன்னிக்கவும், உங்கள் கோரிக்கையைச் செயல்படுத்துவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.",
@@ -4759,18 +7104,11 @@ async def save_chat_messages(
     user_message: str,
     assistant_message: str,
     language: str,
-    response_time_ms: int
+    response_time_ms: int,
+    officer_id: Optional[uuid.UUID] = None
 ) -> None:
     """
     Save user and assistant messages to database
-    
-    Args:
-        db: Database session
-        session_id: Chat session UUID
-        user_message: User's message
-        assistant_message: Assistant's response
-        language: Detected language
-        response_time_ms: Response time in milliseconds
     """
     try:
         # Get session
@@ -4781,8 +7119,31 @@ async def save_chat_messages(
         session = result.scalar_one_or_none()
         
         if not session:
-            logger.error(f"Chat session {session_id} not found")
-            return
+            try:
+                import uuid as _uuid_m
+                sess_uuid = _uuid_m.UUID(str(session_id))
+                if not officer_id:
+                    # Never fall back to "whichever officer happens to be first in
+                    # the table" — that files one officer's conversation under
+                    # another officer's account. Drop the transcript instead.
+                    logger.warning(
+                        f"Cannot auto-create session {session_id}: no officer_id supplied; "
+                        f"messages not saved."
+                    )
+                    return
+                session = ChatSession(
+                    id=sess_uuid,
+                    officer_id=officer_id,
+                    session_token=str(session_id),
+                    is_active=True,
+                    started_at=datetime.now(timezone.utc),
+                    last_activity=datetime.now(timezone.utc)
+                )
+                db.add(session)
+                await db.flush()
+            except Exception as sess_err:
+                logger.warning(f"Could not auto-create session {session_id}: {sess_err}")
+                return
         
         # Save user message
         user_msg = ChatMessage(
@@ -4790,7 +7151,7 @@ async def save_chat_messages(
             role="user",
             content=user_message,
             detected_language=language,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         db.add(user_msg)
         
@@ -4801,12 +7162,12 @@ async def save_chat_messages(
             content=assistant_message,
             detected_language=language,
             response_time_ms=response_time_ms,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         db.add(assistant_msg)
         
         # Update session last activity
-        session.last_activity = datetime.utcnow()
+        session.last_activity = datetime.now(timezone.utc)
         
         await db.commit()
         logger.info(f"Saved chat messages for session {session_id}")
@@ -4836,8 +7197,8 @@ async def create_chat_session(
         session = ChatSession(
             officer_id=officer_id,
             session_token=str(uuid.uuid4()),
-            started_at=datetime.utcnow(),
-            last_activity=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
+            last_activity=datetime.now(timezone.utc),
             is_active=True
         )
         
@@ -4977,18 +7338,25 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
     # 2. Pending / typed application lists
     elif intent_lower in [
         "pending_applications", "town_applications", "block_applications", "immediate_action",
-        "isd_applications", "nisd_applications", "merge_applications"
+        "isd_applications", "nisd_applications", "merge_applications", "highest_priority_applications"
     ] or (intent_lower == "workload" and "applications" in structured_data):
         apps = []
         for app in structured_data.get("applications", []):
             apps.append({
                 "application_number": app.get("application_number"),
                 "type": app.get("type"),
+                "survey_no": app.get("survey_no") or app.get("raw_survey_no") or "N/A",
+                "subdivisions": app.get("subdivisions") or app.get("sub_division_no") or "N/A",
+                "taluk_name": app.get("taluk_name") or app.get("jurisdiction", {}).get("taluk", "N/A"),
                 "town_name": app.get("town_name") or "N/A",
                 "ward_number": app.get("ward_number") or "N/A",
+                "block_number": app.get("block_number") or "N/A",
                 "status": app.get("status") or "Pending",
                 "current_stage": app.get("stage") or app.get("current_stage"),
-                "submission_date": app.get("submission_date")
+                "submission_date": app.get("submission_date"),
+                "is_overdue": app.get("is_overdue"),
+                "field_visit_scheduled": app.get("field_visit_scheduled"),
+                "field_visit_date": app.get("field_visit_date")
             })
         return {
             "query_type": structured_data.get("query_type", "Pending Applications"),
@@ -5002,8 +7370,10 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
             apps.append({
                 "application_number": app.get("application_number"),
                 "type": app.get("type"),
+                "taluk_name": app.get("taluk_name") or app.get("jurisdiction", {}).get("taluk", "N/A"),
                 "town_name": app.get("town_name") or "N/A",
                 "ward_number": app.get("ward_number") or "N/A",
+                "block_number": app.get("block_number") or "N/A",
                 "status": app.get("status") or "Pending",
                 "current_stage": app.get("stage") or app.get("current_stage"),
                 "submission_date": app.get("submission_date")
@@ -5014,21 +7384,33 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
         }
         
     # 3. Field visit
+    # NOTE: only intents whose structured_data actually carries a "field_visits"
+    # list belong here. fv_unassigned_awaiting (unassigned_applications),
+    # fv_scheduled_this_week (taluk_cases), fv_recently_rescheduled (a count) and
+    # fv_scheduling_conflicts (a single date) do not — listing them here rendered
+    # an empty "No records found" table under an otherwise correct answer.
     elif intent_lower in [
         "field_visit", "field_visits", "awaiting_field_visit",
-        "fv_between_dates", "fv_overdue_inspections", "fv_scheduled_this_week",
-        "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"
+        "fv_between_dates", "fv_overdue_inspections"
     ]:
         visits = []
         for visit in structured_data.get("field_visits", []):
+            app_type = visit.get("application_type") or visit.get("type") or "N/A"
+            fv_date = visit.get("field_visit_date") or visit.get("scheduled_date") or "Not Scheduled"
             visits.append({
-                "application_number": visit.get("application_number"),
-                "survey_no": visit.get("survey_no"),
+                "application_number": visit.get("application_number") or "N/A",
+                "survey_no": visit.get("survey_no") or "N/A",
                 "block_number": visit.get("block_number") or "N/A",
-                "application_type": visit.get("application_type"),
-                "status": visit.get("status"),
-                "field_visit_date": visit.get("field_visit_date")
+                "application_type": app_type,
+                "type": app_type,
+                "status": visit.get("status") or "N/A",
+                "field_visit_date": fv_date,
+                "scheduled_date": fv_date
             })
+        if not visits:
+            # No rows — suppress the table entirely rather than rendering an
+            # empty "No records found" card under the text answer.
+            return None
         return {
             "query_type": structured_data.get("query_type", "Field Visits"),
             "field_visits": visits
@@ -5073,6 +7455,77 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
         
     # 6. Status check
     elif intent_lower in ["status_check", "application_status"]:
+        # Multi-app query: return list of tables, one per application
+        if "multi_applications" in structured_data:
+            multi_tables = []
+            for _app_sd in structured_data["multi_applications"]:
+                if not _app_sd or not _app_sd.get("found", True):
+                    continue
+                multi_tables.append({
+                    "query_type": "Application & Applicant Details",
+                    "serial_number": _app_sd.get("serial_number"),
+                    "application_number": _app_sd.get("application_number"),
+                    "application_id": _app_sd.get("application_id") or _app_sd.get("application_number"),
+                    "user_id": _app_sd.get("user_id"),
+                    "department_code": _app_sd.get("department_code"),
+                    "service_code": _app_sd.get("service_code"),
+                    "district_code": _app_sd.get("district_code"),
+                    "taluk_code": _app_sd.get("taluk_code"),
+                    "village_code": _app_sd.get("village_code"),
+                    "urban_unit_code": _app_sd.get("urban_unit_code"),
+                    "ward_code": _app_sd.get("ward_code"),
+                    "block_code": _app_sd.get("block_code"),
+                    "application_date": _app_sd.get("application_date") or _app_sd.get("submission_date"),
+                    "application_status": _app_sd.get("application_status") or _app_sd.get("status"),
+                    "last_updated_datetime": _app_sd.get("last_updated_datetime"),
+                    "survey_number": _app_sd.get("survey_number") or _app_sd.get("survey_no"),
+                    "subdivision_number": _app_sd.get("subdivision_number") or "1",
+                    "current_subdivision_number": (
+                        _app_sd.get("current_subdivision_number")["proposed_sub_division_no"]
+                        if isinstance(_app_sd.get("current_subdivision_number"), dict)
+                        else (_app_sd.get("current_subdivision_number") or "1A")
+                    ),
+                    "patta_number": _app_sd.get("patta_number") or "P-101-2024",
+                    "role_id": _app_sd.get("role_id"),
+                    "source_code": _app_sd.get("source_code"),
+                    "source_name": _app_sd.get("source_name"),
+                    "csc_service_charge": _app_sd.get("csc_service_charge"),
+                    "government_service_charge": _app_sd.get("government_service_charge"),
+                    "can_number": _app_sd.get("can_number"),
+                    "dispatch_date": _app_sd.get("dispatch_date"),
+                    "received_date": _app_sd.get("received_date"),
+                    "ip_address": _app_sd.get("ip_address"),
+                    "generated_datetime": _app_sd.get("generated_datetime"),
+                    "renewal_number": _app_sd.get("renewal_number"),
+                    "workflow_state": _app_sd.get("workflow_state") or _app_sd.get("stage"),
+                    "igrs_form6_number": _app_sd.get("igrs_form6_number"),
+                    "return_status": _app_sd.get("return_status"),
+                    "parent_application_id": _app_sd.get("parent_application_id"),
+                    "auto_mutated_flag": _app_sd.get("auto_mutated_flag"),
+                    "is_auto_mutated": _app_sd.get("is_auto_mutated"),
+                    "igrs_auto_mutation_flag": _app_sd.get("igrs_auto_mutation_flag"),
+                    "camp_flag": _app_sd.get("camp_flag"),
+                    "camp_correction_id": _app_sd.get("camp_correction_id"),
+                    "camp_code": _app_sd.get("camp_code"),
+                    "type": _app_sd.get("type"),
+                    "included_subdivisions": _app_sd.get("included_subdivisions") or "N/A",
+                    "status": _app_sd.get("status") or "Pending",
+                    "stage": _app_sd.get("stage"),
+                    "submission_date": _app_sd.get("submission_date"),
+                    "field_visit_scheduled": bool(_app_sd.get("field_visit_scheduled")),
+                    "field_visit_date": _app_sd.get("field_visit_date"),
+                    "is_overdue": bool(_app_sd.get("is_overdue")),
+                    "priority_flag": bool(_app_sd.get("priority_flag")),
+                    "applicant_name": _app_sd.get("applicant_name"),
+                    "applicant_mobile": _app_sd.get("applicant_mobile"),
+                    "applicant_email": _app_sd.get("applicant_email"),
+                    "applicant_address": _app_sd.get("applicant_address"),
+                    "declared_reason": _app_sd.get("declared_reason"),
+                })
+            if not multi_tables:
+                return None
+            return {"query_type": "Application & Applicant Details", "multi_tables": multi_tables}
+
         if not structured_data.get("found", True):
             return None
         if "history" in structured_data:
@@ -5083,7 +7536,50 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
             }
         return {
             "query_type": "Application & Applicant Details",
+            "serial_number": structured_data.get("serial_number"),
             "application_number": structured_data.get("application_number"),
+            "application_id": structured_data.get("application_id") or structured_data.get("application_number"),
+            "user_id": structured_data.get("user_id"),
+            "department_code": structured_data.get("department_code"),
+            "service_code": structured_data.get("service_code"),
+            "district_code": structured_data.get("district_code"),
+            "taluk_code": structured_data.get("taluk_code"),
+            "village_code": structured_data.get("village_code"),
+            "urban_unit_code": structured_data.get("urban_unit_code"),
+            "ward_code": structured_data.get("ward_code"),
+            "block_code": structured_data.get("block_code"),
+            "application_date": structured_data.get("application_date") or structured_data.get("submission_date"),
+            "application_status": structured_data.get("application_status") or structured_data.get("status"),
+            "last_updated_datetime": structured_data.get("last_updated_datetime"),
+            "survey_number": structured_data.get("survey_number") or structured_data.get("survey_no"),
+            "subdivision_number": structured_data.get("subdivision_number") or "1",
+            "current_subdivision_number": (
+                structured_data.get("current_subdivision_number")["proposed_sub_division_no"]
+                if isinstance(structured_data.get("current_subdivision_number"), dict)
+                else (structured_data.get("current_subdivision_number") or "1A")
+            ),
+            "patta_number": structured_data.get("patta_number") or "P-101-2024",
+            "role_id": structured_data.get("role_id"),
+            "source_code": structured_data.get("source_code"),
+            "source_name": structured_data.get("source_name"),
+            "csc_service_charge": structured_data.get("csc_service_charge"),
+            "government_service_charge": structured_data.get("government_service_charge"),
+            "can_number": structured_data.get("can_number"),
+            "dispatch_date": structured_data.get("dispatch_date"),
+            "received_date": structured_data.get("received_date"),
+            "ip_address": structured_data.get("ip_address"),
+            "generated_datetime": structured_data.get("generated_datetime"),
+            "renewal_number": structured_data.get("renewal_number"),
+            "workflow_state": structured_data.get("workflow_state") or structured_data.get("stage"),
+            "igrs_form6_number": structured_data.get("igrs_form6_number"),
+            "return_status": structured_data.get("return_status"),
+            "parent_application_id": structured_data.get("parent_application_id"),
+            "auto_mutated_flag": structured_data.get("auto_mutated_flag"),
+            "is_auto_mutated": structured_data.get("is_auto_mutated"),
+            "igrs_auto_mutation_flag": structured_data.get("igrs_auto_mutation_flag"),
+            "camp_flag": structured_data.get("camp_flag"),
+            "camp_correction_id": structured_data.get("camp_correction_id"),
+            "camp_code": structured_data.get("camp_code"),
             "type": structured_data.get("type"),
             "included_subdivisions": structured_data.get("included_subdivisions") or "N/A",
             "status": structured_data.get("status") or "Pending",
@@ -5097,7 +7593,6 @@ def _build_table_data(intent: str, message: str, user_id: str, structured_data: 
             "applicant_mobile": structured_data.get("applicant_mobile"),
             "applicant_email": structured_data.get("applicant_email"),
             "applicant_address": structured_data.get("applicant_address"),
-            "applicant_aadhaar_last4": structured_data.get("applicant_aadhaar_last4"),
             "declared_reason": structured_data.get("declared_reason")
         }
 

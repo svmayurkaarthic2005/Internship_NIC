@@ -93,7 +93,7 @@ nic_internship/
 ```
 User Message → FastAPI (/chat/stream)
            ↓
-    chatbot.py (orchestrator)
+    services/chatbot.py (orchestrator)
            ↓
     rag.py (intent detection)
            ↓
@@ -156,7 +156,7 @@ Each intent has a dedicated query handler:
 
 **Key Filter**: All queries exclude rejected applications to prevent duplicates
 
-### 5. Chatbot Logic (chatbot.py)
+### 5. Chatbot Logic (services/chatbot.py)
 
 **Response Accuracy**:
 - Direct database responses for count queries

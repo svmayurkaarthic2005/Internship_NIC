@@ -79,11 +79,12 @@ function loadChatHistoryFromStorage() {
 /**
  * Add a single message to history and persist it
  */
-function addMessageToHistory(role, content, language = 'auto') {
+function addMessageToHistory(role, content, language = 'auto', tableData = null) {
     const message = {
         role,
         content,
         language,
+        tableData,
         timestamp: new Date().toISOString()
     };
 
@@ -146,7 +147,11 @@ function loadSessionId() {
  */
 function getChatHistoryForAPI(limit = 10) {
     const history = loadChatHistoryFromStorage();
-    return history.slice(-limit);
+    // Only role/content/language/timestamp are meaningful to the backend —
+    // drop the (potentially large) rendered table payload.
+    return history.slice(-limit).map(({ role, content, language, timestamp }) => ({
+        role, content, language, timestamp
+    }));
 }
 
 // Export API

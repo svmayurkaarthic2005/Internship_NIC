@@ -30,6 +30,7 @@ Step 2: SIS Officer Assignment
 Step 3: SIS Field Visit
 - Officer must schedule field visit within 15 working days from application submission
 - Field visit is mandatory for all ISD applications
+- Field Visit Date Changes: If an SIS officer needs to change or reschedule the date of a field visit, they must ask the Tahsildar for approval. Only the Tahsildar has the authority to approve field visit date changes.
 - Officer verifies the survey number, boundaries, area measurements, and checks for encroachments
 - Officer takes photographs and GPS coordinates during the visit
 - Officer prepares preliminary field notes and sketch

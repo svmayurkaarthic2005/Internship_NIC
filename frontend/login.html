@@ -12,7 +12,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     
     <!-- Lucide Icons with offline fallback -->
-    <script src="js/lucide-fallback.js"></script>
+    <script src="js/lucide-fallback.js?v=20260819_002"></script>
     <script src="https://unpkg.com/lucide@latest" onerror="console.log('Lucide CDN unavailable, using fallback')"></script>
     
     <!-- Stylesheets - Modular CSS -->
@@ -52,7 +52,7 @@
                             <i data-lucide="lock" class="input-icon-new"></i>
                             <input type="password" id="password" name="password" class="form-input-new" placeholder="Enter your Password" required minlength="6" autocomplete="current-password">
                             <button type="button" class="password-toggle-new" id="togglePassword" aria-label="Toggle password visibility">
-                                <i data-lucide="eye-off" class="toggle-icon-new"></i>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="toggle-icon-new"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
                             </button>
                         </div>
                     </div>
@@ -82,9 +82,11 @@
         </div>
     </div>
     
-    <script src="js/auth.js"></script>
+    <script src="js/auth.js?v=20260819_002"></script>
     <script>
-        lucide.createIcons();
+        if (typeof lucide !== 'undefined' && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+        }
     </script>
 </body>
 </html>

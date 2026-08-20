@@ -2,8 +2,16 @@
 Quick verification script to check for duplicate application issues
 Run this anytime to verify the system is clean
 """
+import sys
 import asyncio
 import asyncpg
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 
 async def verify():

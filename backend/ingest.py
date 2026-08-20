@@ -54,6 +54,11 @@ DOCUMENT_CONFIG = {
         "category": "reference",
         "language": "english",
         "source": "official_manual"
+    },
+    "tamilnilam_urban_services_and_districts.txt": {
+        "category": "reference",
+        "language": "bilingual",
+        "source": "tamilnilam_official_portal"
     }
 }
 

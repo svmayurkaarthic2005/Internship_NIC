@@ -1,9 +1,17 @@
 """
 Deep check for missing/NULL values across all critical database fields
 """
+import sys
 import asyncio
 import asyncpg
 from collections import defaultdict
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 
 async def check_missing_values():
