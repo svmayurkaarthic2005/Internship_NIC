@@ -786,6 +786,8 @@ async def _fetch_db_context(message: str, intent: str, user_id: str, db: AsyncSe
         return await _get_fv_nearby_pending_context(message, db)
     elif intent == "fv_scheduled_this_week":
         return await _get_fv_scheduled_this_week_context(message, user_id, db)
+    elif intent == "fv_change_date":
+        return "To change the field visit date, you should ask the Tahsildar. The Tahsildar has the authority to approve field visit date changes."
     elif intent == "fv_reschedule_availability":
         return await _get_fv_reschedule_availability_context(message, user_id, db)
     elif intent == "fv_deadline_check":
@@ -923,7 +925,7 @@ async def _get_fv_reschedule_availability_context(message: str, user_id: str, db
             break
     if not res_date:
         res_date = (datetime.utcnow().date() + timedelta(days=1)).isoformat()
-    return f"Schedule available on {res_date}. The field visit can be rescheduled."
+    return f"Schedule available on {res_date}. Note: You should ask the Tahsildar about field visit date change."
 
 
 # --- ADDED ---
@@ -1252,7 +1254,7 @@ async def handle_chat(message: str, history: list, user_id: str) -> dict:
         db_context = await _fetch_db_context(message, intent, user_id, db)
         kb_chunks = retrieve_context(message, lang, top_k=5)
         
-        bypass_intents = ["active_applications_taluks", "highest_priority_applications", "assigned_today", "immediate_action", "awaiting_field_visit", "workload_by_type", "completion_rate", "pending_longest", "is_nisd_or_isd", "check_documents", "check_sale_deed", "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness", "sd_forward_check", "sd_remarks", "fv_date_select", "fv_nearby_pending", "fv_scheduled_this_week", "fv_between_dates", "fv_reschedule_availability", "fv_deadline_check", "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"]
+        bypass_intents = ["active_applications_taluks", "highest_priority_applications", "assigned_today", "immediate_action", "awaiting_field_visit", "workload_by_type", "completion_rate", "pending_longest", "is_nisd_or_isd", "check_documents", "check_sale_deed", "sd_additional_info", "sd_encroachment_check", "sd_sketch_readiness", "sd_forward_check", "sd_remarks", "fv_date_select", "fv_nearby_pending", "fv_scheduled_this_week", "fv_between_dates", "fv_reschedule_availability", "fv_change_date", "fv_deadline_check", "fv_overdue_inspections", "fv_unassigned_awaiting", "fv_recently_rescheduled", "fv_scheduling_conflicts"]
         
         if intent in bypass_intents or "invalid merged geometry" in message.lower():
             answer = db_context
