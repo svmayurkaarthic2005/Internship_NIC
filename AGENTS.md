@@ -143,6 +143,15 @@ Handled in `rag.py → detect_language()`:
 
 ## Key Domain Concepts
 
+### FMB (Field Measurement Book) - Limited Data
+**Note**: While the database has FMB sketch workflow columns (`sketch_sent_date`, `sketch_received_date` in `isd_transfer_urban_detail`), there is **no actual FMB data** in the current dataset:
+- 31 out of 50 ISD applications have `sketch_sent_date` populated
+- 0 applications have `sketch_received_date` (all NULL)
+- No FMB book numbers, page numbers, or actual sketches stored
+- SD = Senior Draughtsman (Survey Department officer)
+
+The FMB workflow exists in the schema but is not actively used in this test database.
+
 ### Citizen Identifiers
 
 `backend/sample_db/identifiers.py` holds both formats, shared by the seed and
