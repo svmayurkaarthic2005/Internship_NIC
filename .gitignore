@@ -44,10 +44,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# ChromaDB
-vectorstore/
-chroma.sqlite3
-
 # Logs
 *.log
 logs/

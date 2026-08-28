@@ -41,8 +41,16 @@
                 svg.setAttribute('stroke-width', '2');
                 svg.setAttribute('stroke-linecap', 'round');
                 svg.setAttribute('stroke-linejoin', 'round');
-                if (element.className) {
-                    svg.setAttribute('class', element.className);
+                // Read the class with getAttribute, not .className: once this
+                // has run, the element it replaced is an <svg>, whose
+                // .className is an SVGAnimatedString object. Passing that to
+                // setAttribute stringifies it to "[object SVGAnimatedString]",
+                // so every re-render wiped the real classes off the icon --
+                // which is how the send arrow lost .send-icon-new and kept
+                // showing behind the stop square.
+                var cls = element.getAttribute('class');
+                if (cls) {
+                    svg.setAttribute('class', cls);
                 }
                 svg.innerHTML = iconPath;
                 element.parentNode.replaceChild(svg, element);

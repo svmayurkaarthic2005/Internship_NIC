@@ -18,7 +18,7 @@ if sys.platform == "win32":
 
 from backend.config import settings
 from backend.database import engine, Base
-from backend.routers import auth, chat, applications, survey, speech
+from backend.routers import auth, chat, applications, survey
 from backend.schemas import StandardResponse
 
 
@@ -65,16 +65,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"   ⚠️  Ollama connection warning: {e}")
         print(f"      Make sure Ollama is running: ollama serve")
-    
-    # Initialize Speech Service (Faster-Whisper)
-    try:
-        from backend.services.speech_service import get_speech_service
-        speech_service = get_speech_service()
-        speech_service.initialize()
-        print(f"   ✅ Speech service initialized (model: {speech_service.model_size})")
-    except Exception as e:
-        print(f"   ⚠️  Speech service initialization warning: {e}")
-        print(f"      Voice input will not be available")
     
     print("   ✅ API Server Ready")
     print("=" * 60)
@@ -158,7 +148,6 @@ app.include_router(auth.router, tags=["Authentication"])
 app.include_router(chat.router, tags=["Chat"])
 app.include_router(applications.router, tags=["Applications"])
 app.include_router(survey.router, tags=["Survey"])
-app.include_router(speech.router, tags=["Speech"])
 
 # ========== STATIC FILES ==========
 import os

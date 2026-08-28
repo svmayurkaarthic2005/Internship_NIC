@@ -1,0 +1,138 @@
+URBAN LAND REGULATIONS REFERENCE FOR SIS OFFICERS (TAMIL NADU)
+
+This is sample reference material for the SIS chatbot knowledge base. It
+summarises the land rules an urban Sub Inspector Surveyor applies while
+verifying ISD (0154), NISD (0153) and MERGE (0155) applications in the
+TAMILNILAM urban workflow. Figures marked "sample" are illustrative and must be
+checked against the current Government Order before field use.
+
+=== LEGAL BASIS ===
+
+- Tamil Nadu Patta Pass Book Act, 1983 and Rules 1985 — patta issue, mutation,
+  and pass book updates.
+- Tamil Nadu Survey and Boundaries Act, 1923 — survey demarcation, boundary
+  marks, F-line, and appeal survey.
+- Tamil Nadu Town Survey Land Register (TSLR) Manual — urban survey number
+  structure, sub-division numbering, TSLR extract and sketch.
+- Registration Act, 1908 as applied in Tamil Nadu — sale deed registration,
+  Encumbrance Certificate, IGRS Form 6, auto-mutation.
+- Tamil Nadu Urban Land (Ceiling and Regulation) provisions — ULC land
+  sub-division verification (service code 0164).
+- Relevant Government Orders (GO) issued by the Revenue Department and the
+  Survey and Settlement Department, including GO-506 dated 09/12/2023 for
+  settlement of government poramboke to private (service code 0183).
+  (Note: in the workflow, "SD" is the Senior Draughtsman who prepares the
+  sub-division sketch — not the Survey and Settlement Department.)
+
+=== LAND TYPE / CLASSIFICATION CODES ===
+
+The land type code on a parcel controls what verification the SIS must do.
+Sample mapping used in the urban extracts:
+
+- 1 — Residential (நடைமுறை குடியிருப்பு)
+- 2 — Commercial / mixed use
+- 3 — Industrial
+- 4 — Agricultural (wet / dry) inside town limits
+- 5 — Government poramboke (road, channel, tank, burial ground)
+- 6 — Institutional (temple, church, mosque, trust, educational)
+- 7 — Vacant / unclassified
+
+Rules that follow:
+- A sub-division that changes land type (e.g. agricultural to residential) needs
+  reclassification BEFORE the ISD sketch is finalised.
+- Poramboke (type 5) cannot be sub-divided or transferred to a private owner
+  except through a settlement service code (0179 / 0183) with the sanctioning GO
+  quoted.
+- Institutional land (type 6) transfer needs the endorsement of the controlling
+  authority (HR&CE, Wakf Board, Diocese, or trust) on record.
+
+=== MINIMUM EXTENT AND SUB-DIVISION LIMITS (SAMPLE) ===
+
+- Minimum measurable urban parcel: 1 sq.m; areas recorded to 2 decimal places
+  in square metres. Extent may also be shown in ares (1 are = 100 sq.m).
+- Sample minimum plot for a residential sub-division inside a corporation:
+  300 sq.ft (~27.87 sq.m) frontage-permitting; local body building rules
+  override where stricter.
+- A sub-division that would leave any resulting parcel below the local minimum
+  is refused; the applicant is asked to revise the partition.
+- Maximum sub-division depth: 3 levels (145 -> 145/1 -> 145/1A -> 145/1A1).
+  Beyond this the officer records a remark and refers to DIS.
+- Sum of all sub-division extents MUST equal the parent survey extent within a
+  tolerance of +/- 0.5%. Anything outside tolerance needs re-survey and a DIS
+  variance note.
+
+=== NATHAM AND HOUSE-SITE LAND ===
+
+- Natham (habitation) land is recorded in the urban natham chitta with an
+  owner name, relative name, relationship code and ownership share.
+- Natham settlement is service code 0188; owner name correction in TSLR is 0165.
+- A natham parcel with ownership_share blank or "1/1,1" is treated as sole
+  ownership; multiple owner rows on one patta_number are joint owners and every
+  joint owner must sign at the field visit.
+- Door number changes (new_door_number / old_door_number) are handled under
+  street and door number modification (service code 0162), not under ISD.
+
+=== SALE DEED, EC AND REGISTRATION LINKAGE ===
+
+- The sale deed number in the application (registration_document_number, sample
+  form "R/520/1/1188/2022") must match the Sub-Registrar's registered index and
+  the registration_place (e.g. "Tuticorin Joint I", "Tuticorin Joint II").
+- IGRS Form 6 number is a 12-digit reference (sample "202223957844") linking the
+  registered document to the mutation request. It appears on
+  urban_application_log, the NISD/ISD application-info rows and the IGRS owner
+  row.
+- Encumbrance Certificate must show a clear title for the preceding 13 years and
+  be within 3 months of its issue date at the time of verification.
+- igrs_auto_mutation_flag = Y means mutation is expected to post automatically
+  after registration; the SIS still verifies extent and boundaries before the
+  patta transfer order is generated.
+- transaction_status on the transfer detail: "01" = transfer effected,
+  "02/NN" = refused with reason code NN, blank = not yet decided. Only "01" and
+  blank are non-refusals.
+
+=== BOUNDARY MARKS AND F-LINE ===
+
+- Boundary stones carry a number; a moved, missing or renumbered stone is
+  recorded with a photograph and GPS reading and flagged to SD.
+- Disputed urban boundaries are resolved by F-line demarcation (service code
+  0178); an unsatisfied party may seek an F-line appeal survey (0185).
+- GPS coordinates are mandatory for every corner recorded during an ISD field
+  visit; the officer notes the datum (WGS-84) and horizontal accuracy.
+
+=== ENCROACHMENT: REGULATORY TREATMENT ===
+
+- Private-on-public encroachment (onto road, channel, tank) is reported to the
+  local body; the application cannot be approved until the encroached extent is
+  removed or regularised by the competent authority.
+- Public-on-private and neighbour encroachment is recorded with measured extent
+  and a sketch; the transfer may proceed only for the un-encroached extent
+  unless the parties settle.
+- An encroachment flag set at the field visit is visible to SD and blocks
+  automatic approval; resolution typically extends the timeline by 15-30 days.
+
+=== LITIGATION AND STAY ORDERS ===
+
+- A court reference in the EC or revenue records (sample form "O.S. 145/2023",
+  "W.P. 8890/2024") puts the application on "On Hold - Litigation".
+- Record the court name, case number, case type, parties and whether a stay
+  order is active. No SLA clock runs during a litigation hold.
+- The application resumes only on stay vacation, a judgment in the applicant's
+  favour, or a registered settlement between the parties; a fresh field visit
+  may be required after clearance.
+
+=== REVENUE ARREARS ===
+
+- Property tax, water charge and non-tax dues linked to the survey number must
+  be cleared before the patta transfer order is generated.
+- The Zonal Level Tahsildar (ZDT) confirms arrears status during review before
+  approving the patta transfer order; unpaid dues are a documented rejection
+  reason.
+
+=== WHAT THE SIS MUST NOT DO ===
+
+- Do not change a scheduled field visit date without Tahsildar approval.
+- Do not approve a sub-division whose extents do not sum to the parent survey.
+- Do not transfer poramboke or institutional land without the sanctioning
+  authority's order on record.
+- Do not proceed past an active court stay.
+- Do not accept a sale deed that is not traceable in the Sub-Registrar index.

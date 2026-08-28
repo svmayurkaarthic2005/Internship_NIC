@@ -1,0 +1,90 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 1 /Kids [5 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 2763 >>
+stream
+BT
+/F1 9.5 Tf
+13.2 TL
+1 0 0 1 54 800 Tm
+(TOWN SURVEY LAND REGISTER \(TSLR\) EXTRACT  \(SAMPLE / SYNTHETIC\)) Tj
+T* () Tj
+T* (For use with SIS field verification. Not a certified extract.) Tj
+T* () Tj
+T* (--------------------------------------------------------------------------------) Tj
+T* (Extract reference       : TSLR/28-01-001/0015/1355-2B) Tj
+T* (Generated for           : application 2025/0154/28/000012 \(ISD, service code 0154\)) Tj
+T* (Requesting officer      : Csenthil \(SIS-001\), Ward 002) Tj
+T* (Date                    : 2025-06-10) Tj
+T* (--------------------------------------------------------------------------------) Tj
+T* () Tj
+T* (JURISDICTION CHAIN) Tj
+T* (  District           : Thoothukudi            \(code 28\)) Tj
+T* (  Taluk              : Thoothukudi            \(code 01\)) Tj
+T* (  Town / Urban unit  : Thoothukudi            \(code 001\)) Tj
+T* (  Ward               : 002) Tj
+T* (  Block              : 0015) Tj
+T* (  Street             : 0003) Tj
+T* () Tj
+T* (PARCEL RECORD) Tj
+T* (  Town Survey Number      : 1355) Tj
+T* (  Sub-division            : 2B) Tj
+T* (  Current sub-division    : 2B) Tj
+T* (  Patta number            : 7680) Tj
+T* (  Land type code          : 2  \(Commercial / mixed use\)) Tj
+T* (  Registered extent       : 250.00 sq.m   \(2.50 ares\)) Tj
+T* (  Tax rate                : as per Corporation commercial schedule) Tj
+T* (  Door number             : old 12/3  ->  new 12/3A \(street/door modn pending\)) Tj
+T* () Tj
+T* (OWNERSHIP \(from urban natham chitta / patta record\)) Tj
+T* (  Owner \(English\)         : present patta holder) Tj
+T* (  Owner \(Tamil\)           : as recorded on patta 7680) Tj
+T* (  Relationship code       : 4 \(self\)) Tj
+T* (  Ownership share         : 1/1  \(sole\)) Tj
+T* (  Joint owners            : none) Tj
+T* (  CIN / Form 6            : 202223957844) Tj
+T* () Tj
+T* (PARENT / CHILD SURVEY LINKS) Tj
+T* (  Parent survey           : 1355/2  \(from earlier sub-division of 1355\)) Tj
+T* (  Sibling sub-divisions   : 1355/2A \(patta 7679\), 1355/2C \(patta 7681\)) Tj
+T* (  Active applications on 1355/2B : 1  \(this application, 2025/0154/28/000012\)) Tj
+T* () Tj
+T* (SIGNATURE / DSC BLOCK) Tj
+T* (  Digital signature on the register row is held as PKCS#7 \(base64\) in) Tj
+T* (  urban_parcel_signature. Issuer on the sample certificate is) Tj
+T* (  "SIS Sample Data Sub-CA \(NOT A REAL CA\)" - test credential only.) Tj
+T* () Tj
+T* (NOTES FOR THE FIELD OFFICER) Tj
+T* (  - Confirm the registered extent against field measurement \(tolerance +/-0.5%\).) Tj
+T* (  - Sub-division 1355/2B is at depth level 3; going deeper needs a DIS remark.) Tj
+T* (  - Street/door number change is tracked separately under service code 0162.) Tj
+T* () Tj
+T* (Sample extract ends.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000216 00000 n 
+0000003031 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+3157
+%%EOF

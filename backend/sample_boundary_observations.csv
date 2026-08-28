@@ -1,0 +1,5 @@
+application_number,survey_number,subdivision,visit_date,corner,observation,boundary_stone_status,action_required
+2025/0154/28/000012,1355,2B,2025-06-18,A,North-east corner at Street 0003 junction,Present,None
+2025/0154/28/000012,1355,2B,2025-06-18,B,South-east corner abuts town survey 1356,Present,None
+2025/0154/28/000012,1355,2B,2025-06-18,C,South-west corner abuts town survey 1354/1,Missing,Request reinstatement before sketch finalisation
+2025/0154/28/000012,1355,2B,2025-06-18,D,North-west corner follows common wall,Present,None

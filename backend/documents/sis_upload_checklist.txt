@@ -1,0 +1,37 @@
+SIS UPLOAD CHECKLIST - SAMPLE KNOWLEDGE DOCUMENT
+
+This reference is for Sub Inspector Surveyors uploading case records to the
+SIS Chatbot knowledge folder. It contains fictional examples only. Do not
+upload Aadhaar numbers, bank details, passwords, or documents with personal
+information unless the department's approved retention policy permits it.
+
+=== BEFORE UPLOAD ===
+
+- Give each file a descriptive name: application number, document type, and
+  date. Example: 2025_0154_28_000012_field_note_2025-06-18.pdf.
+- Use searchable PDFs whenever possible. A scanned PDF should have OCR text so
+  the chatbot can retrieve its contents.
+- Use UTF-8 for TXT and CSV files. Include column headers in CSV files.
+- State the application number, survey number, patta number, visit date and
+  jurisdiction inside the document.
+
+=== FIELD-VISIT REPORT CONTENT ===
+
+A useful field report records: officer name and employee ID, application and
+survey reference, observed extent, boundary points, GPS datum, documents seen,
+encroachment or litigation observations, photographs/attachments, and a clear
+recommendation. Mark uncertain observations as pending verification.
+
+=== DOCUMENT NAMING AND STATUS ===
+
+Use `draft` for notes that are not final and `verified` only after the officer
+has checked the original documents. A chatbot answer based on an uploaded
+document is guidance; the officer must still verify the application record
+before taking a workflow action.
+
+=== TAMIL QUICK GUIDE / தமிழ் குறிப்பு ===
+
+பதிவேற்றும் கோப்பின் பெயரில் விண்ணப்ப எண், புல எண் மற்றும் தேதி இருக்க வேண்டும்.
+PDF கோப்பில் தேடக்கூடிய உரை இருக்க வேண்டும். CSV கோப்பில் தலைப்பு வரிசை அவசியம்.
+ஆதார் எண், கடவுச்சொல், வங்கி விவரம் போன்ற தேவையற்ற தனிப்பட்ட தகவல்களை
+பதிவேற்ற வேண்டாம்.

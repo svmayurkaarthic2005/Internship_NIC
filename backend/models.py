@@ -282,7 +282,6 @@ class Applicant(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(200), nullable=False)
     mobile = Column(String(15))
-    email = Column(String(200))
     aadhaar_last4 = Column(CHAR(4))
     address = Column(Text)
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
@@ -305,6 +304,7 @@ class Application(Base):
     sale_deed_number = Column(String(100))
     sale_deed_registered = Column(Boolean, default=False)
     declared_reason = Column(String(100))                   # sale, inheritance, partition, gift_deed
+    can_number = Column(String(50))                         # Citizen Access Number (CAN) assigned via CSC/portal
     current_stage = Column(String(30), nullable=False, default='SIS')
     current_status = Column(String(30), nullable=False, default='pending')
     field_visit_date = Column(Date)
@@ -338,13 +338,13 @@ class Application(Base):
         Index('idx_app_officer_status', 'assigned_officer_id', 'current_status'),
         Index('idx_app_officer_overdue', 'assigned_officer_id', 'is_overdue'),
         Index('idx_app_officer_type', 'assigned_officer_id', 'application_type'),
-        # FIX #10: only one *active* application per survey number.
-        # This partial unique index is the constraint verify_no_duplicates.py checks
-        # for; it was documented but never declared, so create_all() never built it.
+        # A survey number can carry more than one active application at once --
+        # the TAMILNILAM extracts contain such parcels, so this is deliberately
+        # a plain index, not a unique one. Enforcing uniqueness here previously
+        # meant the projection had to rewrite real statuses to fit.
         Index(
-            'idx_unique_active_app_per_survey',
+            'idx_active_app_per_survey',
             'survey_number_id',
-            unique=True,
             postgresql_where=text("current_status IN ('pending','in_progress','escalated')"),
         ),
     )
@@ -552,7 +552,7 @@ class ChatMessage(Base):
 class KnowledgeEmbedding(Base):
     """
     Stores document chunks and their vector embeddings for semantic
-    similarity search via pgvector.  Replaces ChromaDB as the vector store.
+    similarity search via pgvector.
 
     Embedding dimension : 768  (nomic-embed-text output size)
     Index type          : HNSW cosine similarity

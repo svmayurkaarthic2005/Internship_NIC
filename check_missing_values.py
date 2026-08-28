@@ -1,10 +1,12 @@
 """
 Deep check for missing/NULL values across all critical database fields
 """
+import os
 import sys
 import asyncio
 import asyncpg
 from collections import defaultdict
+from dotenv import load_dotenv
 
 if sys.platform == "win32":
     try:
@@ -13,15 +15,17 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+load_dotenv()
+
+# Connect the way the app does — to sis_chatbot_db, via .env — not a hardcoded name.
+DB_DSN = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+
 
 async def check_missing_values():
-    conn = await asyncpg.connect(
-        host="127.0.0.1",
-        port=5432,
-        user="postgres",
-        password="Mayur@2005",
-        database="sis_chatbot"
-    )
+    if not DB_DSN:
+        print("DATABASE_URL not found in .env")
+        return
+    conn = await asyncpg.connect(DB_DSN)
     
     print("=" * 80)
     print("COMPREHENSIVE MISSING VALUE ANALYSIS")

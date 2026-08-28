@@ -66,15 +66,13 @@ nic_internship/
 │   │   ├── auth.py                  # Login/register endpoints
 │   │   ├── chat.py                  # Chat & streaming endpoints
 │   │   ├── applications.py          # Application CRUD
-│   │   ├── survey.py                # Survey endpoints
-│   │   └── speech.py                # TTS/STT endpoints
+│   │   └── survey.py                # Survey endpoints
 │   ├── services/
 │   │   ├── chatbot.py               # Main chatbot orchestration
 │   │   ├── rag.py                   # Intent detection & routing
 │   │   ├── postgres.py              # Database query handlers
 │   │   ├── pgvector_store.py        # Vector store operations (pgvector)
-│   │   ├── embeddings.py            # Embedding generation
-│   │   └── speech_service.py        # Speech processing
+│   │   └── embeddings.py            # Embedding generation
 │   └── documents/                   # Knowledge base documents
 ├── frontend/
 │   ├── login.html                   # Login page

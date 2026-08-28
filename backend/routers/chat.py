@@ -2,7 +2,10 @@
 Chat Router
 Endpoints for chatbot interactions
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, BackgroundTasks, status,
+    UploadFile, File, Form,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -13,6 +16,8 @@ from uuid import UUID
 from backend.database import get_db
 from backend.schemas import StandardResponse, OfficerContext
 from backend.dependencies import get_current_officer
+from backend.services import upload_store
+from backend.services import doc_extract
 from backend.services.chatbot import (
     process_chat,
     process_chat_stream,
@@ -197,6 +202,67 @@ async def stream_chat_message(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing stream request: {str(e)}"
         )
+
+
+_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/upload", response_model=StandardResponse)
+async def upload_chat_file(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    current_officer: OfficerContext = Depends(get_current_officer),
+):
+    """
+    Attach a .txt / .csv / .pdf / .docx file to a chat session.
+
+    The text is extracted and kept in a session-scoped store so subsequent chat
+    messages in that session can be answered from it. The legacy binary .doc
+    format is reported as not supported (save as .docx / PDF or paste the text);
+    everything else is rejected.
+    """
+    name = (file.filename or "file").strip()
+    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    raw = await file.read()
+
+    if len(raw) > _UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail="File exceeds the 5 MB limit.")
+
+    if ext in doc_extract.UNSUPPORTED_HINT:
+        return StandardResponse.success_response(
+            data={"supported": False, "filename": name},
+            message=doc_extract.UNSUPPORTED_HINT[ext])
+
+    if ext not in doc_extract.SUPPORTED_EXTS:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail="Unsupported file type. Upload a .txt, .csv, .pdf or .docx file.")
+
+    try:
+        content = doc_extract.extract_text(ext, raw)
+    except doc_extract.ExtractionError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    if not content.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="The file appears to be empty.")
+
+    doc = upload_store.add(session_id, name, content)
+    attached = upload_store.filenames(session_id)
+    logger.info(f"Chat upload: '{name}' ({doc['chars']} chars) -> session {session_id} "
+                f"[{len(attached)}/{upload_store.MAX_DOCS_PER_SESSION} files]")
+    msg = (f'"{name}" attached ({doc["chars"]} characters'
+           + (", trimmed" if doc["truncated"] else "")
+           + f"). {len(attached)} file(s) attached this session — ask your question about them now.")
+    if len(attached) >= upload_store.MAX_DOCS_PER_SESSION:
+        msg += (f" (Limit is {upload_store.MAX_DOCS_PER_SESSION}; the oldest is dropped "
+                f"when you add more.)")
+    return StandardResponse.success_response(
+        data={"supported": True, "filename": name, "chars": doc["chars"],
+              "truncated": doc["truncated"], "attached_files": attached,
+              "attached_count": len(attached),
+              "max_files": upload_store.MAX_DOCS_PER_SESSION},
+        message=msg)
 
 
 @router.get("/sessions", response_model=StandardResponse)

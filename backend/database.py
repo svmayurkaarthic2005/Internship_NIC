@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import URL
+from sqlalchemy.engine import make_url
 from typing import AsyncGenerator
 import sys
 
@@ -13,17 +14,22 @@ from backend.config import settings
 
 # Parse connection parameters from URL for Windows compatibility
 def get_engine_url():
-    """Get database URL with Windows-specific fixes"""
+    """Get database URL with Windows-specific fixes.
+
+    On Windows the URL is rebuilt component-by-component to avoid an asyncpg
+    DNS issue, but the components come from DATABASE_URL -- they used to be
+    hardcoded, which silently ignored .env and pinned the app to one database.
+    """
+    url = make_url(settings.DATABASE_URL)
     if sys.platform == "win32":
-        # On Windows with asyncpg, explicitly build URL to avoid DNS issues
         return URL.create(
             drivername="postgresql+asyncpg",
-            username="postgres",
-            password="Mayur@2005",
-            host="127.0.0.1",
-            port=5432,
-            database="sis_chatbot",
-            query={"ssl": "disable"}
+            username=url.username,
+            password=url.password,
+            host="127.0.0.1" if url.host in (None, "localhost") else url.host,
+            port=url.port or 5432,
+            database=url.database,
+            query={"ssl": "disable"},
         )
     return settings.DATABASE_URL
 

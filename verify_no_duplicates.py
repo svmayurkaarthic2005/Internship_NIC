@@ -2,9 +2,11 @@
 Quick verification script to check for duplicate application issues
 Run this anytime to verify the system is clean
 """
+import os
 import sys
 import asyncio
 import asyncpg
+from dotenv import load_dotenv
 
 if sys.platform == "win32":
     try:
@@ -13,15 +15,17 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+load_dotenv()
+
+# Connect the way the app does — to sis_chatbot_db, via .env — not a hardcoded name.
+DB_DSN = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+
 
 async def verify():
-    conn = await asyncpg.connect(
-        host="127.0.0.1",
-        port=5432,
-        user="postgres",
-        password="Mayur@2005",
-        database="sis_chatbot"
-    )
+    if not DB_DSN:
+        print("DATABASE_URL not found in .env")
+        return
+    conn = await asyncpg.connect(DB_DSN)
     
     print("\n" + "=" * 70)
     print("DUPLICATE APPLICATION VERIFICATION")

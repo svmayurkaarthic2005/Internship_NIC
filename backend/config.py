@@ -38,8 +38,25 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "llama3.1:8b"
     EMBEDDING_MODEL: str = "nomic-embed-text"
-    
-    
+    # Max output tokens per LLM response. Ollama's own default (128 on many
+    # builds) truncates anything longer than a short reply, so this is set
+    # explicitly rather than left to the server default.
+    LLM_NUM_PREDICT: int = 1024
+    # Context window (input + output tokens) the model can see at once.
+    LLM_NUM_CTX: int = 8192
+
+    # Chat file uploads. A big document floods the model's context and
+    # llama3.1:8b starts to hallucinate, so a PDF or Word file over this many
+    # pages is rejected — the officer is asked to upload only the relevant
+    # pages. PDF pages are counted exactly; Word pages are estimated from the
+    # extracted text length (Word has no reliable page count without rendering).
+    UPLOAD_MAX_DOC_PAGES: int = 15
+    # Chars-per-page used to estimate a Word document's page count.
+    UPLOAD_EST_CHARS_PER_PAGE: int = 1800
+    # Hard ceiling on the characters kept from any one upload, whatever its type.
+    UPLOAD_MAX_DOC_CHARS: int = 20000
+
+
     # Environment
     ENVIRONMENT: str = "development"
     

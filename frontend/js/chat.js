@@ -14,6 +14,10 @@ let currentSessionId = null;
 let isTyping = false;
 let messageHistory = [];
 let officerData = null;
+let activeRequestController = null; // AbortController for the in-flight send, so the stop button can cancel it
+let userStoppedResponse = false;    // distinguishes a manual stop from a timeout/network abort
+let longConversationNoticeShown = false; // "start a new chat" notice is shown once per session
+const LONG_CONVERSATION_EXCHANGES = 10;   // user turns before we recommend a new chat
 
 // DOM Elements
 const chatMessages = document.getElementById('chatMessages');
@@ -313,9 +317,15 @@ How can I assist you today?`;
  * Setup event listeners
  */
 function setupEventListeners() {
-    // Send button
+    // Send button — doubles as a stop button while a response is streaming
     if (sendBtn) {
-        sendBtn.addEventListener('click', sendMessage);
+        sendBtn.addEventListener('click', () => {
+            if (isTyping) {
+                stopResponse();
+            } else {
+                sendMessage();
+            }
+        });
     }
     
     // Message input
@@ -323,6 +333,15 @@ function setupEventListeners() {
         messageInput.addEventListener('input', handleInputChange);
         messageInput.addEventListener('keydown', handleKeyDown);
     }
+
+    // Esc stops a streaming response from anywhere on the page -- the officer
+    // should not have to find the button to call it off.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isTyping) {
+            e.preventDefault();
+            stopResponse();
+        }
+    });
     
     // Quick suggestions
     if (quickSuggestions) {
@@ -352,12 +371,6 @@ function setupEventListeners() {
         mobileMenuBtn.addEventListener('click', toggleMobileSidebar);
     }
     
-    // Mic button
-    const micBtn = document.querySelector('.btn-icon-action-new[aria-label="Voice input"]');
-    if (micBtn) {
-        micBtn.addEventListener('click', handleVoiceInput);
-    }
-    
     // Attachment button
     const attachBtn = document.querySelector('.btn-icon-action-new[aria-label="Attach file"]');
     if (attachBtn) {
@@ -370,7 +383,11 @@ function setupEventListeners() {
  */
 function handleInputChange() {
     const text = messageInput.value.trim();
-    sendBtn.disabled = !text || isTyping;
+    // While a response is streaming, the button stays enabled but switches to
+    // "stop" mode (see setSendButtonState) instead of being disabled.
+    if (!isTyping) {
+        sendBtn.disabled = !text;
+    }
     
     // Detect language
     if (text) {
@@ -383,6 +400,39 @@ function handleInputChange() {
     }
 }
 
+/**
+ * Toggle the send button between "send" and "stop" appearance/behaviour.
+ */
+function setSendButtonState(streaming) {
+    if (!sendBtn) return;
+    // Which icon shows is entirely up to the .btn-send-stop class (see
+    // chatbot.css). Setting display on the icons from here does not survive
+    // the icon library re-rendering the send arrow, which left the stop
+    // square drawn on top of it.
+    sendBtn.classList.toggle('btn-send-stop', streaming);
+    const label = streaming ? 'Stop generating' : 'Send message';
+    sendBtn.setAttribute('aria-label', label);
+    sendBtn.setAttribute('title', streaming ? 'Stop generating (Esc)' : 'Send message');
+
+    if (streaming) {
+        sendBtn.disabled = false;
+    } else {
+        // Restore normal enabled/disabled logic based on current input text
+        sendBtn.disabled = !messageInput.value.trim();
+    }
+}
+
+/**
+ * Stop the in-flight response (user clicked the send button while it was
+ * showing the stop icon). Aborts the fetch/stream; whatever text has already
+ * streamed in is kept and saved, matching how ChatGPT-style stop buttons behave.
+ */
+function stopResponse() {
+    if (!activeRequestController) return;
+    userStoppedResponse = true;
+    activeRequestController.abort();
+}
+
 // Safe wrapper — languageIndicator/languageText don't exist in the current chatbot.html
 const _languageText = document.getElementById('languageText');
 const _languageIndicator = document.getElementById('languageIndicator');
@@ -391,10 +441,12 @@ const _languageIndicator = document.getElementById('languageIndicator');
  * Handle keyboard shortcuts
  */
 function handleKeyDown(event) {
-    // Enter without Shift sends message
+    // Enter without Shift sends message. Ignored while a response is
+    // streaming — the button is enabled during that time to act as Stop,
+    // not Send.
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        if (!sendBtn.disabled) {
+        if (!sendBtn.disabled && !isTyping) {
             sendMessage();
         }
     }
@@ -500,19 +552,28 @@ async function sendMessage() {
     // Clear input
     messageInput.value = '';
     messageInput.style.height = 'auto';
-    sendBtn.disabled = true;
     isTyping = true;
+    userStoppedResponse = false;
+    setSendButtonState(true); // send button becomes the stop button
     
     // Show typing indicator
     showTypingIndicator();
     
-    // Abort controller so we can cancel if the LLM hangs
+    // Abort controller so we can cancel if the LLM hangs, or the user clicks Stop
     const controller = new AbortController();
+    activeRequestController = controller;
     // 90 second hard timeout — LLMs can be slow but shouldn't run forever
     const timeoutId = setTimeout(() => {
         controller.abort();
         console.warn('sendMessage: stream timed out after 90s');
     }, 90000);
+    
+    // Hoisted so the catch block can finalize/save a partial response when the
+    // user clicks Stop mid-stream, instead of discarding what already arrived.
+    let messageDiv = null;
+    let contentDiv = null;
+    let aiResponse = '';
+    let capturedTableData = null;
     
     try {
         // chatHistory was snapshotted above, before the current message was stored
@@ -551,11 +612,11 @@ async function sendMessage() {
         // Read SSE Stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
-        let aiResponse = '';
-        let capturedTableData = null;  // capture table_data from SSE
+        aiResponse = '';
+        capturedTableData = null;  // capture table_data from SSE
 
         // Create an empty message div to stream into
-        const messageDiv = document.createElement('div');
+        messageDiv = document.createElement('div');
         messageDiv.className = 'message message-assistant';
         const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         
@@ -580,7 +641,7 @@ async function sendMessage() {
             lucide.createIcons();
         }
         
-        const contentDiv = messageDiv.querySelector('#streaming-content');
+        contentDiv = messageDiv.querySelector('#streaming-content');
         
         // Read stream chunks until done
         let buffer = '';
@@ -679,8 +740,9 @@ async function sendMessage() {
                 window.chatStorage.addMessage('assistant', aiResponse, 'auto', capturedTableData);
             }
             messageHistory = window.chatStorage ? window.chatStorage.load() : [];
+            maybeShowLongConversationNotice();
         }
-        
+
     } catch (error) {
         removeTypingIndicator();
         console.error('=== SEND MESSAGE ERROR ===');
@@ -688,7 +750,37 @@ async function sendMessage() {
         console.error('Error message:', error.message);
         console.error('Full error:', error);
         
-        if (error.name === 'AbortError') {
+        if (error.name === 'AbortError' && userStoppedResponse) {
+            // User clicked Stop — this is not a failure. Keep whatever text
+            // already streamed in, mark it as stopped, and save it just like
+            // a normal completed response.
+            console.log('Response stopped by user');
+            if (messageDiv && messageDiv.parentNode) {
+                if (contentDiv) {
+                    contentDiv.removeAttribute('id');
+                    if (aiResponse) {
+                        contentDiv.innerHTML = formatBotMessage(aiResponse.trimStart()) +
+                            '<div class="stopped-notice">⏹ Response stopped</div>';
+                    } else {
+                        messageDiv.remove(); // nothing streamed in at all — drop the empty bubble
+                    }
+                }
+                if (capturedTableData && aiResponse && typeof renderDataTable === 'function') {
+                    const placeholder = messageDiv.querySelector('.table-container-placeholder');
+                    if (placeholder) {
+                        const tableRenderArea = document.createElement('div');
+                        tableRenderArea.className = 'table-render-area';
+                        placeholder.appendChild(tableRenderArea);
+                        renderDataTable(tableRenderArea, capturedTableData);
+                    }
+                }
+            }
+            if (aiResponse && window.chatStorage) {
+                window.chatStorage.addMessage('assistant', aiResponse, 'auto', capturedTableData);
+                messageHistory = window.chatStorage.load();
+            }
+            showToast('Response stopped', 'info');
+        } else if (error.name === 'AbortError') {
             console.error('Request timed out after 90 seconds');
             showToast('Response timed out. The AI may be busy — please try again.', 'warning');
         } else if (error.message.includes('Failed to fetch')) {
@@ -707,6 +799,9 @@ async function sendMessage() {
     } finally {
         clearTimeout(timeoutId);
         isTyping = false;
+        activeRequestController = null;
+        userStoppedResponse = false;
+        setSendButtonState(false); // restore the normal send icon/behaviour
         handleInputChange();
         console.log('=== SEND MESSAGE COMPLETE ===');
     }
@@ -1067,7 +1162,8 @@ function renderSessionHistory(sessions) {
 async function handleNewChat() {
     chatMessages.innerHTML = '';
     messageHistory = [];
-    
+    longConversationNoticeShown = false;
+
     if (window.chatStorage) {
         window.chatStorage.clear();
     }
@@ -1180,376 +1276,113 @@ window.chatModule = {
 };
 
 /**
- * Voice Recording - Cross-browser compatible using MediaRecorder API
- */
-let voiceRecorder = null;
-let speechAPI = null;
-let isRecordingVoice = false;
-
-/**
- * Initialize voice recording system
- */
-function initializeVoiceRecording() {
-    voiceRecorder = new VoiceRecorder();
-    speechAPI = new SpeechAPI();
-    
-    // Setup callbacks
-    voiceRecorder.onStart = handleRecordingStart;
-    voiceRecorder.onStop = handleRecordingStop;
-    voiceRecorder.onError = handleRecordingError;
-    voiceRecorder.onTimer = handleRecordingTimer;
-}
-
-/**
- * Handle voice input button click
- */
-function handleVoiceInput() {
-    if (!voiceRecorder) {
-        initializeVoiceRecording();
-    }
-    
-    // Check if supported
-    if (!voiceRecorder.isSupported()) {
-        showToast('Voice input not supported in this browser', 'error');
-        return;
-    }
-    
-    // Toggle recording
-    if (isRecordingVoice) {
-        stopVoiceRecording();
-    } else {
-        startVoiceRecording();
-    }
-}
-
-/**
- * Start voice recording
- */
-async function startVoiceRecording() {
-    try {
-        await voiceRecorder.startRecording();
-        isRecordingVoice = true;
-    } catch (error) {
-        console.error('Failed to start recording:', error);
-        isRecordingVoice = false;
-    }
-}
-
-/**
- * Stop voice recording
- */
-function stopVoiceRecording() {
-    if (voiceRecorder && isRecordingVoice) {
-        voiceRecorder.stopRecording();
-    }
-}
-
-/**
- * Handle recording start
- */
-function handleRecordingStart() {
-    const micBtn = document.querySelector('.btn-icon-action-new[aria-label="Voice input"]');
-    
-    if (micBtn) {
-        // Change button to recording state
-        micBtn.style.background = 'var(--danger)';
-        micBtn.style.color = 'white';
-        micBtn.classList.add('recording');
-        
-        // Add pulse animation
-        micBtn.style.animation = 'pulse 1.5s ease-in-out infinite';
-        
-        // Change icon or add recording indicator
-        const icon = micBtn.querySelector('.mic-icon-new');
-        if (icon) {
-            icon.style.animation = 'pulse 1s ease-in-out infinite';
-        }
-        
-        // Add timer display
-        const timerEl = document.createElement('span');
-        timerEl.id = 'recording-timer';
-        timerEl.style.cssText = `
-            position: absolute;
-            top: -24px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--danger);
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            white-space: nowrap;
-        `;
-        timerEl.textContent = '00:00';
-        micBtn.style.position = 'relative';
-        micBtn.appendChild(timerEl);
-    }
-    
-    showToast('🎤 Recording... Click again to stop', 'info');
-}
-
-/**
- * Handle recording stop
- */
-async function handleRecordingStop(audioBlob, duration) {
-    isRecordingVoice = false;
-    
-    const micBtn = document.querySelector('.btn-icon-action-new[aria-label="Voice input"]');
-    
-    // Reset button state
-    if (micBtn) {
-        micBtn.style.background = '';
-        micBtn.style.color = '';
-        micBtn.style.animation = '';
-        micBtn.classList.remove('recording');
-        
-        const icon = micBtn.querySelector('.mic-icon-new');
-        if (icon) {
-            icon.style.animation = '';
-        }
-        
-        const timer = document.getElementById('recording-timer');
-        if (timer) {
-            timer.remove();
-        }
-    }
-    
-    // Check if audio is too short
-    if (duration < 500) {
-        showToast('Recording too short. Please try again.', 'warning');
-        return;
-    }
-    
-    // Log audio details for debugging
-    console.log('📊 Audio Recording Details:');
-    console.log('  - Size:', audioBlob.size, 'bytes');
-    console.log('  - Type:', audioBlob.type);
-    console.log('  - Duration:', duration, 'ms');
-    
-    // Warn if audio is suspiciously small
-    if (audioBlob.size < 1000) {
-        console.warn('⚠️ Audio file is very small, may be empty or corrupted');
-    }
-    
-    // Get access token - with fallback to sessionStorage
-    let accessToken = null;
-    if (officerData && officerData.access_token) {
-        accessToken = officerData.access_token;
-        console.log('✓ Using access token from officerData');
-    } else {
-        // Fallback: try to get from sessionStorage
-        const storedData = sessionStorage.getItem('officer_data');
-        if (storedData) {
-            try {
-                const data = JSON.parse(storedData);
-                accessToken = data.access_token;
-                console.log('✓ Using access token from sessionStorage');
-            } catch (e) {
-                console.error('Failed to parse officer_data from sessionStorage:', e);
-            }
-        }
-    }
-    
-    if (!accessToken) {
-        console.error('❌ No access token available!');
-        showToast('Authentication error. Please refresh the page and try again.', 'error');
-        return;
-    }
-    
-    // Log token info (first 20 chars only for security)
-    console.log('🔐 Token preview:', accessToken.substring(0, 20) + '...');
-    
-    // Show transcribing state
-    showToast('⏳ Transcribing audio...', 'info');
-    
-    try {
-        // Upload and transcribe
-        const result = await speechAPI.transcribe(audioBlob, accessToken);
-        
-        if (result.text && result.text.trim()) {
-            // Fill input with transcribed text
-            messageInput.value = result.text;
-            handleInputChange();
-            messageInput.focus();
-            
-            showToast('✓ Voice input captured: ' + result.text.substring(0, 50), 'success');
-        } else {
-            showToast('No speech detected. Please try again.', 'warning');
-        }
-        
-    } catch (error) {
-        console.error('❌ Transcription error:', error);
-        console.error('Error details:', error.message);
-        
-        let errorMessage = 'Speech recognition failed. ';
-        
-        if (error.message.includes('Could not validate credentials')) {
-            errorMessage = '🔐 Authentication failed. Please refresh the page and log in again.';
-        } else if (error.message.includes('401')) {
-            errorMessage = '🔐 Session expired. Please refresh the page and log in again.';
-        } else if (error.message.includes('permission')) {
-            errorMessage = '🎤 Microphone permission denied.';
-        } else if (error.message.includes('not found')) {
-            errorMessage = '🎤 No microphone found.';
-        } else if (error.message.includes('network') || error.message.includes('fetch')) {
-            errorMessage = '🌐 Network error. Please check your connection.';
-        } else if (error.message.includes('Unsupported audio format')) {
-            errorMessage = '⚠️ ' + error.message;
-        } else if (error.message.includes('FFmpeg') || error.message.includes('ffmpeg')) {
-            errorMessage = '⚠️ Server audio processing error. Contact administrator.';
-        } else if (error.message.includes('No speech detected')) {
-            errorMessage = '🔇 No speech detected. Please speak more clearly and try again.';
-        } else if (error.message.includes('Speech model')) {
-            errorMessage = '⚠️ Speech model error. Please try again or contact support.';
-        } else if (error.message) {
-            errorMessage = '⚠️ ' + error.message;
-        } else {
-            errorMessage += 'Please try again.';
-        }
-        
-        showToast(errorMessage, 'error');
-    }
-}
-
-/**
- * Handle recording error
- */
-function handleRecordingError(error) {
-    isRecordingVoice = false;
-    
-    const micBtn = document.querySelector('.btn-icon-action-new[aria-label="Voice input"]');
-    
-    // Reset button state
-    if (micBtn) {
-        micBtn.style.background = '';
-        micBtn.style.color = '';
-        micBtn.style.animation = '';
-        micBtn.classList.remove('recording');
-        
-        const timer = document.getElementById('recording-timer');
-        if (timer) {
-            timer.remove();
-        }
-    }
-    
-    let errorMessage = 'Voice input error: ';
-    
-    if (error.message.includes('permission denied')) {
-        errorMessage = 'Microphone permission denied. Please enable microphone access in browser settings.';
-    } else if (error.message.includes('not found')) {
-        errorMessage = 'No microphone found. Please connect a microphone and try again.';
-    } else {
-        errorMessage += error.message;
-    }
-    
-    showToast(errorMessage, 'error');
-}
-
-/**
- * Handle recording timer update
- */
-function handleRecordingTimer(seconds) {
-    const timer = document.getElementById('recording-timer');
-    if (timer) {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        timer.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-}
-
-/**
  * Handle file attachment button
  */
 function handleFileAttachment() {
     // Create hidden file input
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = 'image/*,.pdf,.doc,.docx,.txt';
+    fileInput.accept = '.txt,.csv,.pdf,.doc,.docx';
     fileInput.multiple = false;
     fileInput.style.display = 'none';
-    
+
     fileInput.onchange = async (event) => {
         const file = event.target.files[0];
-        
         if (!file) return;
-        
+
         // Validate file size (max 5MB)
         const maxSize = 5 * 1024 * 1024;
         if (file.size > maxSize) {
             showToast('File size must be less than 5MB', 'error');
             return;
         }
-        
-        // Validate file type
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 
-                             'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                             'text/plain'];
-        
-        if (!allowedTypes.includes(file.type)) {
-            showToast('Unsupported file type. Please upload images, PDF, DOC, or TXT files.', 'error');
+
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const isReadable  = ['txt', 'csv', 'pdf', 'docx'].includes(ext);
+        const isLegacyDoc = ext === 'doc';
+
+        // Images and everything else are not accepted — the assistant has no
+        // vision and can only work from text.
+        if (!isReadable && !isLegacyDoc) {
+            showToast('Unsupported file type. Upload a .txt, .csv, PDF or .docx file.', 'error');
             return;
         }
-        
-        // Analyze file
-        showToast('Analyzing file...', 'info');
+
         const fileAnalysis = await analyzeFile(file);
-        
-        // Show file preview with analysis
         showFilePreview(file, fileAnalysis);
-        
-        // For text files: auto-fill the input with file content so the bot can answer.
-        // For PDF/Word: show a clear notice — document content extraction is not yet
-        // supported, so we must NOT send a misleading generic question that causes
-        // the bot to return random / unrelated answers.
-        if (fileAnalysis.category === 'text' || fileAnalysis.category === 'image') {
-            if (fileAnalysis.canAnalyze) {
-                const question = generateFileQuestion(file, fileAnalysis);
-                if (question) {
+
+        if (isReadable) {
+            // Send the file to the backend, which extracts the text and keeps it
+            // for this chat session so every later question can use it.
+            showToast('Uploading file…', 'info');
+            try {
+                const result = await uploadFile(file);
+                const data = result && result.data;
+                if (data && data.supported === false) {
+                    appendAssistantNotice(`📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'not supported')}`);
+                } else {
+                    const msg = (result && result.message) ||
+                        `"${file.name}" attached. Ask your question about it now.`;
+                    appendAssistantNotice(`📎 <strong>${escapeHtml(file.name)}</strong> attached.<br>${escapeHtml(msg)}`);
                     setTimeout(() => {
-                        messageInput.value = question;
+                        messageInput.value = `About ${file.name}: `;
                         handleInputChange();
                         messageInput.focus();
-                    }, 500);
+                    }, 300);
                 }
+            } catch (e) {
+                const why = e && e.detail ? ` ${escapeHtml(e.detail)}` : '';
+                appendAssistantNotice(
+                    `⚠️ Could not attach <strong>${escapeHtml(file.name)}</strong>.${why}<br>` +
+                    `Please paste the relevant text into the chat instead.`);
             }
-        } else if (fileAnalysis.category === 'pdf' || fileAnalysis.category === 'document') {
-            // Show an assistant-style notice directly in the chat
-            const noticeDiv = document.createElement('div');
-            noticeDiv.className = 'message message-assistant';
-            const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-            noticeDiv.innerHTML = `
-                <div class="message-avatar">
-                    <i data-lucide="bot" class="avatar-icon"></i>
-                </div>
-                <div class="message-content-wrapper">
-                    <div class="message-content">
-                        <strong>📄 Document uploaded: ${escapeHtml(file.name)}</strong><br><br>
-                        I can see you've uploaded a ${fileAnalysis.category === 'pdf' ? 'PDF' : 'Word'} document.
-                        Currently, I can only read <strong>plain text (.txt)</strong> file contents directly.<br><br>
-                        To get answers from this document, please:<br>
-                        • Copy and paste the relevant text into the chat, or<br>
-                        • Ask me a specific SIS question (surveys, applications, field visits, etc.)
-                    </div>
-                    <div class="message-footer">
-                        <span class="message-time">${time}</span>
-                    </div>
-                </div>
-            `;
-            chatMessages.appendChild(noticeDiv);
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-            scrollToBottom();
+        } else {
+            // .doc — legacy binary format, no reader available
+            appendAssistantNotice(
+                `📄 <strong>${escapeHtml(file.name)}</strong> — the legacy <strong>.doc</strong> format can't be read. ` +
+                `Save it as <strong>.docx</strong> or PDF, or paste the text into the chat.`);
         }
     };
-    
-    // Trigger file selection
+
     document.body.appendChild(fileInput);
     fileInput.click();
-    
-    // Clean up
-    setTimeout(() => {
-        document.body.removeChild(fileInput);
-    }, 1000);
+    setTimeout(() => { document.body.removeChild(fileInput); }, 1000);
+}
+
+/**
+ * After enough back-and-forth, tell the officer to start a new chat — the API
+ * only keeps the last few messages in context, so a very long thread starts to
+ * "forget" its own beginning. Shown once per session; sending still works.
+ */
+function maybeShowLongConversationNotice() {
+    if (longConversationNoticeShown) return;
+    const userTurns = (messageHistory || []).filter(m => m.role === 'user').length;
+    if (userTurns < LONG_CONVERSATION_EXCHANGES) return;
+
+    longConversationNoticeShown = true;
+    appendAssistantNotice(
+        `💡 <strong>This conversation is getting long (${userTurns} messages).</strong><br>` +
+        `I only keep the last few messages in view, so older context may be dropped. ` +
+        `For best results, click <strong>New Chat</strong> to start a fresh conversation. ` +
+        `You can keep going here if you prefer.`);
+}
+
+/**
+ * Append a short assistant-style notice bubble (not persisted to history).
+ */
+function appendAssistantNotice(html) {
+    const div = document.createElement('div');
+    div.className = 'message message-assistant';
+    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    div.innerHTML = `
+        <div class="message-avatar"><i data-lucide="bot" class="avatar-icon"></i></div>
+        <div class="message-content-wrapper">
+            <div class="message-content">${html}</div>
+            <div class="message-footer"><span class="message-time">${time}</span></div>
+        </div>`;
+    chatMessages.appendChild(div);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+    scrollToBottom();
 }
 
 /**
@@ -1566,35 +1399,12 @@ async function analyzeFile(file) {
         preview: null,
         metadata: {}
     };
-    
-    // Image analysis
-    if (file.type.startsWith('image/')) {
+
+    // Text / CSV file analysis
+    if (file.type === 'text/plain' || analysis.extension === 'txt' || analysis.extension === 'csv') {
         analysis.canAnalyze = true;
-        analysis.category = 'image';
-        
-        try {
-            // Read image data
-            const imageData = await readFileAsDataURL(file);
-            analysis.preview = imageData;
-            
-            // Get image dimensions
-            const dimensions = await getImageDimensions(imageData);
-            analysis.metadata = {
-                width: dimensions.width,
-                height: dimensions.height,
-                aspectRatio: (dimensions.width / dimensions.height).toFixed(2),
-                megapixels: ((dimensions.width * dimensions.height) / 1000000).toFixed(2)
-            };
-        } catch (error) {
-            console.error('Error analyzing image:', error);
-        }
-    }
-    
-    // Text file analysis
-    else if (file.type === 'text/plain') {
-        analysis.canAnalyze = true;
-        analysis.category = 'text';
-        
+        analysis.category = analysis.extension === 'csv' ? 'csv' : 'text';
+
         try {
             const content = await readFileAsText(file);
             analysis.metadata = {
@@ -1608,24 +1418,21 @@ async function analyzeFile(file) {
         }
     }
     
-    // PDF analysis
-    else if (file.type === 'application/pdf') {
+    // PDF
+    else if (file.type === 'application/pdf' || analysis.extension === 'pdf') {
         analysis.canAnalyze = true;
         analysis.category = 'pdf';
-        analysis.metadata = {
-            info: 'PDF document - Content extraction requires backend processing'
-        };
+        analysis.metadata = { info: 'PDF — text extracted on upload' };
     }
-    
-    // Document analysis
-    else if (file.type.includes('word') || file.type.includes('document')) {
+
+    // Word
+    else if (analysis.extension === 'docx' || analysis.extension === 'doc' ||
+             file.type.includes('word') || file.type.includes('document')) {
         analysis.canAnalyze = true;
         analysis.category = 'document';
-        analysis.metadata = {
-            info: 'Word document - Content extraction requires backend processing'
-        };
+        analysis.metadata = { info: 'Word document — text extracted on upload' };
     }
-    
+
     return analysis;
 }
 
@@ -1641,18 +1448,6 @@ function formatFileSize(bytes) {
 }
 
 /**
- * Read file as Data URL
- */
-function readFileAsDataURL(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = (e) => reject(e);
-        reader.readAsDataURL(file);
-    });
-}
-
-/**
  * Read file as text
  */
 function readFileAsText(file) {
@@ -1662,39 +1457,6 @@ function readFileAsText(file) {
         reader.onerror = (e) => reject(e);
         reader.readAsText(file);
     });
-}
-
-/**
- * Get image dimensions
- */
-function getImageDimensions(dataUrl) {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            resolve({ width: img.width, height: img.height });
-        };
-        img.onerror = reject;
-        img.src = dataUrl;
-    });
-}
-
-/**
- * Generate question about uploaded file
- */
-function generateFileQuestion(file, analysis) {
-    if (analysis.category === 'image') {
-        return `Can you help me analyze this image: ${file.name}? What can you tell me about it?`;
-    } else if (analysis.category === 'text') {
-        // For text files we append the content directly so the bot can actually answer
-        const preview = analysis.metadata.preview || '';
-        if (preview) {
-            return `Here is the content of the file "${file.name}":\n\n${preview}\n\nPlease answer based on this content.`;
-        }
-        return `I've uploaded a text file "${file.name}". Can you help me understand or summarize its content?`;
-    }
-    // For PDF / Word: do NOT generate a question — showFilePreview handles the UI
-    // and we will show an explicit notice instead of routing to the chatbot.
-    return '';
 }
 
 /**
@@ -1714,24 +1476,17 @@ function showFilePreview(file, analysis) {
     // Add metadata
     if (Object.keys(analysis.metadata).length > 0) {
         previewContent += '<div class="file-metadata">';
-        
-        if (analysis.category === 'image') {
+        if (analysis.category === 'text' || analysis.category === 'csv') {
             previewContent += `
-                <div>📐 ${analysis.metadata.width} × ${analysis.metadata.height} px</div>
-                <div>🖼️ ${analysis.metadata.megapixels} MP</div>
-            `;
-        } else if (analysis.category === 'text') {
-            previewContent += `
-                <div>� ${analysis.metadata.lines} lines</div>
+                <div>📄 ${analysis.metadata.lines} lines</div>
                 <div>📊 ${analysis.metadata.words} words</div>
             `;
         }
-        
         previewContent += '</div>';
     }
-    
+
     previewContent += '</div>';
-    
+
     messageDiv.innerHTML = `
         <div class="message-content-wrapper">
             <div class="message-content file-content">${previewContent}</div>
@@ -1740,25 +1495,9 @@ function showFilePreview(file, analysis) {
             </div>
         </div>
     `;
-    
+
     chatMessages.appendChild(messageDiv);
-    
-    // Add image preview if available
-    if (analysis.category === 'image' && analysis.preview) {
-        const contentDiv = messageDiv.querySelector('.file-attachment');
-        const img = document.createElement('img');
-        img.src = analysis.preview;
-        img.className = 'file-image-preview';
-        img.style.cssText = `
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: var(--radius-md);
-            margin-top: var(--spacing-md);
-            display: block;
-        `;
-        contentDiv.appendChild(img);
-    }
-    
+
     scrollToBottom();
     
     showToast('✓ File analyzed successfully', 'success');
@@ -1771,28 +1510,36 @@ async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('session_id', currentSessionId);
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/chat/upload`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${officerData.access_token}`
-            },
-            credentials: 'include',
-            body: formData
-        });
-        
-        if (!response.ok) {
-            throw new Error('Upload failed');
-        }
-        
-        const data = await response.json();
-        showToast('File uploaded successfully', 'success');
-        return data;
-        
-    } catch (error) {
-        console.error('File upload error:', error);
-        showToast('Failed to upload file', 'error');
-        throw error;
+
+    const headers = {};
+    if (officerData && officerData.access_token) {
+        headers['Authorization'] = `Bearer ${officerData.access_token}`;
     }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/chat/upload`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: formData
+    });
+
+    if (!response.ok) {
+        let detail = '';
+        try { detail = (await response.json()).detail || ''; }
+        catch (_) { detail = await response.text().catch(() => ''); }
+        console.error('File upload error:', response.status, detail);
+        const err = new Error(detail || `Upload failed (${response.status})`);
+        err.status = response.status;
+        err.detail = detail;
+        throw err;
+    }
+
+    // Backend returns a StandardResponse: { success, data, message, timestamp }
+    const body = await response.json();
+    if (body && body.data && body.data.supported === false) {
+        showToast('This file type is not supported yet', 'info');
+    } else {
+        showToast('File attached', 'success');
+    }
+    return body;
 }

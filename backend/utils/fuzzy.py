@@ -454,7 +454,12 @@ _AMBIGUOUS_MONTH_TOKENS = frozenset({"may", "மே"})
 _MONTH_CUE_WORDS = frozenset({
     "in", "of", "on", "during", "for", "from", "to", "by", "since", "until", "till",
     "between", "month", "months", "monthly", "submitted", "filed", "received",
-    "மாதம்", "மாதத்தில்", "மாத",
+    # The nouns an officer asks about. "may applications" / "may visits" is the
+    # month — the modal reading of "may" is followed by a verb ("may i see",
+    # "may be"), never by one of these, so admitting them costs no precision.
+    "application", "applications", "app", "apps", "appl", "file", "files",
+    "visit", "visits", "report", "reports", "list", "summary", "count",
+    "மாதம்", "மாதத்தில்", "மாத", "விண்ணப்பம்", "விண்ணப்பங்கள்",
 })
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 

@@ -191,7 +191,7 @@ function prepareApplicationDetailTable(data) {
     };
 
     const formatSubdivVal = (v) => {
-        if (!v) return '1A';
+        if (v === undefined || v === null || v === '') return null;
         if (typeof v === 'object') {
             if (v.proposed_sub_division_no) {
                 return v.proposed_area_sqm ? `${v.proposed_sub_division_no} (${v.proposed_area_sqm} sq.m)` : v.proposed_sub_division_no;
@@ -199,37 +199,35 @@ function prepareApplicationDetailTable(data) {
             if (v.sub_division_no) {
                 return v.area_sqm ? `${v.sub_division_no} (${v.area_sqm} sq.m)` : v.sub_division_no;
             }
-            return Object.values(v).filter(x => typeof x !== 'object').join(', ') || '1A';
+            return Object.values(v).filter(x => typeof x !== 'object').join(', ') || null;
         }
         return String(v);
     };
 
     const rawRows = [
-        { 'Field': 'Serial Number', 'Details': data.serial_number !== undefined ? String(data.serial_number) : '1' },
+        { 'Field': 'Serial Number', 'Details': data.serial_number !== undefined && data.serial_number !== null ? String(data.serial_number) : null },
         { 'Field': 'Application Number', 'Details': data.application_number || data.application_id || 'N/A' },
-        { 'Field': 'Application Status', 'Details': data.application_status || data.status || 'Pending' },
-        { 'Field': 'Workflow State', 'Details': data.workflow_state || data.stage || 'SIS' },
+        { 'Field': 'Application Status', 'Details': data.application_status || data.status },
+        { 'Field': 'Application Type', 'Details': data.type || data.application_type },
+        { 'Field': 'Workflow State', 'Details': data.workflow_state || data.stage },
         { 'Field': 'Application Date', 'Details': formatDateVal(data.application_date || data.submission_date) },
         { 'Field': 'Survey Number', 'Details': data.survey_number || data.survey_no || 'N/A' },
-        { 'Field': 'Patta Number', 'Details': data.patta_number || 'P-101-2024' },
+        { 'Field': 'Patta Number', 'Details': data.patta_number },
         { 'Field': 'Subdivision Number', 'Details': formatSubdivVal(data.subdivision_number || data.included_subdivisions) },
         { 'Field': 'Current Subdivision Number', 'Details': formatSubdivVal(data.current_subdivision_number) },
         { 'Field': 'CAN Number', 'Details': data.can_number || 'N/A' },
         { 'Field': 'Applicant Name', 'Details': data.applicant_name || 'N/A' },
         { 'Field': 'Applicant Mobile', 'Details': data.applicant_mobile || 'N/A' },
-        { 'Field': 'Applicant Email', 'Details': data.applicant_email || 'N/A' },
         { 'Field': 'Applicant Address', 'Details': data.applicant_address || 'N/A' },
-        { 'Field': 'District Code', 'Details': data.district_code || '02' },
-        { 'Field': 'Taluk Code', 'Details': data.taluk_code || 'CHN-AMB' },
-        { 'Field': 'Ward Code', 'Details': data.ward_code || 'Ward 12' },
-        { 'Field': 'Block Code', 'Details': data.block_code || 'Block B1' },
+        { 'Field': 'District Code', 'Details': data.district_code },
+        { 'Field': 'Taluk Code', 'Details': data.taluk_code },
+        { 'Field': 'Ward Code', 'Details': data.ward_code },
+        { 'Field': 'Block Code', 'Details': data.block_code },
+        { 'Field': 'Urban Unit Code', 'Details': data.urban_unit_code },
         { 'Field': 'Field Visit Scheduled', 'Details': data.field_visit_scheduled ? `Yes (${formatDateVal(data.field_visit_date)})` : 'No' },
         { 'Field': 'Overdue', 'Details': data.is_overdue ? 'Yes' : 'No' },
         { 'Field': 'Priority Flag', 'Details': data.priority_flag ? 'Yes' : 'No' },
-        { 'Field': 'Declared Reason', 'Details': data.declared_reason || 'N/A' },
-        ...(data.igrs_form6_number && data.igrs_form6_number !== 'None' ? [{ 'Field': 'IGRS Form 6 Number', 'Details': data.igrs_form6_number }] : []),
-        ...(data.auto_mutated_flag && data.auto_mutated_flag !== 'No' && data.auto_mutated_flag !== 'None' ? [{ 'Field': 'Auto Mutated Flag', 'Details': 'Yes' }] : []),
-        ...(data.camp_flag && data.camp_flag !== 'No' && data.camp_flag !== 'None' ? [{ 'Field': 'Camp Flag', 'Details': 'Yes' }] : [])
+        { 'Field': 'Declared Reason', 'Details': data.declared_reason }
     ];
 
     const rows = rawRows.filter(r => {

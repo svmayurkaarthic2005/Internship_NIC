@@ -136,7 +136,7 @@ Q: Display the proposed sub-divisions in this application.
 A: All proposed sub-divisions are listed with their details from the application.
 
 Q: Retrieve the assigned sub-division numbers for the approved application.
-A: Sub-division numbers become available after the Survey Department approves the subdivision sketch.
+A: Sub-division numbers become available after the Senior Draughtsman (SD) approves the subdivision sketch.
 
 Q: Compare the original survey area with the total sub-division area.
 A: The system validates that the sum of all sub-division areas equals the original survey area, for example Original: 2,400 sq.m, Total sub-divisions: 2,400 sq.m (validation passed).
@@ -156,7 +156,7 @@ Q: Is my field data complete enough for SD to prepare the sketch without follow-
 A: The system validates if all required fields are filled. If anything is missing, it recommends completing those fields before submission to SD.
 
 Q: Has this application been forwarded to SD?
-A: The system shows if and when the application was forwarded to the Survey Department, or indicates if it's still pending SIS verification.
+A: The system shows if and when the application was forwarded to the Senior Draughtsman (SD), or indicates if it's still pending SIS verification.
 
 Q: Show the remarks recorded by SD.
 A: You can view all remarks and notes recorded by the Senior Draughtsman on the application.

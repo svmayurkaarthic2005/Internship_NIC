@@ -1,0 +1,36 @@
+SIS CHATBOT DATABASE STRUCTURE - REFERENCE
+
+This is a concise reference for staff and developers. It describes the
+application database; it is not an authority to edit production data.
+
+=== CORE GEOGRAPHY ===
+
+districts -> taluks -> towns -> wards and blocks -> survey_numbers ->
+sub_divisions. Each application is tied to a survey number and may be scoped
+to the officer's assigned jurisdiction.
+
+=== APPLICATION TABLES ===
+
+applications stores application_number, application_type (ISD, NISD, or
+MERGE), current_status, survey_number_id, applicant details, dates, and the
+current workflow state. application_documents holds document type, document
+status and document metadata. application_sub_divisions holds proposed or
+created parcel divisions.
+
+workflow_history records every handoff, actor, role, remarks and timestamp.
+field_visits stores scheduled and actual visit information, observations and
+the recommendation. patta_transfers stores transfer details after workflow
+processing. owners and survey_ownership represent ownership records.
+
+=== SOURCE-EXTRACT TABLES ===
+
+urban_application_log is the CSV-shaped source for application details.
+application_workflow_action is the source for workflow hops. The sample
+database projects these source tables into the application tables used by the
+chatbot. Database queries exclude rejected applications from operational lists.
+
+=== STATUS RULE ===
+
+The normal status progression is pending -> in_progress -> approved or
+rejected. The application record, not a retrieved document, is the source for
+live counts and current status.

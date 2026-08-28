@@ -446,6 +446,7 @@
 }
 
 .btn-send-new {
+    position: relative;
     width: 36px;
     height: 36px;
     background: var(--primary);
@@ -455,7 +456,8 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all var(--transition-base);
+    transition: background var(--transition-base), transform var(--transition-base),
+                border-radius var(--transition-base), box-shadow var(--transition-base);
     flex-shrink: 0;
 }
 
@@ -464,10 +466,102 @@
     transform: scale(1.05);
 }
 
+.btn-send-new:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
 .btn-send-new:disabled {
     background: var(--border);
     cursor: not-allowed;
     opacity: 0.5;
+}
+
+/* ---- send / stop swap -------------------------------------------------
+   Which icon shows is decided by a class on the button, never by inline
+   styles on the icons themselves: the send arrow is rendered by the icon
+   library, which replaces the element and drops any style set on it, and
+   both icons ended up visible at once. */
+.btn-send-new .stop-icon-new {
+    display: none;
+}
+
+/* Hide the send arrow whatever the icon library left behind -- targeting it
+   by class alone is not enough, because a re-render can strip the class off
+   the svg it produces. Anything in the button that is not the stop mark goes. */
+.btn-send-new.btn-send-stop > *:not(.stop-icon-new),
+.btn-send-new.btn-send-stop .send-icon-new {
+    display: none;
+}
+
+.btn-send-new.btn-send-stop .stop-icon-new {
+    display: block;
+}
+
+/* Stop state: the send button becomes the stop button while a response
+   streams. It goes round to read as a different control, not just a
+   recoloured send button. */
+.btn-send-new.btn-send-stop {
+    background: var(--danger, #dc2626);
+    border-radius: 50%;
+}
+
+.btn-send-new.btn-send-stop:hover:not(:disabled) {
+    background: var(--danger-dark, #b91c1c);
+    transform: scale(1.05);
+}
+
+.btn-send-new.btn-send-stop:active:not(:disabled) {
+    transform: scale(0.96);
+}
+
+.btn-send-new.btn-send-stop:focus-visible {
+    outline-color: var(--danger, #dc2626);
+}
+
+/* The stop mark: a filled rounded square, the standard "stop" affordance. */
+.stop-icon-new {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    background: #fff;
+}
+
+/* A halo that breathes while the response streams, so the button reads as
+   "working — click to stop" rather than as an error. */
+.btn-send-new.btn-send-stop::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid var(--danger, #dc2626);
+    opacity: 0.35;
+    animation: send-stop-pulse 1.6s ease-out infinite;
+    pointer-events: none;
+}
+
+@keyframes send-stop-pulse {
+    0%   { transform: scale(0.9); opacity: 0.45; }
+    70%  { transform: scale(1.15); opacity: 0; }
+    100% { transform: scale(1.15); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn-send-new.btn-send-stop::after {
+        animation: none;
+        opacity: 0.3;
+    }
+    .btn-send-new:hover:not(:disabled),
+    .btn-send-new.btn-send-stop:hover:not(:disabled) {
+        transform: none;
+    }
+}
+
+.stopped-notice {
+    margin-top: var(--spacing-sm);
+    font-size: 0.8rem;
+    color: var(--text-secondary, #6b7280);
+    font-style: italic;
 }
 
 .send-icon-new {
@@ -497,7 +591,6 @@
     color: var(--primary);
 }
 
-.mic-icon-new,
 .attach-icon-new {
     width: 18px;
     height: 18px;
@@ -665,31 +758,6 @@
 .file-type-icon.img {
     background: #4CAF50;
     color: white;
-}
-
-
-/* ========== VOICE RECORDING STATES ========== */
-.btn-icon-action-new.recording {
-    animation: pulseRecording 1.5s ease-in-out infinite;
-}
-
-@keyframes pulseRecording {
-
-    0%,
-    100% {
-        transform: scale(1);
-        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7);
-    }
-
-    50% {
-        transform: scale(1.05);
-        box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
-    }
-}
-
-#recording-timer {
-    font-family: 'Courier New', monospace;
-    letter-spacing: 1px;
 }
 
 /* ========== HTML TABLE STYLES ========== */

@@ -35,8 +35,8 @@ Step 3: SIS Field Visit
 - Officer takes photographs and GPS coordinates during the visit
 - Officer prepares preliminary field notes and sketch
 
-Step 4: Sketch Preparation by Survey Department (SD)
-- After field verification, SIS officer submits findings to Survey Department
+Step 4: Sketch Preparation by Senior Draughtsman (SD)
+- After field verification, SIS officer submits findings to the Senior Draughtsman (SD)
 - SD prepares detailed survey sketch with new sub-division numbers
 - SD verifies area calculations: sum of all sub-divisions must equal original survey area
 - Sub-division numbering follows pattern: 145 → 145/1A, 145/1B, 145/2A, etc.
@@ -70,35 +70,38 @@ Step 1: Application Submission
 - Application number format: NISD/DISTRICT_CODE/YEAR/SEQUENCE
 - No new sub-divisions are created, only ownership transfer
 
+The NISD chain is short: application (CSC / citizen / Sub-Registrar) -> SIS
+-> Zonal Level Tahsildar. There is no Senior Draughtsman (SD) step and no
+Deputy Inspector Surveyor (DIS) step - those belong to the ISD chain only.
+
 Step 2: SIS Officer Verification
 - SIS officer verifies documents: Sale Deed, EC (Encumbrance Certificate), Photo ID
 - Officer checks if survey number exists and area matches records
 - Officer verifies there are no pending disputes or litigation
 - No field visit required unless specific issues are flagged
+- Officer forwards the verified report directly to the Zonal Level Tahsildar
 - Verification timeline: 5 working days
 
-Step 3: Deputy Tahsildar Review
-- Deputy Tahsildar reviews SIS officer's verification report
-- Checks for any revenue arrears or pending taxes
-- Confirms sale deed registration details
+Step 3: Zonal Level Tahsildar Review and Approval
+- The Zonal Level Tahsildar (ZDT) reviews the SIS officer's verification report
+- Checks for any revenue arrears or pending taxes and confirms sale deed
+  registration details
+- The Zonal Level Tahsildar holds the Digital Signature Certificate (DSC) key
+- Using the DSC key the Zonal Level Tahsildar approves the request and generates
+  the patta transfer order (or rejects it with reasons)
 - Timeline: 3 working days
 
-Step 4: Digital Signature Certificate (DSC) Application
-- Tahsildar applies DSC to patta transfer order
-- DSC validates the authenticity of the transfer
-- Timeline: 2 working days
-
-Step 5: Patta Transfer Completion
+Step 4: Patta Transfer Completion
 - Patta ownership is transferred to new owner
 - Old owner's name is removed from records
 - New owner's name is updated in land records system
 
-Step 6: Land Records Update
+Step 5: Land Records Update
 - Revenue system is updated with new ownership details
 - Patta number remains same, only owner changes
 - Property tax records are updated
 
-Step 7: Citizen Download
+Step 6: Citizen Download
 - Citizen receives notification on mobile/email
 - Citizen can download updated patta from portal
 - Physical copy can be collected from Tahsildar office

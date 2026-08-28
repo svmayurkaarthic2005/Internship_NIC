@@ -1,11 +1,11 @@
 """
 pgvector_store.py — Vector Store backed by PostgreSQL + pgvector
 ================================================================
-Replaces ChromaDB for SIS Copilot.
+Vector database for semantic search and RAG.
 
 Tamil Nadu Revenue Department — Sub Inspector Surveyor AI Assistant
 
-All vector operations run inside the existing PostgreSQL ``sis_chatbot``
+All vector operations run inside the existing PostgreSQL ``sis_chatbot_db``
 database using the ``pgvector`` extension.
 
 Embedding model : nomic-embed-text via Ollama  (768 dimensions)
@@ -47,20 +47,17 @@ EMBED_DIM = 768
 
 def _get_sync_conn() -> psycopg2.extensions.connection:
     """
-    Open a synchronous psycopg2 connection to sis_chatbot.
+    Open a synchronous psycopg2 connection to the configured database.
 
-    On Windows we use the same hardcoded DSN as database.py (asyncpg engine)
-    to avoid issues with placeholder .env credentials and IPv6 loopback.
-    On other platforms we read SYNC_DATABASE_URL from settings.
+    The DSN comes from SYNC_DATABASE_URL on every platform. It used to be
+    hardcoded to sis_chatbot on Windows, which meant the RAG store silently
+    stayed on one database while the rest of the app followed .env -- document
+    answers then came from a different database than the record answers.
+    Any '@' in the password must be %-encoded in .env for this to parse.
     """
-    import sys
-    if sys.platform == "win32":
-        # @ in password must be %-encoded in a DSN string
-        sync_url = "postgresql://postgres:Mayur%402005@127.0.0.1:5432/sis_chatbot"
-    else:
-        raw_url: str = settings.SYNC_DATABASE_URL
-        sync_url = raw_url.replace("postgresql+asyncpg://", "postgresql://") \
-                          .replace("postgresql+psycopg2://", "postgresql://")
+    raw_url: str = settings.SYNC_DATABASE_URL
+    sync_url = raw_url.replace("postgresql+asyncpg://", "postgresql://") \
+                      .replace("postgresql+psycopg2://", "postgresql://")
     conn = psycopg2.connect(sync_url)
     # Register pgvector codec so numpy arrays round-trip correctly
     register_vector(conn)
@@ -79,7 +76,7 @@ def init_pgvector() -> None:
     Called once at application startup (from main.py lifespan).
     Raises if the extension is missing — the operator must run:
         CREATE EXTENSION IF NOT EXISTS vector;
-    in the ``sis_chatbot`` database first.
+    in the ``sis_chatbot_db`` database first.
     """
     conn = _get_sync_conn()
     try:
@@ -90,7 +87,7 @@ def init_pgvector() -> None:
             )
             if not cur.fetchone():
                 raise RuntimeError(
-                    "pgvector extension is not installed in sis_chatbot. "
+                    "pgvector extension is not installed in sis_chatbot_db. "
                     "Run: CREATE EXTENSION IF NOT EXISTS vector;"
                 )
 
@@ -263,7 +260,7 @@ def similarity_search(
             …
         ]
 
-    ``where_filter`` mirrors ChromaDB's format:
+    ``where_filter`` format:
         ``{"language": "english"}``   →  ``WHERE language = 'en'``
         ``{"language": "tamil"}``     →  ``WHERE language = 'ta'``
         ``{"category": "workflow"}``  →  ``WHERE category = 'workflow'``

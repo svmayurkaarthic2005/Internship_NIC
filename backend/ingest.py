@@ -13,7 +13,14 @@ if sys.platform == "win32":
         pass
 from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import re
 import uuid
+import csv
+
+try:
+    from pypdf import PdfReader
+except ImportError:  # PDF ingestion is optional; .txt/.csv still work without it
+    PdfReader = None
 
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -50,6 +57,11 @@ DOCUMENT_CONFIG = {
         "language": "english",
         "source": "official_manual"
     },
+    "field_inspection_report_sample.txt": {
+        "category": "field_report",
+        "language": "english",
+        "source": "sis_upload"
+    },
     "district_codes.txt": {
         "category": "reference",
         "language": "english",
@@ -59,6 +71,26 @@ DOCUMENT_CONFIG = {
         "category": "reference",
         "language": "bilingual",
         "source": "tamilnilam_official_portal"
+    },
+    "sis_upload_checklist.txt": {
+        "category": "upload_guidance",
+        "language": "bilingual",
+        "source": "sis_upload"
+    },
+    "sample_boundary_observations.csv": {
+        "category": "field_report",
+        "language": "english",
+        "source": "sis_upload"
+    },
+    "database_structure_reference.txt": {
+        "category": "database_reference",
+        "language": "english",
+        "source": "system_documentation"
+    },
+    "sample_sis_site_note.pdf": {
+        "category": "field_report",
+        "language": "english",
+        "source": "sis_upload"
     }
 }
 
@@ -68,6 +100,28 @@ def load_document(file_path: Path) -> str:
     Load document content from file
     """
     try:
+        if file_path.suffix.lower() == ".pdf":
+            if PdfReader is None:
+                logger.error(f"Skipping {file_path.name}: pypdf not installed "
+                             f"(pip install pypdf) — PDF ingestion unavailable")
+                return ""
+            reader = PdfReader(str(file_path))
+            content = "\n".join(page.extract_text() or "" for page in reader.pages)
+            logger.info(f"Loaded PDF document: {file_path.name} ({len(content)} chars)")
+            return content
+
+        if file_path.suffix.lower() == ".csv":
+            with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+            # Preserve the headers in every row so an embedding has meaning
+            # even when retrieved independently of the rest of the CSV.
+            content = "\n".join(
+                " | ".join(f"{column}: {value}" for column, value in row.items())
+                for row in rows
+            )
+            logger.info(f"Loaded CSV document: {file_path.name} ({len(content)} chars)")
+            return content
+
         # Try UTF-8 first
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -84,6 +138,40 @@ def load_document(file_path: Path) -> str:
         return ""
 
 
+
+_HEADING_RE = re.compile(r'^=== .+? ===$', re.MULTILINE)
+
+
+def _prefix_section_headings(content: str, chunks: list) -> list:
+    """Ensure every chunk names the section it came from.
+
+    Chunks are located in the original text so the heading in force at that
+    offset can be prepended. A chunk that already begins with its heading is
+    left alone.
+    """
+    headings = [(m.start(), m.group(0)) for m in _HEADING_RE.finditer(content)]
+    if not headings:
+        return chunks
+
+    out = []
+    cursor = 0
+    for chunk in chunks:
+        pos = content.find(chunk[:120], cursor)
+        if pos == -1:
+            pos = cursor
+        cursor = max(cursor, pos + 1)
+        if chunk.lstrip().startswith("==="):
+            out.append(chunk)
+            continue
+        owning = None
+        for start, text in headings:
+            if start <= pos:
+                owning = text
+            else:
+                break
+        out.append(f"{owning}\n{chunk}" if owning else chunk)
+    return out
+
 def chunk_document(content: str, document_name: str) -> list:
     """
     Split document into chunks using RecursiveCharacterTextSplitter
@@ -91,16 +179,28 @@ def chunk_document(content: str, document_name: str) -> list:
     try:
         # Initialize text splitter
         # 500 tokens ≈ 2000 characters (rough estimate)
+        # Split on the "=== SECTION ===" headings first so each chunk keeps the
+        # heading that gives it meaning. Without this the splitter could strand
+        # a line like "Total Timeline: Approximately 15-20 working days" at the
+        # top of a chunk with no indication that it belongs to NISD, and the
+        # model would quote it for ISD.
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=2000,
             chunk_overlap=200,
             length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
+            keep_separator=True,
+            separators=["\n=== ", "\n\n", "\n", ". ", " ", ""]
         )
         
         # Split text
         chunks = text_splitter.split_text(content)
-        
+
+        # A section longer than chunk_size still gets split, and the tail piece
+        # then carries no heading -- which is how "Total Timeline: Approximately
+        # 30-35 working days" ended up detached from "=== ISD WORKFLOW ===".
+        # Re-attach the owning heading to any chunk that does not start with one.
+        chunks = _prefix_section_headings(content, chunks)
+
         logger.info(f"Split {document_name} into {len(chunks)} chunks")
         return chunks
         
@@ -160,7 +260,10 @@ def ingest_documents():
         
         # Prepare chunks with metadata
         for i, chunk in enumerate(chunks):
-            chunk_id = f"{doc_name}_{i}_{uuid.uuid4().hex[:8]}"
+            # Stable across runs: the store upserts ON CONFLICT (chunk_id), so a
+            # random suffix here made every re-ingest insert a second copy of
+            # each chunk instead of replacing it.
+            chunk_id = f"{doc_name}_{i}"
             
             chunk_metadata = {
                 "document_name": doc_name,

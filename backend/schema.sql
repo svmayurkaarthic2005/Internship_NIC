@@ -1,7 +1,7 @@
 -- =============================================================
 -- SIS Copilot — Reference Schema DDL
 -- =============================================================
--- Run against the sis_chatbot database before first startup,
+-- Run against the sis_chatbot_db database before first startup,
 -- OR let SQLAlchemy's Base.metadata.create_all() handle it.
 --
 -- Prerequisite: the pgvector OS package must be installed.
@@ -15,7 +15,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";    -- uuid_generate_v4()
 
 -- ── knowledge_embeddings ────────────────────────────────────
 -- Stores document chunks and their vector embeddings for
--- semantic similarity search (replaces ChromaDB).
+-- semantic similarity search via pgvector.
 -- Embedding model : nomic-embed-text (768 dimensions)
 -- Index type      : HNSW cosine similarity
 

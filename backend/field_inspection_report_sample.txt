@@ -1,0 +1,113 @@
+SIS FIELD INSPECTION REPORT — SAMPLE (URBAN / TAMILNILAM)
+
+This is a sample completed field inspection report of the kind a Sub Inspector
+Surveyor uploads to the application file after an ISD (0154) field visit. All
+names, numbers and coordinates are synthetic and match the seeded Thoothukudi
+jurisdiction (district 28, taluk 01, town 001, block 0015).
+
+=== REPORT HEADER ===
+
+Report type            : ISD Field Inspection Report
+Application number      : 2025/0154/28/000012
+Service code            : 0154 (Involving Sub-Division)
+Application type        : ISD
+Inspecting officer      : Csenthil (SIS-001), csenthil@sis.tn.gov.in
+Jurisdiction            : Ward 002, Block 0015, Town 001 (Thoothukudi), Taluk 01
+Date of field visit     : 2025-06-18
+Field visit scheduled   : 2025-06-18 (within the 15 working day window)
+Weather / site access   : Clear; site accessible from Street 0003
+GPS datum               : WGS-84, horizontal accuracy +/- 3 m
+
+=== PARCEL UNDER INSPECTION ===
+
+Town Survey Number      : 1355
+Current sub-division     : 2B
+Patta number            : 7680
+Land type code          : 2 (Commercial / mixed use)
+Recorded extent         : 250.00 sq.m (2.50 ares)
+Measured extent (field) : 249.10 sq.m
+Variance                : -0.36 % (within +/- 0.5 % tolerance) — ACCEPTED
+
+=== OWNERSHIP AT SITE ===
+
+Patta holder (record)   : owner on patta 7680, sole ownership (share 1/1)
+Person met at site      : patta holder, identity verified against Aadhaar
+                          (last 4 digits matched application record)
+Joint owners            : none recorded; none claimed at site
+Occupancy               : owner-occupied ground floor shop, first floor vacant
+
+=== PROPOSED SUB-DIVISION ===
+
+Reason declared          : sale of part extent
+Parent survey 1355/2B    : 249.10 sq.m (field)
+  Proposed 1355/2B1      : 150.10 sq.m — retained by present owner
+  Proposed 1355/2B2      : 99.00 sq.m — to be transferred to purchaser
+Sum of proposed extents  : 249.10 sq.m == parent extent  — VALIDATION PASSED
+Minimum plot check       : both parcels above local minimum — OK
+Sub-division depth        : level 3 (1355 -> 1355/2 -> 1355/2B -> 1355/2B1/2B2) — at limit, noted
+
+=== BOUNDARY VERIFICATION ===
+
+Corner  Description                         Latitude       Longitude      Stone
+------  ----------------------------------  -------------  -------------  -----
+A       NE corner at Street 0003 junction   8.76421        78.13455       BS-1355-01 present
+B       SE corner abutting TS 1356          8.76409        78.13470       BS-1355-02 present
+C       SW corner abutting TS 1354/1        8.76395        78.13462       missing — reinstatement requested
+D       NW corner along common wall         8.76407        78.13447       BS-1355-04 present
+
+Boundary remarks         : south-west stone (BS-1355-03) missing; neighbour on
+                           TS 1354/1 acknowledged the common point verbally.
+                           Reinstatement flagged to the Senior Draughtsman (SD).
+
+=== ENCROACHMENT CHECK ===
+
+Encroachment detected    : YES — minor
+Type                     : private-on-public (shop steps and ramp project onto
+                           Street 0003 margin)
+Encroached extent        : approx 1.8 sq.m
+Action                   : reported to Corporation for regularisation; transfer
+                           to proceed on the un-encroached extent only
+Encroachment flag set     : YES (visible to SD)
+
+=== LITIGATION / ENCUMBRANCE ===
+
+EC reference             : EC/2025/TUT-JT-II/004512 — clear title 13 years
+Court reference in EC     : none
+Revenue arrears          : nil dues certificate produced (property tax paid up
+                           to 2025-2026 first half)
+Litigation flag           : none
+
+=== DOCUMENTS SEEN AT VISIT ===
+
+- Registered sale deed R/520/1/1188/2022 (Tuticorin Joint II) — original seen
+- Encumbrance Certificate EC/2025/TUT-JT-II/004512 — original seen
+- Patta pass book for patta 7680 — original seen
+- Aadhaar of present owner and purchaser — verified, last 4 digits recorded
+- IGRS Form 6 number 202223957844 — quoted in application, matches deed
+
+=== OFFICER FINDINGS AND RECOMMENDATION ===
+
+1. Survey number 1355/2B exists in TSLR and the measured extent agrees with the
+   register within tolerance.
+2. Proposed sub-division extents sum correctly to the parent extent.
+3. One boundary stone missing on the south-west corner — SD to reinstate before
+   sketch finalisation.
+4. Minor private-on-public encroachment (~1.8 sq.m) onto Street 0003 —
+   regularisation referred to the Corporation; transfer limited to un-encroached
+   extent.
+5. Title is clear; no litigation; revenue dues cleared.
+
+Recommendation            : FORWARD TO SURVEY DEPARTMENT for sub-division sketch,
+                            subject to boundary stone reinstatement and the
+                            encroachment note above.
+SIS recommendation code   : Y (recommended)
+Next stage                : SD (Senior Draughtsman)
+Forwarded on              : 2025-06-19
+
+=== ATTACHMENTS LISTED WITH THIS REPORT ===
+
+- 6 site photographs (front, rear, both side boundaries, encroachment, missing
+  stone location)
+- Hand sketch of proposed 1355/2B1 and 1355/2B2 with dimensions
+- GPS corner coordinate table (as above)
+- Copy of nil dues certificate

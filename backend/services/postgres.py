@@ -4,7 +4,7 @@ PostgreSQL query service for structured data retrieval
 from sqlalchemy import select, func, and_, or_, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import date, datetime, timedelta
 from uuid import UUID
 
@@ -18,6 +18,13 @@ from backend.schemas import OfficerContext
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# workflow_guide.txt: "Active statuses: pending, in_progress, escalated".
+# These were listed as just pending+in_progress in the queries below, so an
+# escalated application -- the ones that most need attention -- dropped out of
+# the workload and visit counts while still appearing in the overdue list, and
+# the two answers disagreed with each other.
+ACTIVE_STATUSES = ["pending", "in_progress", "escalated"]
 
 
 async def get_jurisdiction_filter(db: AsyncSession, officer: OfficerContext):
@@ -104,10 +111,17 @@ async def get_officer_applications(
     end_date: Optional[date] = None,
     is_overdue: Optional[bool] = None,
     stage: Optional[str] = None,
-    exclude_date_range: bool = False
+    exclude_date_range: bool = False,
+    submission_channel: Optional[str] = None,   # 'CSC' | 'citizen' | 'sub_registrar'
+    date_ranges: Optional[List[Tuple[date, date]]] = None,
 ) -> Dict[str, Any]:
     """
     Get applications assigned to officer with optional filters.
+
+    `date_ranges` holds disjoint (start, end) segments for months asked for as a
+    union -- "March and May" must not drag April in with them. It takes
+    precedence over start_date/end_date, which the caller still sets to the
+    envelope of the segments for labelling.
     Filters by assigned_officer_id (direct assignment) AND current_stage
     so only applications in the officer's stage are returned.
     """
@@ -145,8 +159,19 @@ async def get_officer_applications(
             (isinstance(status, list) and any(s in ["approved", "rejected", "closed"] for s in status))
             or (isinstance(status, str) and status in ["approved", "rejected", "closed"])
         )
-        if not is_historical:
+        # A question that names a period -- "applications in June 2025",
+        # "between X and Y", "last month" -- asks what the register holds for
+        # that period, not what is on the officer's desk right now. Pinning it
+        # to the current stage answered 0 for every past month, because an
+        # application from then has long since left the SIS desk.
+        has_date_filter = any(v is not None for v in
+                              (start_date, end_date, submission_year, submission_month))
+        if not is_historical and not has_date_filter:
             where_clauses.append(Application.current_stage == officer_stage)
+        elif has_date_filter and not is_historical and not status:
+            # Looking across every stage, so the standing rule applies: rejected
+            # applications stay out of lists unless they were asked for.
+            where_clauses.append(Application.current_status != "rejected")
 
         query = select(Application).options(
             selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
@@ -169,9 +194,20 @@ async def get_officer_applications(
                 query = query.where(Application.application_type.in_(application_type))
             else:
                 query = query.where(Application.application_type == application_type)
+
+        # Filter by submission channel (CSC / citizen / sub_registrar)
+        if submission_channel:
+            query = query.where(Application.submission_channel == submission_channel)
         
         # Filter by date range if provided (takes precedence over year/month)
-        if start_date and end_date:
+        if date_ranges:
+            _segments = [
+                and_(Application.submission_date >= _s, Application.submission_date <= _e)
+                for _s, _e in date_ranges
+            ]
+            _in_any_segment = or_(*_segments)
+            query = query.where(~_in_any_segment if exclude_date_range else _in_any_segment)
+        elif start_date and end_date:
             if exclude_date_range:
                 # NOT BETWEEN: applications OUTSIDE the given range
                 query = query.where(
@@ -279,6 +315,7 @@ async def get_officer_applications(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
                     "is_overdue": app.is_overdue,
+                    "submission_channel": app.submission_channel,
                     "survey_no": base_survey_no,
                     "raw_survey_no": base_survey_no,
                     "subdivisions": subdivisions_str,
@@ -292,7 +329,6 @@ async def get_officer_applications(
                     "block_number": block.block_number if block else "N/A",
                     "jurisdiction": jur_dict,
                     "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_email": applicant.email if applicant else "N/A",
                     "applicant_mobile": applicant.mobile if applicant else "N/A",
                     "applicant_address": applicant.address if applicant else "N/A"
                 })
@@ -304,6 +340,7 @@ async def get_officer_applications(
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
                     "is_overdue": app.is_overdue,
+                    "submission_channel": app.submission_channel,
                     "survey_no": base_survey_no,
                     "raw_survey_no": base_survey_no,
                     "subdivisions": subdivisions_str,
@@ -315,7 +352,6 @@ async def get_officer_applications(
                     "block_number": block.block_number if block else "N/A",
                     "jurisdiction": jur_dict,
                     "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_email": applicant.email if applicant else "N/A",
                     "applicant_mobile": applicant.mobile if applicant else "N/A",
                     "applicant_address": applicant.address if applicant else "N/A",
                     "included_subdivisions": ", ".join(subdiv_list) or "None"
@@ -353,19 +389,25 @@ async def get_pending_applications(
     end_date: Optional[date] = None,
     is_overdue: Optional[bool] = None,
     stage: Optional[str] = None,
-    exclude_date_range: bool = False
+    exclude_date_range: bool = False,
+    submission_channel: Optional[str] = None,   # 'CSC' | 'citizen' | 'sub_registrar'
+    date_ranges: Optional[List[Tuple[date, date]]] = None,
 ) -> Dict[str, Any]:
     """
     Get applications for officer with optional status, year, month, date-range, and geography filters.
-    By default, returns both 'pending' and 'in_progress' applications.
+    By default, returns every active application (pending, in_progress and
+    escalated -- see ACTIVE_STATUSES). Escalated used to be left out here while
+    the workload summary and the overdue list counted it, so the officer was
+    shown three different totals for the same queue.
     When a date range (start_date/end_date) is provided, show all statuses within that range.
     """
-    if status is None and not submission_year and not start_date and not end_date and is_overdue is None:
-        status = ["pending", "in_progress"]
+    if (status is None and not submission_year and not start_date and not end_date
+            and not date_ranges and is_overdue is None):
+        status = list(ACTIVE_STATUSES)
     return await get_officer_applications(
-        db, officer, 
-        status=status, 
-        application_type=application_type, 
+        db, officer,
+        status=status,
+        application_type=application_type,
         submission_year=submission_year,
         submission_month=submission_month,
         taluk_name=taluk_name,
@@ -375,7 +417,9 @@ async def get_pending_applications(
         end_date=end_date,
         is_overdue=is_overdue,
         stage=stage,
-        exclude_date_range=exclude_date_range
+        exclude_date_range=exclude_date_range,
+        submission_channel=submission_channel,
+        date_ranges=date_ranges,
     )
 
 
@@ -526,7 +570,6 @@ async def get_overdue_applications(
                     "block_number": block.block_number if block else "N/A",
                     "jurisdiction": jur_dict,
                     "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_email": applicant.email if applicant else "N/A",
                     "applicant_mobile": applicant.mobile if applicant else "N/A",
                     "applicant_address": applicant.address if applicant else "N/A"
                 })
@@ -550,7 +593,6 @@ async def get_overdue_applications(
                     "block_number": block.block_number if block else "N/A",
                     "jurisdiction": jur_dict,
                     "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_email": applicant.email if applicant else "N/A",
                     "applicant_mobile": applicant.mobile if applicant else "N/A",
                     "applicant_address": applicant.address if applicant else "N/A",
                     "included_subdivisions": ", ".join(subdiv_list) or "None"
@@ -706,7 +748,7 @@ async def get_officer_workload(
             base_query.where(
                 and_(
                     Application.application_type == "ISD",
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
             )
         )
@@ -715,7 +757,7 @@ async def get_officer_workload(
             base_query.where(
                 and_(
                     Application.application_type == "NISD",
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
             )
         )
@@ -724,7 +766,7 @@ async def get_officer_workload(
             base_query.where(
                 and_(
                     Application.application_type == "MERGE",
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
             )
         )
@@ -733,7 +775,7 @@ async def get_officer_workload(
             base_query.where(
                 and_(
                     Application.is_overdue == True,
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
             )
         )
@@ -743,7 +785,7 @@ async def get_officer_workload(
             base_query.where(
                 and_(
                     Application.field_visit_scheduled == False,
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
             )
         )
@@ -765,6 +807,161 @@ async def get_officer_workload(
     except Exception as e:
         logger.error(f"Error getting officer workload: {e}")
         return {"total_active": 0, "error": str(e)}
+
+
+def _application_jurisdiction_subquery(jurisdiction_filters):
+    """Subquery of application ids whose survey number falls inside the officer's jurisdiction."""
+    return (
+        select(Application.id)
+        .join(SurveyNumber, Application.survey_number_id == SurveyNumber.id)
+        .join(Block, SurveyNumber.block_id == Block.id)
+        .join(Ward, Block.ward_id == Ward.id)
+        .join(Town, Ward.town_id == Town.id)
+        .join(Taluk, Town.taluk_id == Taluk.id)
+        .join(District, Taluk.district_id == District.id)
+        .where(or_(*jurisdiction_filters))
+        .scalar_subquery()
+    )
+
+
+async def lookup_application_access(
+    db: AsyncSession,
+    application_number: str,
+    officer: OfficerContext
+) -> Dict[str, Any]:
+    """
+    Establish the facts needed to decide whether an officer may be told anything
+    about `application_number`. Pure lookup: it never normalises the number, never
+    picks a near match, and never returns data belonging to another jurisdiction.
+
+    Returns:
+        exists       — the number matches a real application, anywhere in the DB
+        accessible   — that application is inside the officer's jurisdiction
+        candidates   — jurisdiction-scoped near matches, offered only as suggestions
+        recent       — jurisdiction-scoped recent applications, for orientation
+    """
+    from sqlalchemy.orm import joinedload
+
+    number = (application_number or "").strip()
+    result: Dict[str, Any] = {
+        "searched_number": number,
+        "exists": False,
+        "accessible": False,
+        "candidates": [],
+        "recent": [],
+    }
+    if not number:
+        return result
+
+    jurisdiction_filters = await get_jurisdiction_filter(db, officer) if officer else []
+
+    # 1. Does this exact number exist at all? Answered without any jurisdiction
+    #    filter so we can tell "no such application" apart from "not yours".
+    exists_row = (await db.execute(
+        select(Application.id).where(Application.application_number == number)
+    )).first()
+    result["exists"] = exists_row is not None
+
+    if result["exists"]:
+        if not jurisdiction_filters:
+            # No jurisdiction rows configured — deny rather than leak.
+            result["accessible"] = False
+            return result
+        allowed = (await db.execute(
+            select(Application.id)
+            .where(Application.application_number == number)
+            .where(Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters)))
+        )).first()
+        result["accessible"] = allowed is not None
+        return result
+
+    # 2. No exact match. Collect *suggestions only* — never auto-selected.
+    def _summarise(rows):
+        return [
+            {
+                "application_number": r.application_number,
+                "type": r.application_type,
+                "status": r.current_status,
+                "stage": r.current_stage,
+                "applicant_name": r.applicant.name if r.applicant else "N/A",
+            }
+            for r in rows
+        ]
+
+    prefix = number.rstrip("/")
+    if prefix:
+        cand_q = (
+            select(Application)
+            .options(joinedload(Application.applicant))
+            .where(Application.application_number.ilike(f"{prefix}%"))
+            .limit(6)
+        )
+        if jurisdiction_filters:
+            cand_q = cand_q.where(Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters)))
+        result["candidates"] = _summarise((await db.execute(cand_q)).scalars().all())
+
+    recent_q = (
+        select(Application)
+        .options(joinedload(Application.applicant))
+        .order_by(Application.created_at.desc())
+        .limit(6)
+    )
+    if jurisdiction_filters:
+        recent_q = recent_q.where(Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters)))
+    result["recent"] = _summarise((await db.execute(recent_q)).scalars().all())
+
+    return result
+
+
+async def get_can_details(
+    db: AsyncSession,
+    officer: OfficerContext = None,
+    application_number: Optional[str] = None,
+    can_number: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    The CAN carried by one application, looked up either by application number or
+    by the CAN itself. The length is the channel: 15 digits was issued at a
+    Common Service Centre, 12 digits was generated by the citizen on the portal
+    (see backend/sample_db/identifiers.py).
+    """
+    if not application_number and not can_number:
+        return {"found": False}
+    try:
+        from sqlalchemy.orm import joinedload
+        query = select(Application).options(joinedload(Application.applicant))
+        if application_number:
+            query = query.where(Application.application_number == application_number)
+        else:
+            query = query.where(Application.can_number == can_number)
+        if officer:
+            filters = await get_jurisdiction_filter(db, officer)
+            if filters:
+                query = query.where(Application.id.in_(_application_jurisdiction_subquery(filters)))
+        app = (await db.execute(query)).unique().scalars().first()
+        if not app:
+            return {"found": False, "application_number": application_number,
+                    "can_number": can_number}
+        can = app.can_number or ""
+        if len(can) == 15:
+            channel = "Common Service Centre (e-Sevai)"
+        elif len(can) == 12:
+            channel = "Citizen portal (filed by the citizen)"
+        else:
+            channel = app.submission_channel or "unknown"
+        return {
+            "found": True,
+            "application_number": app.application_number,
+            "can_number": can or "not recorded",
+            "digits": len(can) if can else 0,
+            "channel": channel,
+            "submission_channel": app.submission_channel,
+            "applicant_name": app.applicant.name if app.applicant else None,
+            "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+        }
+    except Exception as exc:                                  # noqa: BLE001
+        logger.error(f"Error in get_can_details: {exc}")
+        return {"found": False, "error": str(exc)}
 
 
 async def get_application_detail(
@@ -811,76 +1008,57 @@ async def get_application_detail(
         app = result.scalar_one_or_none()
         
         if not app:
-            # 1. Try normalized candidate formats (zero padding sequence to 6 digits, e.g. 2026/0155/02/000001 or 2026/0155/02/000011)
-            candidate_numbers = []
-            if "/" in application_number:
-                parts = application_number.strip().split("/")
-                if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit() and parts[3].isdigit():
-                    candidate_numbers.append(f"{parts[0]}/{parts[1].zfill(4)}/{parts[2].zfill(2)}/{parts[3].zfill(6)}")
-                    candidate_numbers.append(f"{parts[0]}/{parts[2].zfill(2)}/{parts[1].zfill(4)}/{parts[3].zfill(6)}")
+            # No exact match. We deliberately do NOT normalise the number
+            # (zero-padding segments) and do NOT auto-select the closest match:
+            # silently answering about a different application is worse than
+            # saying we could not find this one. Near matches are offered as
+            # suggestions the officer must confirm explicitly.
+            suggestions = []
 
-            for cand in candidate_numbers:
-                if cand != application_number:
-                    cand_query = select(Application).options(
-                        joinedload(Application.applicant),
-                        selectinload(Application.assigned_officer),
-                        selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
-                        selectinload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
-                        selectinload(Application.field_visits)
-                    ).where(Application.application_number == cand)
-                    if officer and jurisdiction_filters:
-                        cand_query = cand_query.where(Application.id.in_(jurisdiction_subquery))
-                    cand_res = await db.execute(cand_query)
-                    cand_app = cand_res.scalar_one_or_none()
-                    if cand_app:
-                        app = cand_app
-                        break
-
-            # 2. Try prefix/wildcard search (e.g. 2026/0155/02/00001 matches 2026/0155/02/000011, 2026/0155/02/000012)
-            if not app:
+            prefix = application_number.strip().rstrip("/")
+            if prefix:
                 prefix_query = select(Application).options(
-                    joinedload(Application.applicant),
-                    selectinload(Application.assigned_officer),
-                    selectinload(Application.survey_number).selectinload(SurveyNumber.block).selectinload(Block.ward).selectinload(Ward.town).selectinload(Town.taluk).selectinload(Taluk.district),
-                    selectinload(Application.application_sub_divisions).joinedload(ApplicationSubDivision.sub_division),
-                    selectinload(Application.field_visits)
-                ).where(Application.application_number.ilike(f"{application_number.strip()}%"))
+                    joinedload(Application.applicant)
+                ).where(Application.application_number.ilike(f"{prefix}%")).limit(6)
                 if officer and jurisdiction_filters:
                     prefix_query = prefix_query.where(Application.id.in_(jurisdiction_subquery))
-                prefix_res = await db.execute(prefix_query)
-                prefix_apps = prefix_res.scalars().all()
-
-                if len(prefix_apps) == 1:
-                    app = prefix_apps[0]
-                elif len(prefix_apps) > 1:
-                    suggestions = [
-                        {
-                            "application_number": pa.application_number,
-                            "type": pa.application_type,
-                            "status": pa.current_status,
-                            "stage": pa.current_stage,
-                            "applicant_name": pa.applicant.name if pa.applicant else "N/A"
-                        }
-                        for pa in prefix_apps[:6]
-                    ]
-                    return {
-                        "found": False,
-                        "message": f"Application {application_number} not found. Found {len(prefix_apps)} matching applications.",
-                        "suggestions": suggestions,
-                        "searched_number": application_number,
-                        "query_type": "Application Suggestions"
-                    }
-
-            # 3. Fallback: Return recent applications in officer's jurisdiction as suggestions
-            if not app:
-                recent_query = select(Application).options(
-                    joinedload(Application.applicant)
-                ).order_by(Application.created_at.desc()).limit(6)
-                if officer and jurisdiction_filters:
-                    recent_query = recent_query.where(Application.id.in_(jurisdiction_subquery))
-                recent_res = await db.execute(recent_query)
-                recent_apps = recent_res.scalars().all()
+                prefix_apps = (await db.execute(prefix_query)).scalars().all()
                 suggestions = [
+                    {
+                        "application_number": pa.application_number,
+                        "type": pa.application_type,
+                        "status": pa.current_status,
+                        "stage": pa.current_stage,
+                        "applicant_name": pa.applicant.name if pa.applicant else "N/A"
+                    }
+                    for pa in prefix_apps
+                ]
+
+            if suggestions:
+                return {
+                    "found": False,
+                    "needs_confirmation": True,
+                    "message": (
+                        f"Application {application_number} was not found. "
+                        f"Found {len(suggestions)} similar application(s) — please confirm which one you mean."
+                    ),
+                    "suggestions": suggestions,
+                    "searched_number": application_number,
+                    "query_type": "Application Suggestions"
+                }
+
+            # Nothing similar — show recent applications in the officer's
+            # jurisdiction purely for orientation.
+            recent_query = select(Application).options(
+                joinedload(Application.applicant)
+            ).order_by(Application.created_at.desc()).limit(6)
+            if officer and jurisdiction_filters:
+                recent_query = recent_query.where(Application.id.in_(jurisdiction_subquery))
+            recent_apps = (await db.execute(recent_query)).scalars().all()
+            return {
+                "found": False,
+                "message": f"Application {application_number} not found.",
+                "suggestions": [
                     {
                         "application_number": ra.application_number,
                         "type": ra.application_type,
@@ -889,15 +1067,11 @@ async def get_application_detail(
                         "applicant_name": ra.applicant.name if ra.applicant else "N/A"
                     }
                     for ra in recent_apps
-                ]
-                return {
-                    "found": False,
-                    "message": f"Application {application_number} not found.",
-                    "suggestions": suggestions,
-                    "searched_number": application_number,
-                    "query_type": "Application Suggestions"
-                }
-            
+                ],
+                "searched_number": application_number,
+                "query_type": "Application Suggestions"
+            }
+
         # Compile proposed sub-divisions with full detail
         sub_divisions_list = []
         proposed_sub_divisions = []
@@ -1008,13 +1182,11 @@ async def get_application_detail(
             # Applicant
             "applicant_name": app.applicant.name if app.applicant else None,
             "applicant_mobile": app.applicant.mobile if app.applicant else None,
-            "applicant_email": app.applicant.email if app.applicant else None,
             "applicant_address": app.applicant.address if app.applicant else None,
-            "can_number": getattr(app, 'can_number', None),
+            "can_number": app.can_number,
             "applicant": {
                 "name": app.applicant.name,
                 "mobile": app.applicant.mobile,
-                "email": app.applicant.email,
                 "address": app.applicant.address
             } if app.applicant else None,
             # Sub-divisions
@@ -1039,36 +1211,21 @@ async def get_application_detail(
             "application_id": app.application_number,
             "user_id": app.assigned_officer.employee_id if app.assigned_officer else None,
             "role_id": app.assigned_officer.designation if app.assigned_officer else None,
-            "department_code": None,
             "service_code": app.application_number.split('/')[1] if '/' in app.application_number else ("0154" if app.application_type == "ISD" else ("0153" if app.application_type == "NISD" else "0155")),
             "district_code": district.district_code if (district and hasattr(district, 'district_code') and district.district_code) else (app.application_number.split('/')[2] if '/' in app.application_number else None),
             "taluk_code": taluk.taluk_code if (taluk and hasattr(taluk, 'taluk_code') and taluk.taluk_code) else None,
+            # Urban jurisdiction: the extracts carry a town/urban-unit code, not a village code.
             "village_code": None,
-            "urban_unit_code": None,
-            "ward_code": f"Ward {ward.ward_number}" if ward else None,
-            "block_code": f"Block {block.block_number}" if block else None,
+            "urban_unit_code": town.town_code if town else None,
+            # Codes are shown under "Ward Code" / "Block Code", so emit the stored code
+            # verbatim ("002", "0015") — the human-readable names live in `jurisdiction`.
+            "ward_code": ward.ward_number if ward else None,
+            "block_code": block.block_number if block else None,
             "application_date": app.submission_date.isoformat(),
             "application_status": app.current_status,
             "workflow_state": app.current_stage,
-            "return_status": getattr(app, 'return_status', None),
-            "renewal_number": getattr(app, 'renewal_number', None),
-            "parent_application_id": getattr(app, 'parent_application_id', None),
-            "auto_mutated_flag": getattr(app, 'is_auto_mutated', None),
-            "is_auto_mutated": getattr(app, 'is_auto_mutated', None),
-            "igrs_auto_mutation_flag": getattr(app, 'igrs_auto_mutation_flag', None),
-            "camp_flag": getattr(app, 'camp_flag', None),
-            "camp_code": getattr(app, 'camp_code', None),
-            "camp_correction_id": getattr(app, 'camp_correction_id', None),
-            "igrs_form6_number": getattr(app, 'igrs_form6_number', None),
-            "csc_service_charge": getattr(app, 'csc_service_charge', None),
-            "government_service_charge": getattr(app, 'government_service_charge', None),
-            "ip_address": getattr(app, 'ip_address', None),
             "source_code": app.submission_channel or None,
             "source_name": "Common Service Center (CSC)" if app.submission_channel == "CSC" else ("Citizen Portal" if app.submission_channel == "citizen" else ("Sub Registrar Office (IGRS)" if app.submission_channel == "sub_registrar" else None)),
-            "dispatch_date": None if app.current_status == "pending" else app.submission_date.isoformat(),
-            "received_date": app.submission_date.isoformat(),
-            "generated_datetime": app.submission_date.isoformat() if app.submission_date else None,
-            "last_updated_datetime": app.submission_date.isoformat() if app.submission_date else None,
             "survey_total_area_sqm": survey_total_area,
             "proposed_total_area_sqm": proposed_total_area,
             "area_sqm": total_merge_area if total_merge_area else (proposed_total_area if proposed_total_area else survey_total_area),
@@ -1241,7 +1398,10 @@ async def get_survey_owners(
             SubDivision, SurveyOwnership.sub_division_id == SubDivision.id
         ).where(
             SurveyOwnership.survey_number_id == survey.id
-        ).order_by(SubDivision.sub_division_no)
+        # Owner name breaks ties: ordering by sub-division alone leaves survey-level
+        # owners (all NULL sub-division) in whatever order the scan returns, so the
+        # same question answered twice listed the same owners in a different order.
+        ).order_by(SubDivision.sub_division_no, Owner.name)
         
         result = await db.execute(ownership_query)
         ownerships = result.all()
@@ -1318,7 +1478,7 @@ async def get_unscheduled_visits(
                 Application.application_type.in_(["ISD", "MERGE"]),
                 Application.field_visit_scheduled == False,
                 Application.current_stage == (officer.officer_stage or "SIS"),
-                Application.current_status.in_(["pending", "in_progress"])
+                Application.current_status.in_(ACTIVE_STATUSES)
             )
         )
         
@@ -1337,7 +1497,6 @@ async def get_unscheduled_visits(
                     "days_since_submission": (datetime.now().date() - app.submission_date).days,
                     "is_overdue": app.is_overdue,
                     "applicant_name": app.applicant.name if app.applicant else "N/A",
-                    "applicant_email": app.applicant.email if app.applicant else "N/A",
                     "applicant_mobile": app.applicant.mobile if app.applicant else "N/A",
                     "applicant_address": app.applicant.address if app.applicant else "N/A"
                 }
@@ -1357,11 +1516,15 @@ async def get_field_visits(
     end_date: Optional[date] = None,
     to_be_visited_only: bool = False,
     application_type: Optional[List[str]] = None,
-    exclude_date_range: bool = False
+    exclude_date_range: bool = False,
+    application_number: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get field visits for the officer with optional status, date range (start_date to end_date),
     to-be-visited filtering, and application type filtering (supports multiple types via list).
+    `application_number` narrows the result to one application — used when the officer
+    asks about "its field visit" after an application has been confirmed in the
+    conversation, so the answer is that visit rather than the whole jurisdiction list.
     If exclude_date_range=True the date filter is inverted: visits OUTSIDE [start_date, end_date]
     are returned (i.e. scheduled_date < start_date OR scheduled_date > end_date).
     """
@@ -1404,6 +1567,9 @@ async def get_field_visits(
             )
         )
         
+        if application_number:
+            query = query.where(Application.application_number == application_number)
+
         if status_filter:
             query = query.where(FieldVisit.status == status_filter)
 
@@ -1499,7 +1665,6 @@ async def get_field_visits(
                 "field_visit_date": visit.scheduled_date.isoformat() if visit.scheduled_date else None,
                 "is_overdue": is_overdue,
                 "applicant_name": applicant.name if applicant else "N/A",
-                "applicant_email": applicant.email if applicant else "N/A",
                 "applicant_mobile": applicant.mobile if applicant else "N/A",
                 "applicant_address": applicant.address if applicant else "N/A"
             })
@@ -1800,7 +1965,7 @@ async def get_merge_application_detail(
             # Also filter by active status if not searching specific application
             if not application_number:
                 query = query.where(
-                    Application.current_status.in_(["pending", "in_progress"])
+                    Application.current_status.in_(ACTIVE_STATUSES)
                 )
         
         result = await db.execute(query)
