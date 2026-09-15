@@ -296,14 +296,18 @@ async def run_200_test_suite():
 
     async with AsyncSessionLocal() as db:
         # Load test SIS Officer (Arjun Kumar - Block SIS)
+        # arjun.kumar no longer exists -- officers are seeded from the workflow
+        # chain now (csenthil / msivakumar / muthulakshmis) and their UUIDs are
+        # regenerated on every build. Resolve by employee_id so the suite always
+        # runs against the same officer.
         result = await db.execute(
-            select(SISOfficer).where(SISOfficer.email == "arjun.kumar@sis.tn.gov.in")
+            select(SISOfficer).where(SISOfficer.is_active.is_(True))
+            .order_by(SISOfficer.employee_id).limit(1)
         )
-        officer_model = result.scalar_one_or_none()
-        if not officer_model:
-            # Fallback to first officer
-            result = await db.execute(select(SISOfficer).limit(1))
-            officer_model = result.scalar_one()
+        officer_model = result.scalars().first()
+        if officer_model is None:
+            print("No active officer in the database -- run build_app_tables first.")
+            return
 
         jurisdiction_data = await get_officer_jurisdiction_ids(officer_model.id, db)
         all_jur_ids = (

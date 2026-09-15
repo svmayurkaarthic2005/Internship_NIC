@@ -1,27 +1,27 @@
-# Sub Inspector Surveyor AI Assistant
+# Sub Inspector Surveyor (SIS) AI Assistant
 
-A bilingual (Tamil/English) AI-powered chatbot system for Sub Inspectors to manage survey applications through natural language conversations.
+A bilingual (Tamil/English/Tanglish) AI-powered chatbot for Sub Inspector Surveyor officers in Tamil Nadu, India. Officers interact via natural language chat to manage survey applications, track status, check documents, and query field visits.
 
 ## Tech Stack
 
-- **Backend**: FastAPI, PostgreSQL, Ollama (Llama 3.1:8b)
-- **Frontend**: HTML/CSS/JavaScript (Vanilla)
-- **Vector Store**: pgvector (PostgreSQL)
-- **Authentication**: JWT
+- **Backend**: FastAPI + SQLAlchemy (async) + PostgreSQL + pgvector
+- **Database**: `sis_chatbot_db` and the `knowledge_embeddings` vector store
+- **LLM**: Ollama (`llama3.1:8b`) running locally
+- **Embeddings**: `nomic-embed-text` via Ollama
+- **Frontend**: Vanilla HTML/CSS/JS (no framework)
+- **Auth**: JWT (python-jose + passlib/bcrypt)
 
 ## Quick Start
 
 ### Prerequisites
 - Python 3.8+
-- PostgreSQL 12+
+- PostgreSQL 12+ with `pgvector` extension
 - Ollama with models: `llama3.1:8b`, `nomic-embed-text`
 
 ### Setup
-```bash
-# 1. Clone and setup environment
-git clone <repo>
-cd nic_internship
-python -m venv .venv
+
+```powershell
+# 1. Activate virtual environment (Windows)
 .venv\Scripts\activate
 
 # 2. Install dependencies
@@ -31,57 +31,88 @@ pip install -r requirements.txt
 copy .env.example .env
 # Edit .env with your database credentials
 
-# 4. Setup database
-python create_database.py
-python backend/seed.py
-python backend/ingest.py
+# 4. First-time DB setup (run in order)
+python backend/sample_db/seed_sample_db.py     # Create DB + seed 16 CSV-shaped tables
+python backend/sample_db/verify_sample_db.py   # Verify structure/refs/signatures/non-leakage
+python -m backend.sample_db.load_master_dumps  # Load the 5 TAMILNILAM master pg_dumps
+python -m backend.sample_db.adopt_master_district_taluk  # First run only: drop the duplicate districts/taluks
+python -m backend.sample_db.build_app_tables   # Project into the app's ORM tables
+python -m backend.sample_db.verify_identifiers # Verify every Aadhaar / CAN in both layers
+python -m backend.ingest                       # Load document embeddings into knowledge_embeddings
 
 # 5. Start backend
 python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# Or use the PowerShell script:
+.\start_backend.ps1
 
-# 6. Start frontend (new terminal)
-cd frontend
-python -m http.server 3000
+# 6. Serve frontend (separate terminal)
+python serve_frontend.py       # Serves on http://localhost:3000
 ```
 
 **Access**: `http://localhost:3000/login.html`
 
-**Test Credentials**:
-- arjun.kumar@sis.tn.gov.in / Test@1234 (Block SIS)
-- priya.devi@sis.tn.gov.in / Test@1234 (Ward SIS)
-- ramesh.babu@sis.tn.gov.in / Test@1234 (Taluk SIS)
-- lakshmi.narayanan@sis.tn.gov.in / Test@1234 (District SIS)
+**API Docs** (dev only): `http://localhost:8000/api/docs`
+
+**Test Credentials** (run `python check_login_credentials.py` for the full list):
+- `csenthil@sis.tn.gov.in` / `Test@1234` — Ward 002 SIS (Thoothukudi)
+- `msivakumar@sis.tn.gov.in` / `Test@1234` — Ward 102 SIS (Thoothukudi)
+- `muthulakshmis@sis.tn.gov.in` / `Test@1234` — Ward 103 SIS (Thoothukudi)
 
 ## Project Structure
 
 ```
 nic_internship/
 ├── backend/
-│   ├── main.py                      # FastAPI entry point
-│   ├── config.py                    # Configuration
-│   ├── database.py                  # Database connection
-│   ├── models.py                    # SQLAlchemy models
-│   ├── schemas.py                   # Pydantic schemas
+│   ├── main.py               # FastAPI app, lifespan, middleware, routers
+│   ├── config.py             # pydantic-settings (Settings class + DISTRICT_CODE_MAP)
+│   ├── database.py           # Async SQLAlchemy engine + Base + get_db()
+│   ├── models.py             # All SQLAlchemy ORM models (UUID PKs, TIMESTAMP(tz=True))
+│   ├── schemas.py            # Pydantic schemas (StandardResponse, OfficerContext, etc.)
+│   ├── dependencies.py       # get_current_officer() JWT dependency
+│   ├── ingest.py             # Document ingestion into pgvector (knowledge_embeddings)
+│   ├── schema.sql            # Raw SQL schema reference for the ORM tables
 │   ├── routers/
-│   │   ├── auth.py                  # Login/register endpoints
-│   │   ├── chat.py                  # Chat & streaming endpoints
-│   │   ├── applications.py          # Application CRUD
-│   │   └── survey.py                # Survey endpoints
+│   │   ├── auth.py           # POST /auth/login
+│   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
+│   │   ├── applications.py   # GET/PUT /applications
+│   │   └── survey.py         # Survey endpoints
 │   ├── services/
-│   │   ├── chatbot.py               # Main chatbot orchestration
-│   │   ├── rag.py                   # Intent detection & routing
-│   │   ├── postgres.py              # Database query handlers
-│   │   ├── pgvector_store.py        # Vector store operations (pgvector)
-│   │   └── embeddings.py            # Embedding generation
-│   └── documents/                   # Knowledge base documents
+│   │   ├── chatbot.py        # Main orchestrator (~6500 lines) — entry point for all chat logic
+│   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
+│   │   ├── postgres.py       # All database query handlers
+│   │   ├── agent.py          # LLM tool-calling loop (the general_query fallback)
+│   │   ├── followup_context.py  # Reference context for implicit follow-ups
+│   │   ├── doc_extract.py    # Uploaded file → located text segments + citations
+│   │   ├── attachment_store.py  # Attachment tables, authorization, evidence retrieval
+│   │   ├── csv_ops.py        # Deterministic count/sum/min/max/group over CSV rows
+│   │   ├── attachment_qa.py  # Which file, which entity, evidence or refusal
+│   │   ├── agent_tools.py    # The 14 authorized domain tools the agent may call
+│   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
+│   │   ├── embeddings.py     # Embedding generation via Ollama
+│   │   └── auth_service.py   # Login, JWT creation/verification
+│   ├── sample_db/            # sis_chatbot_db build pipeline — see backend/sample_db/README.md
+│   │   ├── seed_sample_db.py      # Creates the DB, applies DDL, generates + inserts rows
+│   │   ├── verify_sample_db.py    # Structure/refs/population/signature/non-leakage checks
+│   │   ├── build_app_tables.py    # Projects sample tables → the app's ORM tables
+│   │   ├── verify_identifiers.py  # Checks every Aadhaar / CAN against identifiers.py
+│   │   ├── identifiers.py         # Aadhaar + CAN rules, shared by seed and projection
+│   │   ├── check_app_wiring.py    # Smoke test: app queries + chatbot answer from this DB
+│   │   ├── question_bank.py       # Shared question set for the suites
+│   │   └── README.md              # Source of truth for the DB layout
+│   ├── documents/            # RAG corpus: workflow_guide.txt, faq_*.txt, survey_manual.txt
+│   └── utils/
+│       ├── fuzzy.py          # Fuzzy month/token matching for typo tolerance
+│       ├── helpers.py        # Misc helpers
+│       └── logger.py         # structlog-based logger (get_logger)
 ├── frontend/
-│   ├── login.html                   # Login page
-│   ├── chatbot.html                 # Chat interface
-│   ├── css/                         # Stylesheets
-│   └── js/                          # JavaScript modules
-├── verify_no_duplicates.py          # Quick integrity check
-├── check_missing_values.py          # Deep data validation
-└── requirements.txt
+│   ├── login.html
+│   ├── chatbot.html
+│   ├── css/
+│   └── js/
+├── .env                      # Secrets (not committed)
+├── .env.example              # Template
+├── requirements.txt
+└── CLAUDE.md                 # Comprehensive AI assistant guide
 ```
 
 ## How It Works
@@ -89,168 +120,146 @@ nic_internship/
 ### 1. Request Flow
 
 ```
-User Message → FastAPI (/chat/stream)
-           ↓
-    services/chatbot.py (orchestrator)
-           ↓
-    rag.py (intent detection)
-           ↓
-    postgres.py (database queries)
-           ↓
-    LLM (Ollama) + Context
-           ↓
-    Streaming Response → User
+POST /api/v1/chat/stream
+        ↓
+  chat.py router
+        ↓
+  chatbot.py → process_chat_stream()   ← MAIN ENTRY POINT
+        ↓
+  rag.py → parse_intent()              ← classify the user message (~60 intents)
+        ↓
+  postgres.py → <query handler>()      ← fetch structured DB data
+        ↓
+  rag.py → call_llama_stream()         ← stream LLM response with context
+        ↓
+  SSE stream → frontend
 ```
 
-### 2. Intent Detection (rag.py)
+### 2. Intent Detection (`rag.py`)
 
-The system detects user intent and routes to appropriate handlers:
+`parse_intent()` resolves ~60 intents by exact token-boundary matching plus edit-distance typo tolerance. Rough priority order:
 
-```python
-Priority Order:
-1. greeting              # "Hello", "வணக்கம்"
-2. farewell              # "Bye", "நன்றி"
-3. joint_owner_check     # "Who are the joint owners?"
-4. application_status    # "Status of APP-2024-000001"
-5. check_documents       # "What documents are missing?"
-6. check_sale_deed       # "Is sale deed registered?"
-7. is_nisd_or_isd        # "What type is this application?"
-8. field_specific_query  # "What is the applicant name?"
-9. general_query         # Falls back to RAG search
+```
+1.  greeting / farewell
+2.  Deterministic identifiers (application_status, survey_detail, can_number_info)
+3.  last_application — "my previous / last approved application"
+4.  Per-application checks (joint_owner_check, check_documents, check_sale_deed,
+    is_nisd_or_isd, litigation_check)
+5.  Workload / listing (pending, overdue, isd/nisd/merge applications, jurisdiction_summary)
+6.  Field-visit family (fv_*)
+7.  Sub-division desk family (sd_*)
+8.  Reference lookups (service_code_lookup, sub_registrar, rejection_info)
+9.  compare_applications — 8 shapes (older, type/status/channel counts, duration,
+    ward, period, month, superlative)
+10. general_query — falls back to agent layer (tool calling) then RAG / pgvector
 ```
 
-**Language Detection**:
-- Tamil script (Unicode range detection)
-- Tanglish (phonetic patterns)
-- English (default)
+Run `python -m backend.sample_db.test_intent_coverage` to verify routing without touching the DB or LLM.
 
-### 3. Database Architecture
+**Language Detection** (`rag.py → detect_language()`):
+- **Tamil**: Unicode range U+0B80–U+0BFF detection
+- **Tanglish**: Phonetic patterns (e.g., "vanakkam", "enna")
+- **English**: Default fallback
 
-**Key Tables**:
-- `applications` - Application records with status/stage tracking
-- `survey_numbers` - Survey number registry with geographic links
-- `field_visits` - Field visit scheduling and status
-- `application_sub_divisions` - MERGE application subdivisions
-- `sis_officers` - Officer accounts
-- `officer_jurisdictions` - Officer geographic assignments
+### 3. Database Architecture — `sis_chatbot_db`
 
-**Important Constraint**:
-```sql
--- One active application per survey number
-CREATE UNIQUE INDEX idx_unique_active_app_per_survey 
-ON applications (survey_number_id) 
-WHERE current_status IN ('pending', 'in_progress', 'escalated');
-```
+One PostgreSQL database holds **two layers**:
 
-### 4. Query Handling (postgres.py)
+**Layer 1 — 16 CSV-shaped tables** (source of record, seeded from TAMILNILAM urban extracts):
 
-Each intent has a dedicated query handler:
+| Table | Rows | Table | Rows |
+|---|---|---|---|
+| `urban_application_log` | 1211 | `nisd_transfer_old_owner` | 630 |
+| `application_workflow_action` | 288087 | `nisd_transfer_return_owner` | 46 |
+| `urban_temp_subdivision_parcel` | 49 | `nisd_transfer_urban_detail` | 229 |
+| `urban_temp_subdivision_owner` | 117 | `isd_transfer_application_info` | 41 |
+| `nisd_transfer_application_info` | 166 | `isd_transfer_urban_detail` | 50 |
+| `nisd_transfer_igrs_owner` | 100 | `urban_parcel_register` | 1033 |
+| `nisd_transfer_new_owner` | 620 | `urban_parcel_signature` | 1036 |
+| `urban_natham_chitta_owner` | 551 | `urban_natham_chitta_signature` | 439 |
 
-- `get_officer_applications()` - Get apps by officer + jurisdiction + stage
-- `get_field_visits()` - Field visits **excluding rejected apps**
-- `get_pending_applications()` - Pending/in-progress apps only
-- `get_application_detail()` - Full application details
-- `get_survey_detail()` - Survey number information
+**Layer 2 — ORM tables** (`backend/models.py`), projected from layer 1 by `build_app_tables.py`:
 
-**Key Filter**: All queries exclude rejected applications to prevent duplicates
+| Sample table | App table |
+|---|---|
+| `urban_parcel_register` | `towns` → `wards` → `blocks`, `survey_numbers`, `sub_divisions` |
+| `urban_natham_chitta_owner` | `owners`, `survey_ownership` |
+| `urban_application_log` | `applications` (+ `applicants`, `application_documents`) |
+| `application_workflow_action` | `workflow_history`, `field_visits` |
+| `urban_temp_subdivision_parcel` | `application_sub_divisions` |
+| `nisd_/isd_transfer_urban_detail` | `patta_transfers` |
+| workflow usernames at role 41 | `sis_officers`, `officer_jurisdictions` |
 
-### 5. Chatbot Logic (services/chatbot.py)
+The chatbot queries **only layer 2** through `postgres.py`. `knowledge_embeddings` (768-dim vectors, HNSW index, cosine similarity) lives in the same database.
+
+### 4. Application Types
+
+- **ISD** (`0154`) — **Involving Sub-Division**: field inspection + SD sketch required
+- **NISD** (`0153`) — **Not Involving Sub-Division**: document verification only, no field visit
+- **MERGE** (`0155`) — Merge application; follows the ISD chain
+
+### 5. Application Statuses
+
+`pending` → `in_progress` → `escalated` → `approved` / `rejected`
+
+Current split: 150 approved, 52 rejected, 5 pending, 2 in progress.
+
+**All queries exclude `rejected` applications** to prevent ghost data appearing in lists.
+
+### 6. Chatbot Logic (`services/chatbot.py`)
+
+**Context Management** — implicit follow-ups:
+- `followup_context.py` stores structured context from each deterministic answer in `chat_messages.structured_data`, enabling pronoun-less follow-ups ("which is oldest?", "when was it scheduled?")
+- Application number extraction: explicit `"2025/0154/28/000001"` → context reference `"this application"` → conversation history → ask user
 
 **Response Accuracy**:
-- Direct database responses for count queries
-- Strict pattern matching for application numbers
-- Structured data validation before response generation
-- No LLM interpretation for numeric data
+- Numeric/count data always comes from the database — never from the LLM
+- Streaming SSE for better UX
 
-**Context Management**:
-- Extracts application numbers from user messages
-- Maintains conversation history for implicit references
-- Validates references against chat context
+### 7. Agent Layer (LLM Tool Calling)
 
-**Response Building**:
-- Language detection (Tamil/English/Tanglish)
-- Database-backed numeric responses
-- Proper Tamil/English formatting
-- Streaming for better UX
+`backend/services/agent.py` + `backend/services/agent_tools.py`
 
-**Query Recognition**:
-```python
-# Abbreviated forms supported:
-"show app" → pending_applications
-"show appl" → pending_applications  
-"show applications" → pending_applications
+Runs only as a fallback when all ~60 deterministic handlers pass. The model picks from 14 authorized, read-only domain tools (all backed by `postgres.py`). Authorization is enforced in code, never delegated to the model. Set `AGENT_ENABLED=false` in `.env` to disable.
 
-# Count queries use database directly:
-"how many apps" → exact count
-"number of applications" → exact count
+```
+parse_intent → deterministic handler ──────────────► answer (unchanged)
+                    │ no handler matched
+                    ▼
+              agent.gather_evidence()   ← tool-selection loop, ≤3 rounds
+                    │
+                    ▼
+              agent_tools.execute_tool()  ← validate args, enforce jurisdiction
+                    │
+                    ▼
+              agent.build_answer_prompt() → call_llama[_stream]() → answer
 ```
 
-**Application Number Extraction**:
-```python
-# Explicit: "APP-2024-000001" → Found
-# Reference: "this application" → Checks last 2 messages
-# Field query: "what is the name?" → Checks context
-# No reference: → Asks user for application number
-```
+### 8. Chat Attachments
 
-### 6. Vector Store (pgvector)
+Officers can upload PDFs, DOCX, CSVs, and TXT files (`POST /api/v1/chat/upload`). Evidence is extracted with source locations (page/paragraph/row), stored in `chat_attachments` / `attachment_chunks` / `attachment_rows`, and cited precisely in answers. CSV arithmetic (count/sum/min/max/group) is computed deterministically — the LLM never touches numbers.
 
-Documents ingested:
-- `faq_english.txt` - English FAQs
-- `faq_tamil.txt` - Tamil FAQs  
-- `survey_manual.txt` - Survey procedures
-- `workflow_guide.txt` - Workflow and business rules
+## API Endpoints
 
-Used for:
-- Intent detection (semantic similarity)
-- General queries fallback
-- Document retrieval for RAG
+**Authentication**
+- `POST /auth/login` — User login
 
-## Core Features
+**Chat**
+- `POST /api/v1/chat/stream` — Streaming chat (SSE)
+- `GET /api/v1/chat/history` — Get chat history
+- `POST /api/v1/chat/upload` — Upload attachment
 
-### Bilingual Support
-- Full Tamil and English support
-- Tanglish (Tamil written in English) recognition
-- Language-specific response formatting
-- Spelling error tolerance
+**Applications**
+- `GET /applications` — List applications
+- `GET /applications/{id}` — Get details
+- `PUT /applications/{id}` — Update application
 
-### Application Queries
-- Status tracking by application number or survey number
-- Document verification and missing document identification
-- Sale deed registration status
-- Application type identification (ISD/NISD/MERGE)
-- Field-specific queries (name, mobile, email, etc.)
-- Joint owner identification
-
-### Smart Features
-- **Context Continuity**: Remembers previous application references
-- **Implicit Continuation**: "What's the name?" uses last mentioned app
-- **Month-based Filtering**: "Show January applications" with fuzzy matching
-- **Overdue Warnings**: Visual indicators for overdue field visits
-- **Table Rendering**: Clean tables for structured data
-
-### Data Integrity
-- Unique constraint prevents duplicate active applications
-- Rejected applications excluded from active queries
-- Field visits for rejected apps marked as 'cancelled'
-- Comprehensive validation scripts
-
-## Database Verification
-
-```bash
-# Quick check for duplicates and integrity
-python verify_no_duplicates.py
-
-# Deep validation of all fields
-python check_missing_values.py
-```
-
-## Configuration (.env)
+## Configuration (`.env`)
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/sis_chatbot
-SYNC_DATABASE_URL=postgresql://user:pass@localhost:5432/sis_chatbot
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/sis_chatbot_db
+SYNC_DATABASE_URL=postgresql://user:pass@localhost:5432/sis_chatbot_db
 
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434
@@ -259,89 +268,142 @@ EMBEDDING_MODEL=nomic-embed-text
 
 # Security
 SECRET_KEY=your_secret_key
+ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
+
+# Agent
+AGENT_ENABLED=true
+AGENT_MAX_ITERATIONS=3
+AGENT_TIMEOUT_SECONDS=90
+
+# CORS
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:5500"]
+
+# Environment
+ENVIRONMENT=development
 ```
 
-## API Endpoints
+## Database Verification
 
-**Authentication**
-- `POST /auth/login` - User login
+```powershell
+# CSV-shaped layer: structure, orphans, non-leakage
+python backend/sample_db/verify_sample_db.py
 
-**Chat**
-- `POST /chat/stream` - Streaming chat (SSE)
-- `GET /chat/history` - Get chat history
+# Both layers: Aadhaar + CAN formats
+python -m backend.sample_db.verify_identifiers
 
-**Applications**
-- `GET /applications` - List applications
-- `GET /applications/{id}` - Get details
-- `PUT /applications/{id}` - Update application
+# ORM layer: required fields not NULL
+python check_missing_values.py
+
+# Lists every table + row count
+python check_sis_chatbot_db_tables.py
+
+# Prints seeded officer logins
+python check_login_credentials.py
+
+# Rebuild ORM projection (idempotent — truncates and re-derives)
+python -m backend.sample_db.build_app_tables
+```
+
+## Testing
+
+```powershell
+# Intent routing (no DB or LLM)
+python -m backend.sample_db.test_intent_coverage
+
+# Date-scoped questions
+python -m backend.sample_db.test_date_queries
+
+# Submission channel: routing, derivation, answers
+python -m backend.sample_db.test_channel_queries
+python -m backend.sample_db.test_channel_queries --fast
+
+# Workflow invariants + answer consistency
+python -m backend.sample_db.test_workflow_logic
+
+# Answer quality
+python -m backend.sample_db.test_questions
+python -m backend.sample_db.test_questions --fast
+
+# Implicit follow-ups (DB, no LLM)
+python test_followup_context.py
+python test_followup_context.py --routing
+
+# IGRS Form 6 and CAN number questions
+python test_igrs_can_queries.py
+python test_igrs_can_queries.py --data
+
+# Chat attachments
+python test_attachments.py
+python test_attachments.py --fast
+python test_attachments.py --no-db
+
+# Agent layer (tool calling, authorization, grounding)
+python test_agent_layer.py
+python test_agent_layer.py --fast
+python test_agent_layer.py --no-db
+
+# Fee / service-charge questions
+python test_fee_queries.py
+python test_fee_queries.py --fast
+
+# "My last / previous application"
+python test_last_application.py
+python test_last_application.py --routing
+
+# Temporary sub-division numbers
+python test_temp_subdivision_queries.py
+
+# Field visit follow-ups
+python test_field_visit_followups.py
+
+# Comparison queries
+python test_comparison_queries.py
+python test_comparison_queries.py --routing
+
+# Completed applications (approved / rejected)
+python test_completed_applications.py
+
+# Visit plan queries
+python test_visit_plan_queries.py
+
+# Comprehensive suite (top-level)
+python test_comprehensive_suite.py
+
+# 200-question suite (backend-focused)
+python backend/test_200_suite.py
+```
 
 ## Troubleshooting
 
-**Application List Queries**
-```bash
-# All forms are supported:
-"show applications"
-"show app"
-"show appl"
-"list applications"
-```
-
-**Count Queries**
-```bash
-# Returns exact database count:
-"how many applications"
-"number of applications in july"
-"total applications"
-
-# Result: Precise count from database (e.g., "15 applications")
-```
-
-**Ollama Connection**
-```bash
-# Verify Ollama is running
+**Ollama connection**
+```powershell
 curl http://localhost:11434/api/tags
-
-# Check installed models
 ollama list
-
-# Install missing models
 ollama pull llama3.1:8b
 ollama pull nomic-embed-text
 ```
 
-**Database Connection**
-```bash
-# Test connectivity
-python -c "from backend.database import engine; print('Connected')"
-
-# Reset data if needed
-python backend/seed.py
+**pgvector extension** must be enabled before running `ingest.py`:
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-**Data Integrity**
-```bash
-# Verify database integrity
-python verify_no_duplicates.py
-python check_missing_values.py
+**CORS_ORIGINS** must be a valid JSON array string in `.env`:
+```
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:5500"]
 ```
 
-## Recent Updates
+**Windows stdout encoding**: if you see `UnicodeEncodeError` on startup, ensure the UTF-8 reconfiguration block at the top of `main.py` is intact.
 
-### Version 1.4 (Current)
-**Query Accuracy Improvements:**
-- Direct database count responses for numeric queries
-- Support for abbreviated forms: "app", "appl", "apps"
-- Enhanced intent detection for application list queries
-- Structured data responses prevent hallucination
+**Month filtering** uses fuzzy token matching (`backend/utils/fuzzy.py`) — handles spelling errors like `"jaunary"` → January. Do not replace with naive string comparison.
 
-**Previous Updates:**
-- Duplicate prevention with unique survey number constraint
-- Rejected application filtering in all queries
-- Month-based filtering with fuzzy matching
-- Overdue warning indicators
-- Data integrity verification scripts
+**`chatbot.py` is very large** — use IDE symbol search to navigate. Key entry points:
+- `process_chat_stream()` — streaming chat
+- `process_chat()` — non-streaming chat
+- `create_chat_session()` — session creation
+- `extract_month_from_query()` — month extraction with fuzzy matching
 
 ## License
 
-Developed for National Informatics Centre (NIC) internship.
+Developed for **National Informatics Centre (NIC)** internship — Tamil Nadu Survey Department.

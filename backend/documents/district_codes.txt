@@ -1,5 +1,19 @@
 DISTRICT CODES & NAMES REFERENCE DOCUMENT
 
+These are the district codes as the department's own geography master carries
+them (the `district_unicode` table, loaded verbatim from the TAMILNILAM
+district.sql dump). That master is what the assistant reads a district name
+from, so this list is written to agree with it.
+
+Codes 34, 35 and 37 previously read Chengalpattu / Ranipet / Tenkasi, which is
+a rotation of what the master says. A wrong entry here does not leave a field
+blank -- it puts another district's name on a land record -- so the master is
+followed rather than a tidier-looking list.
+
+Note the master carries 36 districts, not 38: codes 17 (Ariyalur) and 33
+(Kallakurichi) have no row in it. They are listed below for reference, but the
+assistant has no records under them.
+
 Code	District
 01	Tiruvallur
 02	Chennai
@@ -34,8 +48,8 @@ Code	District
 31	Krishnagiri
 32	Tiruppur
 33	Kallakurichi
-34	Chengalpattu
-35	Ranipet
+34	Tenkasi
+35	Chengalpattu
 36	Tirupathur
-37	Tenkasi
+37	Ranipet
 38	Mayiladuthurai

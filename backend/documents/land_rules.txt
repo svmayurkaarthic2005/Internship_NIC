@@ -72,6 +72,70 @@ Rules that follow:
 - Door number changes (new_door_number / old_door_number) are handled under
   street and door number modification (service code 0162), not under ISD.
 
+=== HOW THE SUBMISSION CHANNEL IS DECIDED ===
+
+Every application carries a submission channel - CSC, citizen or sub_registrar.
+It is read off two columns of urban_application_log, and nothing else:
+
+- source_name is "-" (no operator account touched the file): the application
+  came in unattended from the Sub-Registrar, where IGRS raised the mutation off
+  the registered deed. Channel = sub_registrar.
+- source_name holds an operator or VLE code (samples "tut_tct_t131_02",
+  "TNEFATUT0540-01") AND camp_flag = "P": the file was keyed in at a special
+  revenue camp, where the operator enters it for the citizen standing in front
+  of them. The submission is the citizen's own. Channel = citizen.
+- source_name holds an operator or VLE code with any other camp_flag (blank,
+  "S", "U", "Y"): keyed in at a Common Service Centre / e-Sevai counter.
+  Channel = CSC.
+
+The CAN number's length does NOT decide the channel. It names the counter that
+issued the number: 15 digits (133 series, sample "133280122203291") from an
+e-Sevai counter, 12 digits (sample "202329380999") from the TN citizen portal.
+A camp application is a citizen submission but was keyed at a counter, so it can
+carry either length. A Sub-Registrar application carries a 12-digit CAN whose
+value is the same as its IGRS Form 6 number.
+
+Do not use source_code to answer a channel question. It is populated on every
+row with values 0 / 00 / 1 / 2 / 3 and splits both ways against every channel
+signal, so it carries no channel meaning.
+
+=== SRO, THE CAN NUMBER, AND WHAT AN ABSENT IGRS NUMBER MEANS ===
+
+SRO stands for Sub-Registrar Office - the registration office where a sale deed
+is registered. Officers say "SRO", "Sub-Registrar" and "sub registrar" for the
+same office. When a deed is registered there, the SRO's IGRS system raises the
+patta mutation off the registered document and issues an IGRS Form 6 number.
+An application that reaches the SIS desk that way carries that number and no
+operator code, and its submission channel is sub_registrar.
+
+CAN stands for Citizen Access Number: the unique identity number a citizen is
+issued and quotes on an application. Every application carries one.
+
+Which applications carry an IGRS Form 6 number:
+
+- A Sub-Registrar (SRO) referral always carries one. It names the registered
+  deed the mutation was raised from, and its value is the same as that
+  application's CAN number.
+- A CSC / e-Sevai application never carries one.
+- A citizen (revenue camp) application never carries one.
+
+What it means when the IGRS Form 6 number is ABSENT:
+
+Only the SRO's IGRS system ever issues one. So an application with no IGRS
+Form 6 number did not come from the SRO. It was filed at a CSC / e-Sevai
+counter, or by the citizen at a revenue camp. For those two channels the empty
+IGRS field is the rule and not a gap in the record - there is nothing missing,
+nothing to chase up with the Sub-Registrar, and the application is not
+incomplete because of it. Read the other way: an IGRS number present is
+positive evidence the file came from the SRO.
+
+The CAN number's length is NOT a channel signal. It names the counter that
+issued the number: 15 digits (133 series) from a CSC / e-Sevai counter,
+12 digits from the TN citizen portal. A Sub-Registrar referral therefore
+carries a 12-digit, portal-issued CAN even though no citizen keyed it in, so a
+12-digit CAN does not mean "citizen" and a 15-digit CAN does not mean "CSC".
+The channel is decided by source_name and camp_flag, as set out above.
+
 === SALE DEED, EC AND REGISTRATION LINKAGE ===
 
 - The sale deed number in the application (registration_document_number, sample
@@ -136,3 +200,38 @@ Rules that follow:
   authority's order on record.
 - Do not proceed past an active court stay.
 - Do not accept a sale deed that is not traceable in the Sub-Registrar index.
+
+=== SERVICE FEE AND SLA BY SERVICE CODE ===
+
+The fee an applicant pays and the time limit the office works to depend on the
+service code. These are the three codes the SIS handles:
+
+- 0153 (NISD, Not Involving Sub-Division): government fee Rs 100.00, plus a
+  CSC / e-Sevai counter charge of Rs 60.00 when filed through a counter.
+  SLA: 15-20 working days.
+- 0154 (ISD, Involving Sub-Division): government fee Rs 400.00, plus the
+  Rs 60.00 CSC / e-Sevai counter charge. SLA: 30-35 working days. The higher
+  fee reflects the mandatory field inspection and the sub-division sketch.
+- 0155 (MERGE, merge of sub-divisions): no government fee (Rs 0.00); the
+  Rs 60.00 CSC / e-Sevai counter charge still applies. SLA: 15 working days.
+
+The government fee is a challan payment; the CSC charge is the counter
+operator's service charge and is not levied when the citizen files on the
+TN portal directly or the file comes in as a Sub-Registrar referral. There is
+no separate SIS inspection fee - the field visit is covered by the 0154
+government fee.
+
+=== OWNERSHIP RECORD: WHAT IS HELD PER OWNER ===
+
+Ownership of a survey number / sub-division is held as one row per owner, so a
+jointly held parcel simply has several owner rows. For each owner the register
+keeps: name (English and Tamil), the father's / husband's name with the
+relationship (s/o, w/o, d/o), gender, address, the last four digits of the
+Aadhaar number, and the ownership share. Two or more owner rows on the same
+survey number means the parcel is jointly owned; a single row means a sole
+owner.
+
+The register does NOT hold an owner's mobile number, ration card number,
+voter ID (EPIC), PIN code, occupation code or door number - those columns are
+blank in the source extracts and are not projected. A question about one of
+them is answered as "not recorded", not treated as missing data.

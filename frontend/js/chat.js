@@ -17,7 +17,14 @@ let officerData = null;
 let activeRequestController = null; // AbortController for the in-flight send, so the stop button can cancel it
 let userStoppedResponse = false;    // distinguishes a manual stop from a timeout/network abort
 let longConversationNoticeShown = false; // "start a new chat" notice is shown once per session
-const LONG_CONVERSATION_EXCHANGES = 10;   // user turns before we recommend a new chat
+const CONTEXT_MESSAGE_LIMIT = 20;         // messages sent to the backend as context (older ones are dropped)
+
+// Shell-style input history (Up/Down arrows recall previously sent
+// messages, like a terminal's command history). -1 means "not browsing" --
+// the officer's own in-progress text stands. Browsing starts fresh from the
+// newest message every time; sending one resets it.
+let inputHistoryIndex = -1;
+let inputHistoryDraft = '';
 
 // DOM Elements
 const chatMessages = document.getElementById('chatMessages');
@@ -438,6 +445,33 @@ const _languageText = document.getElementById('languageText');
 const _languageIndicator = document.getElementById('languageIndicator');
 
 /**
+ * The officer's own previously SENT messages, oldest first -- what Up/Down
+ * cycles through. Pulled from the live in-memory mirror rather than
+ * re-reading localStorage on every keystroke.
+ */
+function getSentMessages() {
+    return (messageHistory || [])
+        .filter(m => m && m.role === 'user' && m.content)
+        .map(m => m.content);
+}
+
+/** True when the caret has nothing but the first/last line above/below it --
+ * the same rule terminals and chat apps use so Up/Down still move the caret
+ * normally inside a multi-line draft instead of always recalling history. */
+function isCaretOnFirstLine(el) {
+    return el.value.slice(0, el.selectionStart).indexOf('\n') === -1;
+}
+function isCaretOnLastLine(el) {
+    return el.value.slice(el.selectionEnd).indexOf('\n') === -1;
+}
+
+function setMessageInputValue(text) {
+    messageInput.value = text;
+    messageInput.selectionStart = messageInput.selectionEnd = text.length;
+    handleInputChange(); // reuses the existing resize/button/language logic
+}
+
+/**
  * Handle keyboard shortcuts
  */
 function handleKeyDown(event) {
@@ -448,6 +482,37 @@ function handleKeyDown(event) {
         event.preventDefault();
         if (!sendBtn.disabled && !isTyping) {
             sendMessage();
+        }
+        return;
+    }
+
+    if (event.key === 'ArrowUp' && isCaretOnFirstLine(messageInput)) {
+        const sent = getSentMessages();
+        if (!sent.length) return;
+        if (inputHistoryIndex === -1) {
+            inputHistoryDraft = messageInput.value;
+            inputHistoryIndex = sent.length - 1;
+        } else if (inputHistoryIndex > 0) {
+            inputHistoryIndex -= 1;
+        } else {
+            return; // already at the oldest message
+        }
+        event.preventDefault();
+        setMessageInputValue(sent[inputHistoryIndex]);
+        return;
+    }
+
+    if (event.key === 'ArrowDown' && isCaretOnLastLine(messageInput)) {
+        if (inputHistoryIndex === -1) return; // not browsing history
+        event.preventDefault();
+        const sent = getSentMessages();
+        if (inputHistoryIndex < sent.length - 1) {
+            inputHistoryIndex += 1;
+            setMessageInputValue(sent[inputHistoryIndex]);
+        } else {
+            // Past the newest message — back to whatever was being typed.
+            inputHistoryIndex = -1;
+            setMessageInputValue(inputHistoryDraft);
         }
     }
 }
@@ -538,7 +603,7 @@ async function sendMessage() {
     // Snapshot the conversation history BEFORE the current message is stored,
     // otherwise the backend prompt repeats this question in both the
     // CONVERSATION HISTORY block and the USER QUESTION block.
-    const chatHistory = window.chatStorage ? window.chatStorage.getForAPI(10) : [];
+    const chatHistory = window.chatStorage ? window.chatStorage.getForAPI(CONTEXT_MESSAGE_LIMIT) : [];
 
     // Save user message to localStorage before rendering
     const userTimestamp = new Date().toISOString();
@@ -548,10 +613,17 @@ async function sendMessage() {
     
     // Render user message
     renderMessage('user', text, userTimestamp, detectLanguage(text));
+
+    // The backend only sees the last CONTEXT_MESSAGE_LIMIT messages — once the
+    // conversation grows past that, older turns are silently dropped. Warn only
+    // when this message actually relies on them.
+    maybeShowLongConversationNotice(text);
     
     // Clear input
     messageInput.value = '';
     messageInput.style.height = 'auto';
+    inputHistoryIndex = -1; // next Up starts fresh from the message just sent
+    inputHistoryDraft = '';
     isTyping = true;
     userStoppedResponse = false;
     setSendButtonState(true); // send button becomes the stop button
@@ -574,6 +646,12 @@ async function sendMessage() {
     let contentDiv = null;
     let aiResponse = '';
     let capturedTableData = null;
+    // Set when the backend answers a typed "clear" with an instruction to wipe
+    // the transcript. Declared out here so a stream that fails AFTER the
+    // instruction arrived still carries the command out -- the officer asked
+    // for a wipe, and leaving the transcript standing looks like the command
+    // was ignored.
+    let clearRequested = false;
     
     try {
         // chatHistory was snapshotted above, before the current message was stored
@@ -646,6 +724,9 @@ async function sendMessage() {
         // Read stream chunks until done
         let buffer = '';
         let chunkCount = 0;
+        // Acted on after the stream closes, never during it -- clearing
+        // mid-stream would pull the DOM out from under the writer still
+        // appending to it.
         
         while (true) {
             const { value, done } = await reader.read();
@@ -682,6 +763,9 @@ async function sendMessage() {
                         } else if (parsed.structured_data && !capturedTableData) {
                             capturedTableData = parsed.structured_data;
                         }
+                        if (parsed.action === 'clear_chat') {
+                            clearRequested = true;
+                        }
                         if (parsed.content) {
                             aiResponse += parsed.content;
                             contentDiv.innerHTML = formatBotMessage(aiResponse.trimStart());
@@ -703,6 +787,7 @@ async function sendMessage() {
 
                     if (parsed.table_data) capturedTableData = parsed.table_data;
                     else if (parsed.structured_data && !capturedTableData) capturedTableData = parsed.structured_data;
+                    if (parsed.action === 'clear_chat') clearRequested = true;
                     if (parsed.content) {
                         aiResponse += parsed.content;
                         contentDiv.innerHTML = formatBotMessage(aiResponse.trimStart());
@@ -720,6 +805,15 @@ async function sendMessage() {
         }
 
         contentDiv.removeAttribute('id');
+
+        // The officer typed "clear". Carry it out: wipe the transcript, drop
+        // the stored history, open a fresh session. Done here rather than
+        // saved-then-cleared, so the "clear" turn never reaches storage.
+        if (clearRequested) {
+            removeTypingIndicator();
+            await handleNewChat({ toast: 'Conversation cleared' });
+            return;
+        }
 
         // Render table if structured data was captured during stream
         if (capturedTableData && typeof renderDataTable === 'function') {
@@ -740,11 +834,18 @@ async function sendMessage() {
                 window.chatStorage.addMessage('assistant', aiResponse, 'auto', capturedTableData);
             }
             messageHistory = window.chatStorage ? window.chatStorage.load() : [];
-            maybeShowLongConversationNotice();
+            // Long conversation notice removed - backend handles context management automatically
         }
 
     } catch (error) {
         removeTypingIndicator();
+        if (clearRequested && !(error.name === 'AbortError' && userStoppedResponse)) {
+            // The wipe instruction already arrived; the stream breaking
+            // afterwards does not un-ask for it.
+            console.warn('Stream failed after a clear instruction; clearing anyway:', error);
+            await handleNewChat({ toast: 'Conversation cleared' });
+            return;  // the finally block below still restores the input state
+        }
         console.error('=== SEND MESSAGE ERROR ===');
         console.error('Error type:', error.name);
         console.error('Error message:', error.message);
@@ -1159,9 +1260,11 @@ function renderSessionHistory(sessions) {
 /**
  * Handle new chat
  */
-async function handleNewChat() {
+async function handleNewChat(options) {
     chatMessages.innerHTML = '';
     messageHistory = [];
+    inputHistoryIndex = -1;
+    inputHistoryDraft = '';
     longConversationNoticeShown = false;
 
     if (window.chatStorage) {
@@ -1180,7 +1283,9 @@ async function handleNewChat() {
         quickSuggestions.style.display = 'block';
     }
     
-    showToast('New chat started', 'success');
+    // A typed "clear" says what it did in its own words; the button says
+    // "New chat started". Same wipe, two names for it.
+    showToast((options && options.toast) || 'New chat started', 'success');
 }
 
 /**
@@ -1320,6 +1425,12 @@ function handleFileAttachment() {
                 const data = result && result.data;
                 if (data && data.supported === false) {
                     appendAssistantNotice(`📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'not supported')}`);
+                } else if (data && data.extraction_status === 'no_extractable_text') {
+                    // A scan. There is no OCR and no vision here, so the file is
+                    // recorded but never answered from — say so instead of
+                    // letting the officer ask questions it cannot answer.
+                    appendAssistantNotice(
+                        `📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'no readable text found')}`);
                 } else {
                     const msg = (result && result.message) ||
                         `"${file.name}" attached. Ask your question about it now.`;
@@ -1349,37 +1460,101 @@ function handleFileAttachment() {
     setTimeout(() => { document.body.removeChild(fileInput); }, 1000);
 }
 
-/**
- * After enough back-and-forth, tell the officer to start a new chat — the API
- * only keeps the last few messages in context, so a very long thread starts to
- * "forget" its own beginning. Shown once per session; sending still works.
- */
-function maybeShowLongConversationNotice() {
-    if (longConversationNoticeShown) return;
-    const userTurns = (messageHistory || []).filter(m => m.role === 'user').length;
-    if (userTurns < LONG_CONVERSATION_EXCHANGES) return;
+// Phrases by which an officer points back at something discussed earlier. Kept
+// in step with _REFERENCE_PATTERNS in backend/services/chatbot.py, plus the
+// wording used for lists ("the ones above", "same ward"). Matched on whole-word
+// boundaries so "the app" does not fire inside "the applicant".
+const BACK_REFERENCE_PATTERNS = [
+    'this application', 'that application', 'same application',
+    'this app', 'that app', 'the application', 'the app',
+    'prev application', 'previous application', 'prev app', 'previous app',
+    'last application', 'last app', 'above application', 'overdue application',
+    'it', 'its', 'this one', 'that one', 'the same one', 'previous one', 'same one',
+    'these', 'those', 'them', 'the ones', 'the above', 'above', 'earlier',
+    'same', 'again', 'first one', 'second one', 'last one',
+    'இந்த விண்ணப்பம்', 'அந்த விண்ணப்பம்', 'முந்தைய விண்ணப்பம்',
+    'இதன்', 'அதன்', 'இது', 'அது', 'இதே',
+    'adhoda', 'idhoda', 'adhu', 'idhu', 'adhe', 'idhe'
+];
 
+const BACK_REFERENCE_RE = new RegExp(
+    '(?:^|[^\\w\\u0B80-\\u0BFF])(?:' +
+    BACK_REFERENCE_PATTERNS.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') +
+    ')(?![\\w\\u0B80-\\u0BFF])',
+    'i'
+);
+
+/**
+ * True when the message leans on the conversation instead of standing alone —
+ * either an explicit back-reference ("what is its status") or a bare fragment
+ * that only makes sense as a follow-up filter ("in merge", "only pending").
+ */
+function messageNeedsPriorContext(text) {
+    const msg = (text || '').trim();
+    if (!msg) return false;
+    if (BACK_REFERENCE_RE.test(msg)) return true;
+    // A bare fragment like "in merge" / "only pending" is a follow-up filter on
+    // the previous answer. A short *question or command* ("show pending",
+    // "list isd apps") stands on its own, so it is not one.
+    const words = msg.split(/\s+/);
+    const startsAQuery = /^(show|list|give|display|get|find|fetch|count|how|what|which|who|when|where|why|is|are|do|does|can|tell|check|status|search|open|view)\b/i.test(msg);
+    if (words.length <= 3 && !startsAQuery && !/\d/.test(msg) && !/\?/.test(msg)) return true;
+    return false;
+}
+
+/**
+ * The backend is only sent the last CONTEXT_MESSAGE_LIMIT messages, so in a long
+ * conversation the earlier turns are dropped and answers stop being able to use
+ * them. That only matters when the officer is actually referring back to
+ * something, so the notice fires on a context-dependent message — not on every
+ * self-contained question asked after the 10th message.
+ */
+function maybeShowLongConversationNotice(text) {
+    if (longConversationNoticeShown) return;
+
+    const stored = (window.chatStorage ? window.chatStorage.load() : messageHistory) || [];
+    // stored already includes the message just sent.
+    if (stored.length <= CONTEXT_MESSAGE_LIMIT) return;
+
+    // Self-contained question — the dropped turns change nothing about the
+    // answer, so there is nothing to warn about.
+    if (!messageNeedsPriorContext(text)) return;
+
+    const userTurns = stored.filter(m => m.role === 'user').length;
     longConversationNoticeShown = true;
+
+    const dropped = stored.length - CONTEXT_MESSAGE_LIMIT;
     appendAssistantNotice(
-        `💡 <strong>This conversation is getting long (${userTurns} messages).</strong><br>` +
-        `I only keep the last few messages in view, so older context may be dropped. ` +
-        `For best results, click <strong>New Chat</strong> to start a fresh conversation. ` +
-        `You can keep going here if you prefer.`);
+        `⚠️ <strong>This conversation has passed the context limit.</strong><br>` +
+        `You are referring back to something earlier, but I only keep the last ` +
+        `${CONTEXT_MESSAGE_LIMIT} messages in view — ${dropped} earlier ` +
+        `message${dropped === 1 ? '' : 's'} from this chat (${userTurns} of yours in total) can no longer be used. ` +
+        `If this answer looks off, start a new conversation and give the application or survey number again.`,
+        true
+    );
+    showToast('Conversation is past the context limit — consider starting a new chat', 'warning');
 }
 
 /**
  * Append a short assistant-style notice bubble (not persisted to history).
  */
-function appendAssistantNotice(html) {
+function appendAssistantNotice(html, withNewChatAction = false) {
     const div = document.createElement('div');
     div.className = 'message message-assistant';
     const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const action = withNewChatAction
+        ? `<div class="notice-actions"><button type="button" class="notice-new-chat-btn">Start new conversation</button></div>`
+        : '';
     div.innerHTML = `
         <div class="message-avatar"><i data-lucide="bot" class="avatar-icon"></i></div>
         <div class="message-content-wrapper">
-            <div class="message-content">${html}</div>
+            <div class="message-content">${html}${action}</div>
             <div class="message-footer"><span class="message-time">${time}</span></div>
         </div>`;
+    if (withNewChatAction) {
+        const btn = div.querySelector('.notice-new-chat-btn');
+        if (btn) btn.addEventListener('click', () => handleNewChat());
+    }
     chatMessages.appendChild(div);
     if (typeof lucide !== 'undefined') lucide.createIcons();
     scrollToBottom();

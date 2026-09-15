@@ -1,0 +1,1422 @@
+{
+ "wrong_intent": [
+  {
+   "id": 4,
+   "q": "hi there",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 17528,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Sub Inspector Surveyor Csenthil. How can I assist you today?"
+  },
+  {
+   "id": 5,
+   "q": "hi there",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 21709,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Msivakumar. How can I assist you today?"
+  },
+  {
+   "id": 6,
+   "q": "hi there",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 44537,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Sub Inspector Surveyor Muthulakshmis. I have retrieved the information about your jurisdiction. Your designation is Sub Inspector Surveyor, your employee ID is SIS-003, and your jurisdiction type is ward. Your jurisdiction name is ward C Meelavittan Part 1 and 2, and it includes ward 103."
+  },
+  {
+   "id": 16,
+   "q": "thanks, bye",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 26879,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "You're welcome, Sub Inspector Surveyor Csenthil. Have a good day."
+  },
+  {
+   "id": 17,
+   "q": "thanks, bye",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 37036,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "You're welcome, Sub Inspector Surveyor. It was a pleasure assisting you. Have a good day."
+  },
+  {
+   "id": 18,
+   "q": "thanks, bye",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 21604,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "It was a pleasure assisting you, Sub Inspector Surveyor Muthulakshmi. Have a good day."
+  },
+  {
+   "id": 19,
+   "q": "நன்றி",
+   "emp": "SIS-001",
+   "intent": "greeting",
+   "ms": 39,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "நல்வரவு! 😊 உங்களுக்கு மேலும் ஏதேனும் உதவி தேவைப்பட்டால் தயங்காமல் கேளுங்கள்."
+  },
+  {
+   "id": 20,
+   "q": "நன்றி",
+   "emp": "SIS-002",
+   "intent": "greeting",
+   "ms": 42,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "நல்வரவு! 😊 உங்களுக்கு மேலும் ஏதேனும் உதவி தேவைப்பட்டால் தயங்காமல் கேளுங்கள்."
+  },
+  {
+   "id": 21,
+   "q": "நன்றி",
+   "emp": "SIS-003",
+   "intent": "greeting",
+   "ms": 41,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "நல்வரவு! 😊 உங்களுக்கு மேலும் ஏதேனும் உதவி தேவைப்பட்டால் தயங்காமல் கேளுங்கள்."
+  },
+  {
+   "id": 22,
+   "q": "nandri",
+   "emp": "SIS-001",
+   "intent": "greeting",
+   "ms": 25,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
+  },
+  {
+   "id": 23,
+   "q": "nandri",
+   "emp": "SIS-002",
+   "intent": "greeting",
+   "ms": 8,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
+  },
+  {
+   "id": 24,
+   "q": "nandri",
+   "emp": "SIS-003",
+   "intent": "greeting",
+   "ms": 9,
+   "detail": "want ['farewell'] got greeting",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. I am here to help you manage survey applications, check document statuses, track field visits, and navigate workflow procedures. What can I assist you with today?"
+  },
+  {
+   "id": 133,
+   "q": "difference between ISD and NISD",
+   "emp": "SIS-001",
+   "intent": "compare_applications",
+   "ms": 15,
+   "detail": "want ['service_code_guide'] got compare_applications",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "ISD 6, NISD 64 (of 70 in your jurisdiction). NISD leads ISD by 58."
+  },
+  {
+   "id": 134,
+   "q": "difference between ISD and NISD",
+   "emp": "SIS-002",
+   "intent": "compare_applications",
+   "ms": 15,
+   "detail": "want ['service_code_guide'] got compare_applications",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "ISD 22, NISD 28 (of 50 in your jurisdiction). NISD leads ISD by 6."
+  },
+  {
+   "id": 135,
+   "q": "difference between ISD and NISD",
+   "emp": "SIS-003",
+   "intent": "compare_applications",
+   "ms": 15,
+   "detail": "want ['service_code_guide'] got compare_applications",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "ISD 13, NISD 76 (of 89 in your jurisdiction). NISD leads ISD by 63."
+  },
+  {
+   "id": 187,
+   "q": "who is the sub registrar",
+   "emp": "SIS-001",
+   "intent": "sale_deed_check",
+   "ms": 40,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 188,
+   "q": "who is the sub registrar",
+   "emp": "SIS-002",
+   "intent": "sale_deed_check",
+   "ms": 26,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 189,
+   "q": "who is the sub registrar",
+   "emp": "SIS-003",
+   "intent": "sale_deed_check",
+   "ms": 28,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  }
+ ],
+ "slow_llm_fallback": [
+  {
+   "id": 4,
+   "q": "hi there",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 17528,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Sub Inspector Surveyor Csenthil. How can I assist you today?"
+  },
+  {
+   "id": 5,
+   "q": "hi there",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 21709,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Msivakumar. How can I assist you today?"
+  },
+  {
+   "id": 6,
+   "q": "hi there",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 44537,
+   "detail": "want ['greeting'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Hello Sub Inspector Surveyor Muthulakshmis. I have retrieved the information about your jurisdiction. Your designation is Sub Inspector Surveyor, your employee ID is SIS-003, and your jurisdiction type is ward. Your jurisdiction name is ward C Meelavittan Part 1 and 2, and it includes ward 103."
+  },
+  {
+   "id": 16,
+   "q": "thanks, bye",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 26879,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "You're welcome, Sub Inspector Surveyor Csenthil. Have a good day."
+  },
+  {
+   "id": 17,
+   "q": "thanks, bye",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 37036,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "You're welcome, Sub Inspector Surveyor. It was a pleasure assisting you. Have a good day."
+  },
+  {
+   "id": 18,
+   "q": "thanks, bye",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 21604,
+   "detail": "want ['farewell'] got general_query",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "It was a pleasure assisting you, Sub Inspector Surveyor Muthulakshmi. Have a good day."
+  },
+  {
+   "id": 184,
+   "q": "what is the CAN number format",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 111207,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The CAN number format is not mentioned in the search results. However, the official manual states that survey numbers are unique identifiers for land parcels within a block and can be either numeric (e.g., 145, 267, 1023) or alphanumeric (e.g., 145A, 267B)."
+  },
+  {
+   "id": 185,
+   "q": "what is the CAN number format",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 129975,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The CAN number format is not mentioned in the search results. However, the official manual states that survey numbers are unique identifiers for land parcels within a block, and they can be either numeric (e.g., 145, 267, 1023) or alphanumeric (e.g., 145A, 267B)."
+  },
+  {
+   "id": 186,
+   "q": "what is the CAN number format",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 140347,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The CAN number format is not mentioned in the search results. However, the official manual states that survey numbers are unique identifiers for land parcels within a block, and the format is either numeric (e.g., 145, 267, 1023) or alphanumeric (e.g., 145A, 267B)."
+  },
+  {
+   "id": 190,
+   "q": "why was it rejected",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 111755,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The rejection reason is not explicitly stated in the search results. However, it is mentioned in the official manual that the officer provides a detailed rejection reason in the system, and the applicant receives a notification with the rejection reason."
+  },
+  {
+   "id": 191,
+   "q": "why was it rejected",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 88301,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The application was rejected due to incomplete documents, specifically missing required documents such as the Sale Deed, Encumbrance Certificate, and identification documents. Additionally, the area in the Sale Deed does not match the survey records."
+  },
+  {
+   "id": 192,
+   "q": "why was it rejected",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 122077,
+   "detail": null,
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "The rejection reason is not on record. However, according to the official manual, common rejection reasons include incomplete documents, area mismatch, encroachment issues, litigation flag, revenue arrears, and invalid survey number."
+  },
+  {
+   "id": 1558,
+   "q": "how many are rejected",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 10798,
+   "detail": null,
+   "tags": [
+    "list"
+   ],
+   "history": [],
+   "resp": "There are 16 rejected applications."
+  },
+  {
+   "id": 1559,
+   "q": "how many are rejected",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 12877,
+   "detail": null,
+   "tags": [
+    "list"
+   ],
+   "history": [],
+   "resp": "There are 14 rejected applications."
+  },
+  {
+   "id": 1560,
+   "q": "how many are rejected",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 19351,
+   "detail": null,
+   "tags": [
+    "list"
+   ],
+   "history": [],
+   "resp": "There are 22 rejected applications."
+  },
+  {
+   "id": 1633,
+   "q": "எது பழையது?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 61044,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "பழைய அனுமதி வழங்கப்பட்ட தேதி 2020-02-15 ஆகும்."
+  },
+  {
+   "id": 1634,
+   "q": "edhu pazhusu?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 15559,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "Pazhuthu 1."
+  },
+  {
+   "id": 1635,
+   "q": "how many are approved",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 78912,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "There are 52 approved applications."
+  },
+  {
+   "id": 1642,
+   "q": "எது பழையது?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 86667,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "பழையது என்பது தெரியவில்லை. முன்பு தரப்பட்ட பட்டியலில் பழைய தரவுகள் இருந்தாலும், இப்போது பழையது என்பதை தெரிந்து கொள்ள முடியவில்லை."
+  },
+  {
+   "id": 1643,
+   "q": "edhu pazhusu?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 24597,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "Pazhuthu, officer. Pazhuthu, 3."
+  },
+  {
+   "id": 1644,
+   "q": "how many are approved",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 77897,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "There are 34 approved applications."
+  },
+  {
+   "id": 1651,
+   "q": "எது பழையது?",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 70405,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "பழைய அனுமதிகள் இல்லை. பழைய அனுமதி விண்ணப்பங்கள் இல்லை."
+  },
+  {
+   "id": 1652,
+   "q": "edhu pazhusu?",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 26185,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "Pazhuthu 103 ward la 15 block la 10 survey number la 5 applications pending ayya."
+  },
+  {
+   "id": 1653,
+   "q": "how many are approved",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 67914,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my pending applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "There are 64 approved applications."
+  },
+  {
+   "id": 1656,
+   "q": "which is oldest?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 34803,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show applications from CSC"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "The oldest application is 2026/0154/28/001167, submitted on 2026-06-16."
+  },
+  {
+   "id": 1660,
+   "q": "which is oldest?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 37188,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show applications from CSC"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "The oldest application is 2026/0154/28/001197, submitted on 2026-06-18."
+  },
+  {
+   "id": 1664,
+   "q": "which is oldest?",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 32832,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show applications from CSC"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "The oldest application is 2026/0154/28/001280, submitted on 2026-06-30."
+  },
+  {
+   "id": 1666,
+   "q": "which took the longest?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 140572,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my approved applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "This is taking longer than expected to answer. Please try again, or narrow the question."
+  },
+  {
+   "id": 1669,
+   "q": "which took the longest?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 111124,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my approved applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "The application that took the longest to be approved is \"2022/0153/28/001206\" with a submission date of \"2022-11-01\" and an approval date of \"2023-10-29\" is not shown, but \"2022/0153/28/000526\" with a submission date of \"2022-07-17\" and an approval date of \"2023-10-29\" is not shown, but \"2022/0154/28/000779\" with a submission date of \"2022-10-13\" and an approval date of \"2023-10-29\" is not shown, but \"2023/0153/28/001815\" with a submission date of \"2023-08-24\" and an approval date of \"2023-10-29"
+  },
+  {
+   "id": 1672,
+   "q": "which took the longest?",
+   "emp": "SIS-003",
+   "intent": "general_query",
+   "ms": 66737,
+   "detail": null,
+   "tags": [
+    "followup",
+    "list"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "show my approved applications"
+    },
+    {
+     "role": "assistant",
+     "content": "(previous listing)"
+    }
+   ],
+   "resp": "The application that took the longest to be approved is \"2022/0153/28/000895\" with a submission date of \"2022-09-12\" and an approval date of \"2022-09-12\" is not on record, but it is the latest submission date among the approved applications."
+  },
+  {
+   "id": 1682,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 46510,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2025/0153/28/001558"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2025/0153/28/001558"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2025/0153/28/001558 is approved and has been completed."
+  },
+  {
+   "id": 1694,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 50965,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2025/0153/28/000283"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2025/0153/28/000283"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2025/0153/28/000283 was found and its details are available."
+  },
+  {
+   "id": 1706,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 31639,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2024/0154/28/001487"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2024/0154/28/001487"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2024/0154/28/001487 was found in the records."
+  },
+  {
+   "id": 1718,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 42227,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2024/0153/28/002965"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2024/0153/28/002965"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2024/0153/28/002965 was found in the records."
+  },
+  {
+   "id": 1730,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 40682,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2026/0153/28/000062"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2026/0153/28/000062"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2026/0153/28/000062 was found and its details are available."
+  },
+  {
+   "id": 1742,
+   "q": "was it returned?",
+   "emp": "SIS-001",
+   "intent": "general_query",
+   "ms": 40029,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2023/0153/28/001014"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2023/0153/28/001014"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2023/0153/28/001014 was found and its details are available."
+  },
+  {
+   "id": 1754,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 41886,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2023/0153/28/001593"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2023/0153/28/001593"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2023/0153/28/001593 was found in the records."
+  },
+  {
+   "id": 1766,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 39542,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2023/0154/28/000570"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2023/0154/28/000570"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2023/0154/28/000570 was found in the records."
+  },
+  {
+   "id": 1778,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 40501,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2025/0154/28/001636"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2025/0154/28/001636"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2025/0154/28/001636 was found and its details are available."
+  },
+  {
+   "id": 1790,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 39846,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2025/0154/28/001634"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2025/0154/28/001634"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2025/0154/28/001634 was found in the records."
+  },
+  {
+   "id": 1802,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 37410,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2025/0154/28/001914"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2025/0154/28/001914"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2025/0154/28/001914 was found in the records."
+  },
+  {
+   "id": 1814,
+   "q": "was it returned?",
+   "emp": "SIS-002",
+   "intent": "general_query",
+   "ms": 46620,
+   "detail": null,
+   "tags": [
+    "followup",
+    "app"
+   ],
+   "history": [
+    {
+     "role": "user",
+     "content": "status of 2026/0153/28/001839"
+    },
+    {
+     "role": "assistant",
+     "content": "Details for 2026/0153/28/001839"
+    }
+   ],
+   "resp": "Yes, it was returned. The application number 2026/0153/28/001839 was found in the records."
+  }
+ ],
+ "foreign_app_leaked": [
+  {
+   "id": 124,
+   "q": "what is 0015?",
+   "emp": "SIS-001",
+   "intent": "unidentified_number",
+   "ms": 269,
+   "detail": [
+    "2026/0154/28/001280"
+   ],
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "I could not identify '0015' — I do not know what it refers to. It is not a TAMILNILAM urban service code (those run 0153-0188), and it is not an application number (those look like 2026/0154/28/001280). If you meant a ward, block or survey number, please say which — for example \"ward 0015\", \"block 0015\" or \"survey 0015\"."
+  },
+  {
+   "id": 125,
+   "q": "what is 0015?",
+   "emp": "SIS-002",
+   "intent": "unidentified_number",
+   "ms": 313,
+   "detail": [
+    "2026/0154/28/001280"
+   ],
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "I could not identify '0015' — I do not know what it refers to. It is not a TAMILNILAM urban service code (those run 0153-0188), and it is not an application number (those look like 2026/0154/28/001280). If you meant a ward, block or survey number, please say which — for example \"ward 0015\", \"block 0015\" or \"survey 0015\"."
+  }
+ ],
+ "invented_app_number": [
+  {
+   "id": 187,
+   "q": "who is the sub registrar",
+   "emp": "SIS-001",
+   "intent": "sale_deed_check",
+   "ms": 40,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 188,
+   "q": "who is the sub registrar",
+   "emp": "SIS-002",
+   "intent": "sale_deed_check",
+   "ms": 26,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 189,
+   "q": "who is the sub registrar",
+   "emp": "SIS-003",
+   "intent": "sale_deed_check",
+   "ms": 28,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  }
+ ],
+ "nonanswer": [
+  {
+   "id": 187,
+   "q": "who is the sub registrar",
+   "emp": "SIS-001",
+   "intent": "sale_deed_check",
+   "ms": 40,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 188,
+   "q": "who is the sub registrar",
+   "emp": "SIS-002",
+   "intent": "sale_deed_check",
+   "ms": 26,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 189,
+   "q": "who is the sub registrar",
+   "emp": "SIS-003",
+   "intent": "sale_deed_check",
+   "ms": 28,
+   "detail": "want ['sub_registrar'] got sale_deed_check",
+   "tags": [
+    "intent"
+   ],
+   "history": [],
+   "resp": "Please specify the application number you are asking about — for example 2026/0154/02/000041."
+  },
+  {
+   "id": 241,
+   "q": "who is handling it of 2026/0153/28/001720",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 87,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2026/0153/28/001720 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: ஆனந்த், Survey No: 1361."
+  },
+  {
+   "id": 322,
+   "q": "who is handling it of 2024/0153/28/003035",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 49,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2024/0153/28/003035 in the record. Here is what it does hold — Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: Balavannan, Survey No: 1398."
+  },
+  {
+   "id": 346,
+   "q": "who is handling it of 2024/0153/28/003037",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 53,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2024/0153/28/003037 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: U N Amutha, Survey No: 1398."
+  },
+  {
+   "id": 379,
+   "q": "who is handling it of 2024/0153/28/003174",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 40,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2024/0153/28/003174 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: V M H Shajitha Parvin, Survey No: 1366."
+  },
+  {
+   "id": 420,
+   "q": "who is handling it of 2023/0154/28/001257",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 109,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2023/0154/28/001257 in the record. Here is what it does hold — Type: ISD, Status: Rejected, Stage: REJECTED, Applicant: T.ஜூலியஸ் பீரிஸ், Survey No: 1358."
+  },
+  {
+   "id": 428,
+   "q": "who is handling it of 2025/0153/28/004824",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 103,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/004824 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: Nanditha Krishna, Survey No: 1372."
+  },
+  {
+   "id": 480,
+   "q": "who is handling it of 2025/0153/28/000283",
+   "emp": "SIS-001",
+   "intent": "application_status",
+   "ms": 70,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/000283 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: Zulaiha Shakeel, Survey No: 1364."
+  },
+  {
+   "id": 548,
+   "q": "who is handling it of 2023/0153/28/002107",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 135,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2023/0153/28/002107 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: சகாயராஜ், Survey No: 20."
+  },
+  {
+   "id": 558,
+   "q": "who is handling it of 2022/0154/28/000156",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 79,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2022/0154/28/000156 in the record. Here is what it does hold — Type: ISD, Status: Rejected, Stage: REJECTED, Applicant: ந.கோபால் அம்மாள், Survey No: 22."
+  },
+  {
+   "id": 644,
+   "q": "who is handling it of 2025/0153/28/000592",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 100,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/000592 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: Natchiyar A, Survey No: 13."
+  },
+  {
+   "id": 650,
+   "q": "who is handling it of 2025/0153/28/000838",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 148,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/000838 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: Natchiyar A, Survey No: 13."
+  },
+  {
+   "id": 671,
+   "q": "who is handling it of 2023/0153/28/001593",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 97,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2023/0153/28/001593 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: C.A.S.ஆல்பர்ட், Survey No: 1."
+  },
+  {
+   "id": 703,
+   "q": "who is handling it of 2025/0153/28/002893",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 88,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/002893 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: ராமலெட்சுமி, Survey No: 11."
+  },
+  {
+   "id": 753,
+   "q": "who is handling it of 2026/0154/28/001197",
+   "emp": "SIS-002",
+   "intent": "application_status",
+   "ms": 161,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2026/0154/28/001197 in the record. Here is what it does hold — Type: ISD, Status: Pending, Stage: SIS, Applicant: K.ராஜம், Survey No: 35."
+  },
+  {
+   "id": 817,
+   "q": "who is handling it of 2026/0153/28/001056",
+   "emp": "SIS-003",
+   "intent": "application_status",
+   "ms": 129,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2026/0153/28/001056 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: கிருஷ்ணகுமார், Survey No: 6."
+  },
+  {
+   "id": 854,
+   "q": "who is handling it of 2025/0153/28/000813",
+   "emp": "SIS-003",
+   "intent": "application_status",
+   "ms": 65,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2025/0153/28/000813 in the record. Here is what it does hold — Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: Sivakami, Survey No: 6."
+  },
+  {
+   "id": 914,
+   "q": "who is handling it of 2023/0153/28/000812",
+   "emp": "SIS-003",
+   "intent": "application_status",
+   "ms": 112,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2023/0153/28/000812 in the record. Here is what it does hold — Type: NISD, Status: Approved, Stage: COMPLETED, Applicant: S.மதியழகன், Survey No: 85."
+  },
+  {
+   "id": 916,
+   "q": "who is handling it of 2024/0154/28/001095",
+   "emp": "SIS-003",
+   "intent": "application_status",
+   "ms": 129,
+   "detail": null,
+   "tags": [
+    "field",
+    "app"
+   ],
+   "history": [],
+   "resp": "I could not find that particular detail for 2024/0154/28/001095 in the record. Here is what it does hold — Type: ISD, Status: Rejected, Stage: REJECTED, Applicant: Jeyalakshmi, Survey No: 6."
+  }
+ ]
+}

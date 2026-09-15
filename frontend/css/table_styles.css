@@ -1,14 +1,14 @@
 :root {
   --table-header-bg: #EEF4FF;
   --table-row-hover: #F8FAFC;
-  --table-border: #DCE3EC;
+  --table-border: #E2E8F0;
   --table-text-sm: 12px;
   --table-text-base: 13px;
 }
 
 .data-table-card {
   background: #FFFFFF;
-  border: 1px solid var(--border, #DCE3EC);
+  border: 1px solid var(--border);
   border-radius: 12px;
   margin-top: 12px;
   overflow: hidden;
@@ -22,7 +22,7 @@
   align-items: center;
   padding: 12px 16px;
   background: var(--table-header-bg, #EEF4FF);
-  border-bottom: 1px solid var(--table-border, #DCE3EC);
+  border-bottom: 1px solid var(--table-border);
 }
 
 .data-table-title-section {
@@ -39,13 +39,13 @@
 .data-table-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary, #111827);
+  color: var(--text-primary);
   margin: 0;
 }
 
 .data-table-count {
   font-size: 11px;
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
   background: white;
   border: 1px solid var(--table-border);
   border-radius: 20px;
@@ -54,19 +54,19 @@
 
 .btn-copy-table {
   background: none;
-  border: 1px solid var(--table-border, #DCE3EC);
+  border: 1px solid var(--table-border);
   border-radius: 6px;
   padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 
 .btn-copy-table:hover {
-  border-color: var(--primary, #1B4D9B);
-  color: var(--primary, #1B4D9B);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .data-table-container {
@@ -79,9 +79,9 @@
   display: none;
   text-align: center;
   font-size: 11px;
-  color: var(--text-muted, #9CA3AF);
+  color: var(--text-muted);
   padding: 4px 8px;
-  background: #F8FAFC;
+  background: var(--background);
   border-top: 1px solid var(--table-border);
 }
 
@@ -98,20 +98,20 @@
 }
 
 .data-table thead th {
-  background: #F8FAFC;
-  color: var(--text-secondary, #6B7280);
+  background: var(--background);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   padding: 10px 12px;
   text-align: left;
-  border-bottom: 2px solid var(--table-border, #DCE3EC);
+  border-bottom: 2px solid var(--table-border);
   white-space: nowrap;
 }
 
 .data-table tbody tr {
-  border-bottom: 1px solid #F3F4F6;
+  border-bottom: 1px solid var(--border);
   transition: background 0.1s ease;
 }
 
@@ -125,10 +125,25 @@
 
 .data-table tbody td {
   padding: 10px 12px;
-  color: var(--text-primary, #111827);
+  color: var(--text-primary);
   vertical-align: middle;
   font-size: var(--table-text-base, 13px);
   white-space: nowrap;
+  /* chatbot.css caps these cells at 300px. With nowrap and no overflow rule the
+     text escaped the cell box and painted over the next column (SUB-DIVISIONS
+     over STATUS). The container scrolls horizontally, so no cap is needed. */
+  max-width: none;
+}
+
+/* Long free-text cells (sub-division lists, addresses, names) wrap inside a
+   bounded width instead of widening the table or overflowing their neighbour. */
+.data-table tbody td.cell-wrap,
+.message-content table.data-table tbody td.cell-wrap {
+  white-space: normal;
+  max-width: 260px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  vertical-align: top;
 }
 
 /* --- STATUS BADGES --- */
@@ -157,7 +172,7 @@
 /* --- PAGINATION --- */
 .data-table-footer {
   padding: 10px 16px;
-  background: #F8FAFC;
+  background: var(--background);
   border-top: 1px solid var(--table-border);
 }
 
@@ -170,7 +185,7 @@
 
 .pagination-info {
   font-size: 12px;
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
 }
 
 .pagination-controls {
@@ -182,17 +197,17 @@
 .pagination-page {
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-primary, #111827);
+  color: var(--text-primary);
 }
 
 .btn-pagination {
   background: white;
-  border: 1px solid var(--table-border, #DCE3EC);
+  border: 1px solid var(--table-border);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
-  color: var(--text-secondary, #6B7280);
+  color: var(--text-secondary);
   transition: all 0.15s ease;
 }
 
@@ -202,14 +217,14 @@
 }
 
 .btn-pagination:not(:disabled):hover {
-  border-color: var(--primary, #1B4D9B);
-  color: var(--primary, #1B4D9B);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .data-table-empty {
   padding: 28px;
   text-align: center;
-  color: var(--text-muted, #9CA3AF);
+  color: var(--text-muted);
   font-size: 14px;
 }
 

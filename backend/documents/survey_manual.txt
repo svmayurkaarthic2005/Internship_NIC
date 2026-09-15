@@ -65,6 +65,46 @@ Sub-Division Naming Rules:
 5. Do not skip numbers or letters in sequence
 6. Maximum sub-division depth: 3 levels (discouraged beyond this)
 
+=== TEMPORARY SUBDIVISION NUMBERS ===
+
+When an ISD application is processed, the Deputy Inspector Surveyor (DIS)
+assigns temporary subdivision numbers to each proposed parcel before the
+final numbers are confirmed.
+
+Format: {existing_subdivision}/T{sequence}
+- The part before /T is the existing subdivision being split
+  (0 when the parent survey has no prior subdivision)
+- T stands for "Temporary"
+- The number after T is a sequence counter (1, 2, 3...) for each new parcel
+
+Examples from real applications:
+
+  Application 2022/0154/28/000779, survey 24, existing subdivision 3:
+    Temp 3/T1 (12.2 sq.m) → Final subdivision number: 3  (retains existing)
+    Temp 3/T2 (27.8 sq.m) → Final subdivision number: 4  (new number)
+
+  Application 2023/0154/28/000021, survey 90, no prior subdivision:
+    Temp 0/T1 (3.5 sq.m) → Final subdivision number: 1
+    Temp 0/T2 (3.5 sq.m) → Final subdivision number: 2
+
+  A large split is filed as several applications that share one temporary
+  series. Survey 35 (ward 102), existing subdivision 2A, runs 2A/T1 to 2A/T8
+  across five applications 2025/0154/28/001633 to 2025/0154/28/001637:
+    Temp 2A/T1 → Final: 2A  (retains existing)
+    Temp 2A/T2 → Final: 5
+    Temp 2A/T3 → Final: 6
+    ... up to 2A/T8 → Final: 11
+  Only the first application of such a series carries the parent's patta
+  number; the rest are identified by the survey and the temporary number.
+
+Key rules:
+- Temporary numbers are only assigned to ISD (0154) and MERGE (0155) applications
+- The first temporary parcel (T1) usually retains the existing subdivision number
+- Subsequent parcels (T2, T3, ...) receive new sequential numbers
+- Temporary numbers become final only after DIS approval
+- Rejected applications keep temporary numbers and never receive final numbers
+- The final number is stored as new_subdivision_number in the system
+
 === AREA VALIDATION RULES ===
 
 Critical Rule: Sum of All Sub-Divisions Must Equal Original Survey Area

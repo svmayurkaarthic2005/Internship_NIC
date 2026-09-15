@@ -1,19 +1,25 @@
 """Check if sis_chatbot_db has all required tables for the chatbot app"""
 import asyncio
+import sys
+from pathlib import Path
+
 import asyncpg
+
+# The report prints check marks; a Windows console defaults to cp1252, which
+# cannot encode them. Same guard as backend/main.py.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "backend" / "sample_db"))
+from dbconn import conn_params
 
 async def check_required_tables():
     print("=" * 100)
     print("CHECKING REQUIRED TABLES IN sis_chatbot_db")
     print("=" * 100)
     
-    conn = await asyncpg.connect(
-        user='postgres',
-        password='Mayur@2005',
-        host='127.0.0.1',
-        port=5432,
-        database='sis_chatbot_db'
-    )
+    conn = await asyncpg.connect(**conn_params('sis_chatbot_db'))
     
     # Required tables for the chatbot app to work
     required_tables = [
@@ -25,8 +31,8 @@ async def check_required_tables():
         ("applicants", "Applicant information"),
         
         # Geography
-        ("districts", "District master data"),
-        ("taluks", "Taluk master data"),
+        ("district_unicode", "District master (TAMILNILAM dump; is the app's District)"),
+        ("taluk", "Taluk master (TAMILNILAM dump; is the app's Taluk)"),
         ("towns", "Town master data"),
         ("wards", "Ward master data"),
         ("blocks", "Block master data"),

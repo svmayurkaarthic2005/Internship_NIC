@@ -42,10 +42,19 @@ Step 4: Sketch Preparation by Senior Draughtsman (SD)
 - Sub-division numbering follows pattern: 145 → 145/1A, 145/1B, 145/2A, etc.
 - SD handoff typically takes 7-10 working days
 
-Step 5: Deputy Inspector Surveyor (DIS) Approval
-- DIS reviews the field report and survey sketch
+Step 5: Deputy Inspector Surveyor (DIS) Review and Temporary Number Assignment
+- DIS reviews the field report and survey sketch prepared by SD
 - DIS verifies compliance with survey rules and area calculations
+- DIS assigns temporary subdivision numbers to each proposed parcel
+  - Format: {existing_subdiv}/T{sequence}, e.g. 3/T1, 3/T2, 0/T1, 2A/T3
+  - The number before /T is the existing subdivision being split (0 if the
+    parent survey has no prior subdivision)
+  - The number after T is a sequence counter for each new parcel
+  - These temporary numbers are used to track the proposed parcels through the
+    rest of the workflow until final numbers are assigned upon approval
 - DIS approves or rejects with reasons
+- On approval, each temporary number receives a final subdivision number
+  (e.g. 3/T1 → 3, 3/T2 → 4)
 - Approval timeline: 5 working days
 
 Step 6: Digital Sign-off by Tahsildar
@@ -107,6 +116,31 @@ Step 6: Citizen Download
 - Physical copy can be collected from Tahsildar office
 
 Total Timeline: Approximately 15-20 working days from submission to completion
+
+=== WHAT IS A FIELD VISIT ===
+
+Definition: A field visit (also called a field inspection or site inspection) is
+the on-site verification an SIS officer carries out at the actual land parcel
+before an application can move forward. The officer goes to the survey number in
+person, instead of deciding the application from the documents alone.
+
+What the officer does during a field visit:
+- Locates the survey number and its sub-division on the ground
+- Measures the actual boundaries and area, and compares them with the patta
+  and the sale deed
+- Marks the survey corners with GPS coordinates and checks the boundary stones
+- Checks for encroachment or any occupation that does not match the record
+- Obtains the signatures of the applicant and of all joint owners
+- Takes photographs and prepares preliminary field notes and a rough sketch
+
+Rules that apply to a field visit:
+- Mandatory for every ISD (0154) and MERGE (0155) application
+- Not required for NISD (0153), which is a document-only verification, unless a
+  specific issue is flagged
+- Must be scheduled within 15 working days of the application's submission date
+- Only the Tahsildar may approve a change or reschedule of a field visit date
+- The field notes and photographs become the basis of the Senior Draughtsman's
+  sub-division sketch and of the DIS review that follows
 
 === 15 WORKING DAY FIELD VISIT DEADLINE RULE ===
 

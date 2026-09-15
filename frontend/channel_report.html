@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SIS Channel Report — NISD Pending & Completed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+/* ──────────── RESET & TOKENS ──────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;
+  --bg2:#161b22;
+  --bg3:#21262d;
+  --bg4:#2d333b;
+  --border:#30363d;
+  --border2:#444c56;
+  --text:#e6edf3;
+  --muted:#8b949e;
+  --accent:#58a6ff;
+  --green:#3fb950;
+  --yellow:#d29922;
+  --red:#f85149;
+  --blue:#79c0ff;
+  --purple:#bc8cff;
+
+  --csc:#1f6feb;
+  --csc-glow:rgba(31,111,235,.25);
+  --csc-bg:rgba(31,111,235,.10);
+  --csc-border:rgba(31,111,235,.30);
+
+  --sro:#388bfd;
+  --sro-glow:rgba(56,139,253,.22);
+  --sro-bg:rgba(56,139,253,.09);
+  --sro-border:rgba(56,139,253,.28);
+
+  --citizen:#3fb950;
+  --citizen-glow:rgba(63,185,80,.20);
+  --citizen-bg:rgba(63,185,80,.09);
+  --citizen-border:rgba(63,185,80,.28);
+
+  --nisd:#58a6ff;
+  --nisd-bg:rgba(88,166,255,.10);
+  --nisd-border:rgba(88,166,255,.28);
+
+  --isd:#e3b341;
+  --isd-bg:rgba(227,179,65,.10);
+  --isd-border:rgba(227,179,65,.28);
+
+  --approved:#3fb950;
+  --pending:#d29922;
+  --inprog:#58a6ff;
+  --rejected:#f85149;
+
+  --r:8px; --rl:12px; --rxl:16px;
+  --trans:.16s ease;
+  font-family:'Inter',system-ui,sans-serif;
+  font-size:14px;
+  color:var(--text);
+  background:var(--bg);
+  line-height:1.5;
+}
+
+html{scroll-behavior:smooth}
+body{min-height:100vh}
+
+/* ──────────── HEADER ──────────── */
+.header{
+  background:linear-gradient(180deg,#0d1117 0%,#161b22 100%);
+  border-bottom:1px solid var(--border);
+  padding:20px 32px 16px;
+  position:sticky;top:0;z-index:200;
+  backdrop-filter:blur(12px);
+}
+.header-inner{max-width:1700px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.hdr-logo{
+  width:40px;height:40px;border-radius:10px;flex-shrink:0;
+  background:linear-gradient(135deg,#1f6feb 0%,#388bfd 100%);
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  box-shadow:0 0 18px rgba(31,111,235,.45);
+}
+.hdr-title{font-size:18px;font-weight:800;letter-spacing:-.4px}
+.hdr-sub{font-size:11px;color:var(--muted);margin-top:1px}
+.hdr-spacer{flex:1}
+.hdr-pill{
+  background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:5px 12px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--muted);
+}
+.nav-tabs{display:flex;gap:4px}
+.nav-tab{
+  padding:6px 14px;border-radius:6px;border:1px solid transparent;
+  background:none;color:var(--muted);font-size:12px;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:all var(--trans);
+  text-decoration:none;
+}
+.nav-tab:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
+.nav-tab.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
+
+/* ──────────── MAIN ──────────── */
+.main{max-width:1700px;margin:0 auto;padding:24px 32px 80px}
+
+/* ──────────── HERO STATS ──────────── */
+.hero{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:14px;margin-bottom:28px;
+}
+.hero-card{
+  border-radius:var(--rl);border:1px solid var(--border);
+  background:var(--bg2);padding:20px 22px;
+  position:relative;overflow:hidden;
+  transition:transform var(--trans),box-shadow var(--trans);
+}
+.hero-card::after{
+  content:'';position:absolute;top:-40px;right:-40px;
+  width:120px;height:120px;border-radius:50%;opacity:.06;
+}
+.hero-card.nisd-hero::after{background:var(--nisd)}
+.hero-card.isd-hero::after{background:var(--isd)}
+.hero-card.all-hero::after{background:var(--green)}
+.hero-card:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(0,0,0,.4)}
+.hero-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+.hero-icon{font-size:26px}
+.hero-label{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.hero-num{font-size:36px;font-weight:800;font-family:'JetBrains Mono',monospace;line-height:1.1;margin-top:2px}
+.hero-num.nisd-color{color:var(--nisd)}
+.hero-num.isd-color{color:var(--isd)}
+.hero-num.all-color{color:var(--green)}
+.hero-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.hchip{
+  padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600;
+  display:inline-flex;align-items:center;gap:4px;
+}
+.hchip-approved{background:rgba(63,185,80,.13);color:var(--approved);border:1px solid rgba(63,185,80,.28)}
+.hchip-pending{background:rgba(210,153,34,.13);color:var(--pending);border:1px solid rgba(210,153,34,.28)}
+.hchip-in_progress{background:rgba(88,166,255,.12);color:var(--inprog);border:1px solid rgba(88,166,255,.28)}
+.hchip-rejected{background:rgba(248,81,73,.11);color:var(--rejected);border:1px solid rgba(248,81,73,.28)}
+.hchip-csc{background:var(--csc-bg);color:#79c0ff;border:1px solid var(--csc-border)}
+.hchip-sro{background:var(--sro-bg);color:#a5d6ff;border:1px solid var(--sro-border)}
+.hchip-citizen{background:var(--citizen-bg);color:var(--citizen);border:1px solid var(--citizen-border)}
+
+/* ──────────── NISD SPOTLIGHT ──────────── */
+.nisd-spotlight{
+  margin-bottom:28px;border-radius:var(--rxl);
+  border:1px solid var(--nisd-border);
+  background:linear-gradient(135deg,rgba(88,166,255,.05) 0%,rgba(88,166,255,.02) 100%);
+  overflow:hidden;
+}
+.nisd-spotlight-header{
+  padding:18px 24px;background:var(--nisd-bg);
+  border-bottom:1px solid var(--nisd-border);
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+}
+.nisd-spotlight-title{font-size:16px;font-weight:800;color:var(--nisd)}
+.nisd-spotlight-sub{font-size:12px;color:var(--muted);margin-left:auto}
+
+.nisd-status-grid{
+  display:grid;grid-template-columns:1fr 1fr;
+  border-bottom:1px solid var(--border);
+}
+@media(max-width:768px){.nisd-status-grid{grid-template-columns:1fr}}
+.nisd-half{padding:20px 24px;border-right:1px solid var(--border)}
+.nisd-half:last-child{border-right:none}
+.nisd-half-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.nisd-half-title.pending-title{color:var(--pending)}
+.nisd-half-title.completed-title{color:var(--approved)}
+.nisd-channel-row{
+  display:flex;align-items:center;gap:10px;padding:10px 0;
+  border-bottom:1px solid var(--border);
+}
+.nisd-channel-row:last-child{border-bottom:none}
+.nisd-ch-icon{font-size:16px}
+.nisd-ch-label{font-size:13px;font-weight:600;flex:1}
+.nisd-ch-bars{flex:2;display:flex;flex-direction:column;gap:4px}
+.nisd-bar-row{display:flex;align-items:center;gap:6px;font-size:11px}
+.nisd-bar-track{flex:1;height:5px;background:var(--bg3);border-radius:99px;overflow:hidden;min-width:60px}
+.nisd-bar-fill{height:100%;border-radius:99px}
+.nisd-bar-val{width:24px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px}
+.nisd-ch-total{font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--nisd);min-width:36px;text-align:right}
+
+/* ──────────── CHANNEL CARDS ──────────── */
+.channel-cards{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:14px;margin-bottom:24px;
+}
+.ch-card{
+  border-radius:var(--rl);border:1px solid var(--border);
+  background:var(--bg2);overflow:hidden;
+  transition:transform var(--trans),box-shadow var(--trans);
+  cursor:pointer;
+}
+.ch-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.ch-card.ch-active{box-shadow:0 0 0 1.5px var(--accent)}
+.ch-card-bar{height:3px;background:var(--border)}
+.ch-card.csc .ch-card-bar{background:linear-gradient(90deg,var(--csc),#388bfd)}
+.ch-card.sro .ch-card-bar{background:linear-gradient(90deg,#388bfd,#79c0ff)}
+.ch-card.citizen .ch-card-bar{background:linear-gradient(90deg,var(--citizen),#56d364)}
+.ch-card-body{padding:18px 20px}
+.ch-card-top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ch-icon{font-size:22px}
+.ch-name{font-size:14px;font-weight:700}
+.ch-desc{font-size:11px;color:var(--muted);margin-top:1px}
+.ch-total{
+  margin-left:auto;font-size:28px;font-weight:800;
+  font-family:'JetBrains Mono',monospace;
+}
+.csc .ch-total{color:var(--csc)}
+.sro .ch-total{color:#388bfd}
+.citizen .ch-total{color:var(--citizen)}
+.ch-type-grid{display:flex;flex-direction:column;gap:6px}
+.ch-type-row{display:flex;align-items:center;gap:8px}
+.ch-type-label{font-size:11px;font-weight:700;width:40px;color:var(--muted)}
+.ch-track{flex:1;height:8px;background:var(--bg3);border-radius:99px;overflow:hidden;position:relative}
+.ch-fill{height:100%;border-radius:99px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+.ch-fill-nisd{background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+.ch-fill-isd{background:linear-gradient(90deg,#9a6700,#e3b341)}
+.ch-type-count{font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;width:28px;text-align:right}
+.ch-status-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+
+/* ──────────── FILTER BAR ──────────── */
+.filter-bar{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);
+  padding:14px 18px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  margin-bottom:20px;position:sticky;top:61px;z-index:100;
+}
+.fg{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.fl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-right:2px}
+.fb{
+  padding:4px 11px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--muted);font-size:12px;font-weight:600;
+  cursor:pointer;transition:all var(--trans);font-family:inherit;
+}
+.fb:hover{border-color:var(--border2);color:var(--text)}
+.fb.on{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 0 10px rgba(88,166,255,.25)}
+.fb.ch-CSC.on{background:var(--csc);border-color:var(--csc);box-shadow:0 0 10px var(--csc-glow)}
+.fb.ch-sub_registrar.on{background:#388bfd;border-color:#388bfd;box-shadow:0 0 10px var(--sro-glow)}
+.fb.ch-citizen.on{background:var(--citizen);border-color:var(--citizen);box-shadow:0 0 10px var(--citizen-glow)}
+.fb.tp-NISD.on{background:var(--nisd);border-color:var(--nisd)}
+.fb.tp-ISD.on{background:var(--isd);border-color:var(--isd);color:#000}
+.fb.st-approved.on{background:var(--approved);border-color:var(--approved)}
+.fb.st-pending.on{background:var(--pending);border-color:var(--pending);color:#000}
+.fb.st-in_progress.on{background:var(--inprog);border-color:var(--inprog)}
+.fb.st-rejected.on{background:var(--rejected);border-color:var(--rejected)}
+.fsep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+.fsearch{flex:1;min-width:180px;position:relative}
+.fsearch input{
+  width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:6px 10px 6px 30px;color:var(--text);font-size:13px;
+  font-family:inherit;outline:none;transition:border-color var(--trans);
+}
+.fsearch input:focus{border-color:var(--accent)}
+.fsearch-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.fcount{font-size:12px;color:var(--muted);white-space:nowrap}
+
+/* ──────────── TABS (type view) ──────────── */
+.type-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.tt{
+  padding:7px 18px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg2);color:var(--muted);font-size:13px;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:all var(--trans);
+}
+.tt:hover{border-color:var(--border2);color:var(--text)}
+.tt.tt-on.nisd{background:var(--nisd-bg);color:var(--nisd);border-color:var(--nisd-border)}
+.tt.tt-on.isd{background:var(--isd-bg);color:var(--isd);border-color:var(--isd-border)}
+.tt.tt-on.all{background:var(--bg3);color:var(--text);border-color:var(--border2)}
+
+/* ──────────── SECTIONS ──────────── */
+.section-wrap{margin-bottom:8px}
+.section-hdr{
+  padding:13px 18px;display:flex;align-items:center;gap:10px;
+  border-radius:var(--r) var(--r) 0 0;border:1px solid;border-bottom:none;
+}
+.section-hdr.csc{background:var(--csc-bg);border-color:var(--csc-border)}
+.section-hdr.sro{background:var(--sro-bg);border-color:var(--sro-border)}
+.section-hdr.citizen{background:var(--citizen-bg);border-color:var(--citizen-border)}
+.sh-icon{font-size:18px}
+.sh-label{font-size:13px;font-weight:700;flex:1}
+.sh-badge{
+  font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;
+  font-family:'JetBrains Mono',monospace;
+}
+.csc .sh-badge{background:var(--csc-bg);color:#79c0ff;border:1px solid var(--csc-border)}
+.sro .sh-badge{background:var(--sro-bg);color:#a5d6ff;border:1px solid var(--sro-border)}
+.citizen .sh-badge{background:var(--citizen-bg);color:var(--citizen);border:1px solid var(--citizen-border)}
+
+/* ──────────── STATUS SUB-SECTION ──────────── */
+.status-sub{border:1px solid var(--border);border-top:none;margin-top:0}
+.status-sub:last-child{border-radius:0 0 var(--rl) var(--rl)}
+.status-sub-hdr{
+  padding:8px 18px;display:flex;align-items:center;gap:8px;
+  background:var(--bg3);border-bottom:1px solid var(--border);
+}
+.ssh-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-pending{background:var(--pending)}
+.dot-approved{background:var(--approved)}
+.dot-in_progress{background:var(--inprog)}
+.dot-rejected{background:var(--rejected)}
+.ssh-label{font-size:11px;font-weight:700;flex:1;text-transform:uppercase;letter-spacing:.5px}
+.ssh-label.pending{color:var(--pending)}
+.ssh-label.approved{color:var(--approved)}
+.ssh-label.in_progress{color:var(--inprog)}
+.ssh-label.rejected{color:var(--rejected)}
+.ssh-count{font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--muted)}
+
+/* ──────────── TABLE ──────────── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:900px}
+thead th{
+  background:var(--bg3);padding:9px 12px;text-align:left;
+  font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.4px;white-space:nowrap;border-bottom:1px solid var(--border);
+}
+tbody tr{border-bottom:1px solid rgba(48,54,61,.7);transition:background var(--trans)}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.025)}
+tbody td{padding:9px 12px;vertical-align:middle}
+
+.app-link{
+  font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:500;
+  color:var(--accent);cursor:pointer;white-space:nowrap;
+}
+.app-link:hover{text-decoration:underline}
+
+/* ──────────── BADGE ──────────── */
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap}
+.b-ISD{background:var(--isd-bg);color:var(--isd);border:1px solid var(--isd-border)}
+.b-NISD{background:var(--nisd-bg);color:var(--nisd);border:1px solid var(--nisd-border)}
+.b-MERGE{background:rgba(188,140,255,.1);color:var(--purple);border:1px solid rgba(188,140,255,.28)}
+.b-approved{background:rgba(63,185,80,.11);color:var(--approved);border:1px solid rgba(63,185,80,.28)}
+.b-pending{background:rgba(210,153,34,.12);color:var(--pending);border:1px solid rgba(210,153,34,.28)}
+.b-in_progress{background:rgba(88,166,255,.11);color:var(--inprog);border:1px solid rgba(88,166,255,.28)}
+.b-rejected{background:rgba(248,81,73,.10);color:var(--rejected);border:1px solid rgba(248,81,73,.28)}
+.b-csc{background:var(--csc-bg);color:#79c0ff;border:1px solid var(--csc-border)}
+.b-sro{background:var(--sro-bg);color:#a5d6ff;border:1px solid var(--sro-border)}
+.b-citizen{background:var(--citizen-bg);color:var(--citizen);border:1px solid var(--citizen-border)}
+
+.mono{font-family:'JetBrains Mono',monospace;font-size:11px}
+.muted{color:var(--muted)}
+.fee{color:#56d364;font-family:'JetBrains Mono',monospace;font-size:12px}
+.ward-c{display:inline-block;padding:1px 7px;border-radius:4px;background:var(--bg3);border:1px solid var(--border);font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted)}
+.sno-c{display:inline-block;padding:1px 7px;border-radius:4px;background:var(--nisd-bg);border:1px solid rgba(88,166,255,.15);font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--nisd)}
+.igrs-c{display:inline-block;padding:1px 7px;border-radius:4px;background:rgba(188,140,255,.09);border:1px solid rgba(188,140,255,.2);font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--purple)}
+.stage-c{font-size:10.5px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+
+/* ──────────── COMBINATION MATRIX ──────────── */
+.combo-section{margin-top:36px}
+.combo-title{font-size:15px;font-weight:800;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.combo-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.ctab{
+  padding:5px 14px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--muted);font-size:12px;font-weight:600;
+  cursor:pointer;font-family:inherit;transition:all var(--trans);
+}
+.ctab:hover{color:var(--text);border-color:var(--border2)}
+.ctab.ctab-on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.combo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.combo-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);
+  padding:14px 16px;cursor:pointer;
+  transition:transform var(--trans),box-shadow var(--trans),border-color var(--trans);
+  position:relative;overflow:hidden;
+}
+.combo-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.4);border-color:var(--border2)}
+.combo-card-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.combo-card-count{font-size:26px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent);margin-bottom:8px;line-height:1}
+.combo-chips{display:flex;flex-wrap:wrap;gap:4px}
+.cc{padding:2px 7px;border-radius:4px;font-size:10.5px;font-weight:600;background:var(--bg3);border:1px solid var(--border);color:var(--muted)}
+.cc.approved{background:rgba(63,185,80,.1);color:var(--approved);border-color:rgba(63,185,80,.25)}
+.cc.pending{background:rgba(210,153,34,.1);color:var(--pending);border-color:rgba(210,153,34,.25)}
+.cc.in_progress{background:rgba(88,166,255,.1);color:var(--inprog);border-color:rgba(88,166,255,.25)}
+.cc.rejected{background:rgba(248,81,73,.09);color:var(--rejected);border-color:rgba(248,81,73,.25)}
+.cc.completed{background:rgba(63,185,80,.1);color:var(--approved);border-color:rgba(63,185,80,.25)}
+
+.combo-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.combo-card.nisd-combo::before{background:linear-gradient(90deg,var(--nisd),#79c0ff)}
+.combo-card.isd-combo::before{background:linear-gradient(90deg,#9a6700,var(--isd))}
+.combo-card.multi-combo::before{background:linear-gradient(90deg,var(--csc),var(--citizen))}
+
+/* ──────────── DRAWER ──────────── */
+.overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:500;
+  display:none;align-items:flex-end;backdrop-filter:blur(6px);
+}
+.overlay.open{display:flex}
+.drawer{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--rxl) var(--rxl) 0 0;width:100%;
+  max-height:85vh;overflow-y:auto;padding:24px 28px;
+  animation:slideUp .22s ease;
+}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.drawer-handle{width:40px;height:4px;border-radius:99px;background:var(--border2);margin:0 auto 18px}
+.drawer-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.drawer-hdr-title{font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent)}
+.drawer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.df{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px}
+.df-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.df-val{font-size:13px;color:var(--text);word-break:break-all}
+.drawer-close{margin-top:18px;padding:9px 22px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:13px;cursor:pointer;transition:all var(--trans)}
+.drawer-close:hover{background:var(--rejected);border-color:var(--rejected)}
+
+/* ──────────── UTIL ──────────── */
+.empty-state{text-align:center;padding:40px 24px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);margin-top:8px;font-size:13px}
+.hidden{display:none!important}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-inner">
+    <div class="hdr-logo">🗺️</div>
+    <div>
+      <div class="hdr-title">SIS Application — Submission Channel Report</div>
+      <div class="hdr-sub">Thoothukudi District · NISD / ISD · CSC · SRO · Citizen</div>
+    </div>
+    <div class="hdr-spacer"></div>
+    <div class="nav-tabs">
+      <a class="nav-tab active" href="#nisd-spotlight">NISD Spotlight</a>
+      <a class="nav-tab" href="#channel-view">By Channel</a>
+      <a class="nav-tab" href="#combo-section">Combinations</a>
+    </div>
+    <div class="hdr-pill" id="totalPill">— records</div>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- HERO STATS -->
+<div class="hero" id="heroStats"></div>
+
+<!-- ═══════════════ NISD SPOTLIGHT ═══════════════ -->
+<div id="nisd-spotlight" class="nisd-spotlight">
+  <div class="nisd-spotlight-header">
+    <span style="font-size:22px">📋</span>
+    <div>
+      <div class="nisd-spotlight-title">NISD Applications — Pending vs Completed</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px">Not Involving Sub-Division (Service Code 0153) · Document verification only · No field visit required</div>
+    </div>
+    <div class="nisd-spotlight-sub" id="nisdSubCount"></div>
+  </div>
+
+  <!-- pending vs completed split by channel -->
+  <div class="nisd-status-grid" id="nisdStatusGrid"></div>
+
+  <!-- NISD tables: pending then completed -->
+  <div id="nisdTablesArea"></div>
+</div>
+
+<!-- ═══════════════ ISD SECTION ═══════════════ -->
+<div id="isd-section" style="margin-top:28px">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <span style="font-size:20px">🏗️</span>
+    <div style="font-size:15px;font-weight:800;color:var(--isd)">ISD Applications</div>
+    <span style="font-size:11px;color:var(--muted)">Involving Sub-Division (0154) · Field visit + SD sketch required</span>
+    <span id="isdTotalBadge" style="margin-left:auto;font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--isd)"></span>
+  </div>
+  <div id="isdTablesArea"></div>
+</div>
+
+<!-- ═══════════════ CHANNEL VIEW ═══════════════ -->
+<div id="channel-view" style="margin-top:36px">
+  <div style="font-size:15px;font-weight:800;margin-bottom:14px;display:flex;align-items:center;gap:8px">
+    <span>📡</span> All Applications — By Channel
+  </div>
+
+  <!-- Channel cards -->
+  <div class="channel-cards" id="channelCards"></div>
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <span class="fl">Channel</span>
+    <div class="fg" id="chF"></div>
+    <div class="fsep"></div>
+    <span class="fl">Type</span>
+    <div class="fg" id="tpF"></div>
+    <div class="fsep"></div>
+    <span class="fl">Status</span>
+    <div class="fg" id="stF"></div>
+    <div class="fsep"></div>
+    <div class="fsearch">
+      <span class="fsearch-icon">🔍</span>
+      <input type="text" id="searchBox" placeholder="Search app no., name, CAN, mobile…"/>
+    </div>
+    <span class="fcount" id="fcount"></span>
+  </div>
+
+  <!-- View tabs: by channel or by status-group -->
+  <div class="type-tabs">
+    <button class="tt tt-on all" id="ttAll"   onclick="setViewMode('all')">All</button>
+    <button class="tt nisd"      id="ttNISD"  onclick="setViewMode('NISD')">NISD Only</button>
+    <button class="tt isd"       id="ttISD"   onclick="setViewMode('ISD')">ISD Only</button>
+  </div>
+
+  <div id="tablesArea"></div>
+</div>
+
+<!-- ═══════════════ COMBINATION MATRIX ═══════════════ -->
+<div class="combo-section" id="combo-section">
+  <div class="combo-title">📊 All Channel × Type × Status Combinations</div>
+  <div class="combo-tabs">
+    <button class="ctab ctab-on" onclick="setComboView('all',this)">All</button>
+    <button class="ctab" onclick="setComboView('NISD',this)">NISD</button>
+    <button class="ctab" onclick="setComboView('ISD',this)">ISD</button>
+    <button class="ctab" onclick="setComboView('multi',this)">Multi-Channel</button>
+  </div>
+  <div class="combo-grid" id="comboGrid"></div>
+</div>
+</div>
+
+<!-- DETAIL DRAWER -->
+<div class="overlay" id="overlay">
+  <div class="drawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-hdr" id="drawerHdr"></div>
+    <div class="drawer-grid" id="drawerGrid"></div>
+    <button class="drawer-close" onclick="closeDrawer()">✕ Close</button>
+  </div>
+</div>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────────────
+const RAW = [{"application_number": "2024/0154/28/001397", "application_type": "ISD", "current_status": "rejected", "submission_channel": "citizen", "submission_date": "2024-07-09", "can_number": "202407000005329", "applicant_name": "Joseph", "mobile_number": "7845852863", "gender": "Male", "occupation": null, "fee_amount": 660.0, "igrs_form6_number": null, "submission_source_name": "7845852863", "submission_camp_flag": "P", "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "pay_OWRIRO11IhbqYI", "payment_mode": "CP"}, {"application_number": "2022/0154/28/000779", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-10-13", "can_number": "133280120618026", "applicant_name": "Archana", "mobile_number": "9842153885", "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "SRO"}, {"application_number": "2023/0154/28/000570", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-03-23", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0154/28/000571", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-03-23", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "25", "patta_number": "59118", "total_area_sqm": 150.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0154/28/000572", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-03-23", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "26", "patta_number": "59119", "total_area_sqm": 40.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0154/28/003023", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-09-27", "can_number": "133280113407940", "applicant_name": "Kannan", "mobile_number": "9952016432", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "SRO"}, {"application_number": "2025/0154/28/000286", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-02-18", "can_number": "133280128890672", "applicant_name": "A Stella Premalatha", "mobile_number": "9894237466", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "25567", "payment_mode": "bank"}, {"application_number": "2025/0154/28/000466", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-18", "can_number": "133280129913920", "applicant_name": "Balavannan", "mobile_number": "9894880574", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_pac_o961_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001633", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-25", "can_number": "133280117433883", "applicant_name": "Saraswathi", "mobile_number": "9443410520", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001634", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-25", "can_number": "133280117433883", "applicant_name": "Saraswathi", "mobile_number": "9443410520", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001635", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-25", "can_number": "133280117432448", "applicant_name": "Balakrishnan", "mobile_number": "9443410520", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001636", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-25", "can_number": "133280117432448", "applicant_name": "Balakrishnan", "mobile_number": "9443410520", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001637", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-25", "can_number": "133280117432448", "applicant_name": "Balakrishnan", "mobile_number": "9443410520", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001672", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-28", "can_number": "133280129759775", "applicant_name": "A Saminathan", "mobile_number": "9487446159", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": "bank"}, {"application_number": "2025/0154/28/001912", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-09-23", "can_number": "133280121370510", "applicant_name": "Mohamedyunus M", "mobile_number": "7373011122", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": "S", "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2025/0154/28/002080", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-10-22", "can_number": "133280115136878", "applicant_name": "Sudha", "mobile_number": "9095025950", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_2803750_01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0000", "payment_mode": "bank"}, {"application_number": "2025/0154/28/002081", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-10-22", "can_number": "133280134071461", "applicant_name": "Subbulakshmi A", "mobile_number": "9003608974", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_2803750_01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0000", "payment_mode": "bank"}, {"application_number": "2026/0154/28/000685", "application_type": "ISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-04-07", "can_number": "133280135566736", "applicant_name": "Selvaraj K", "mobile_number": "7708147393", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "20260519003789", "payment_mode": "bank"}, {"application_number": "2026/0154/28/001167", "application_type": "ISD", "current_status": "pending", "submission_channel": "CSC", "submission_date": "2026-06-16", "can_number": "133280135386670", "applicant_name": "Kamalathas S", "mobile_number": "9443374788", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "SIS", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0154/28/001280", "application_type": "ISD", "current_status": "pending", "submission_channel": "CSC", "submission_date": "2026-06-30", "can_number": "133280136630740", "applicant_name": "Konduretti", "mobile_number": "7904266402", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "SIS", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0154/28/001281", "application_type": "ISD", "current_status": "pending", "submission_channel": "CSC", "submission_date": "2026-06-30", "can_number": "133280134871085", "applicant_name": "Vijayalakshmi D", "mobile_number": "9442556950", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "SIS", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0154/28/000776", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2022-10-12", "can_number": "133280120618026", "applicant_name": "Archana", "mobile_number": "9842153885", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/000376", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-03-10", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0154/28/000395", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-03-11", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "102", "survey_no": "25", "patta_number": "59118", "total_area_sqm": 150.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0154/28/001095", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-05-30", "can_number": "133280827748863", "applicant_name": "Jeyalakshmi", "mobile_number": "9698395803", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "1234575", "payment_mode": "SRO"}, {"application_number": "2024/0154/28/001487", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-07-22", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0154/28/001914", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-09-23", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tct_fch_tut_28", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "REJECTED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0154/28/001915", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-09-23", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tct_fch_tut_28", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "REJECTED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0154/28/001916", "application_type": "ISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-09-23", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tct_fch_tut_28", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "REJECTED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/000021", "application_type": "ISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-01-06", "can_number": "202227078638", "applicant_name": "\u0b8e\u0bae\u0bbf \u0b95\u0bbf\u0bb0\u0bc7\u0ba9\u0bbe\u0baa\u0bcd\u0baa\u0bc1", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": "202227078638", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": "0", "payment_mode": "SRO"}, {"application_number": "2024/0154/28/002252", "application_type": "ISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-11-04", "can_number": "202436621027", "applicant_name": "P.\u0b9c\u0bc0\u0bb5\u0ba9\u0bcd \u0b9c\u0bc7\u0b95\u0bcd\u0b95\u0baa\u0bcd \u0bb0\u0bbe\u0b9c\u0bc7\u0ba8\u0bcd\u0ba4\u0bbf\u0bb0\u0ba9\u0bcd", "mobile_number": "9442145210", "gender": null, "occupation": null, "fee_amount": 500.0, "igrs_form6_number": "202436621027", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "202401052055", "payment_mode": "bank"}, {"application_number": "2025/0154/28/001963", "application_type": "ISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-09-30", "can_number": "202542225457", "applicant_name": "N.\u0b9a\u0bbf\u0ba9\u0bcd\u0ba9\u0bb0\u0bbe\u0b9c\u0bcd", "mobile_number": "9597184200", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": "202542225457", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0000", "payment_mode": "bank"}, {"application_number": "2026/0154/28/000530", "application_type": "ISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-03-13", "can_number": "202646603900", "applicant_name": "\u0bb5\u0bb3\u0bcd\u0bb3\u0bbf\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9655261292", "gender": null, "occupation": null, "fee_amount": 600.0, "igrs_form6_number": "202646603900", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "20260519003789", "payment_mode": "bank"}, {"application_number": "2026/0154/28/001197", "application_type": "ISD", "current_status": "pending", "submission_channel": "sub_registrar", "submission_date": "2026-06-18", "can_number": "202650334673", "applicant_name": "K.\u0bb0\u0bbe\u0b9c\u0bae\u0bcd", "mobile_number": "9345354220", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202650334673", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "SIS", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0154/28/000156", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2022-03-12", "can_number": "202223957844", "applicant_name": "\u0ba8.\u0b95\u0bcb\u0baa\u0bbe\u0bb2\u0bcd \u0b85\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202223957844", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "22", "patta_number": "59113", "total_area_sqm": 0.0, "current_stage": "REJECTED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/001142", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-04-26", "can_number": "202328705439", "applicant_name": "S \u0baa\u0bbf\u0bb0\u0bbe\u0b99\u0bcd\u0b95\u0bbf\u0bb3\u0bbf\u0ba9\u0bcd", "mobile_number": "9566500421", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202328705439", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/001257", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-05-03", "can_number": "202328794158", "applicant_name": "T.\u0b9c\u0bc2\u0bb2\u0bbf\u0baf\u0bb8\u0bcd \u0baa\u0bc0\u0bb0\u0bbf\u0bb8\u0bcd", "mobile_number": "9443237424", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202328794158", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1358", "patta_number": "7716", "total_area_sqm": 346.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/001390", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-05-11", "can_number": "202328925600", "applicant_name": "A.\u0bae\u0bc0\u0bb0\u0bbe\u0ba9\u0bcd", "mobile_number": "9941978182", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202328925600", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0154/28/001742", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-06-01", "can_number": "202329213678", "applicant_name": "\u0baa\u0bc6\u0bb0\u0bc1\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9600309409", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202329213678", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1362", "patta_number": "7726", "total_area_sqm": 1409.5, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0154/28/001117", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2024-05-31", "can_number": "202434213090", "applicant_name": "\u0ba4\u0bbe\u0b9a\u0ba9\u0bcd", "mobile_number": "9092928365", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202434213090", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0154/28/001839", "application_type": "ISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2025-09-12", "can_number": "202541928552", "applicant_name": "\u0bae\u0b95\u0bbe\u0bb2\u0bbf\u0b99\u0bcd\u0b95\u0bae\u0bcd", "mobile_number": "9487325288", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202541928552", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/000254", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-04-07", "can_number": "133280117766282", "applicant_name": "Anbu", "mobile_number": "9385475932", "gender": "Male", "occupation": null, "fee_amount": 400.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "5", "payment_mode": "bank"}, {"application_number": "2022/0153/28/000827", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-08-30", "can_number": "133280119050087", "applicant_name": "Jancy Graca Mary", "mobile_number": "9994275299", "gender": "Female", "occupation": null, "fee_amount": 400.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "COMPLETED", "declared_reason": "inheritance", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2022/0153/28/000895", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-09-12", "can_number": "133280120437730", "applicant_name": "Muthu Lakshmi M", "mobile_number": "8675428065", "gender": "Female", "occupation": null, "fee_amount": 400.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2022/0153/28/001206", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-11-01", "can_number": "133280120618026", "applicant_name": "Archana", "mobile_number": "9842153885", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2022/0153/28/001405", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-12-13", "can_number": "133281021548256", "applicant_name": "Ramalakshmi N", "mobile_number": "9443100706", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2022/0153/28/001479", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-12-29", "can_number": "133280121716689", "applicant_name": "Kamala Alais Dellieswari", "mobile_number": "9176081224", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1372", "patta_number": "7774", "total_area_sqm": 201.0, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2022/0153/28/001484", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2022-12-30", "can_number": "133280121727556", "applicant_name": "Sivaram", "mobile_number": "9894099506", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "COMPLETED", "declared_reason": "inheritance", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000327", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-03-06", "can_number": "133280122454899", "applicant_name": "Padmanathan", "mobile_number": "9443528867", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002642", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2023-10-18", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/000866", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-03-07", "can_number": "133280127039637", "applicant_name": "Selva Santhana Sekar", "mobile_number": "9443404899", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001659", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-06-06", "can_number": "133280016768131", "applicant_name": "Helina S", "mobile_number": "8220623188", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/002163", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-07-27", "can_number": "133280128890672", "applicant_name": "A Stella Premalatha", "mobile_number": "9894237466", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002522", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-09-12", "can_number": "133280129473653", "applicant_name": "Parimalam", "mobile_number": "8220000452", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003037", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-11-05", "can_number": "133280129914559", "applicant_name": "U N Amutha", "mobile_number": "9894880574", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003173", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-11-21", "can_number": "133280227212937", "applicant_name": "Yasmin", "mobile_number": "9443381280", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1366", "patta_number": "8012", "total_area_sqm": 322.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003174", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2024-11-21", "can_number": "133280227212230", "applicant_name": "V M H Shajitha Parvin", "mobile_number": "9952734967", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1366", "patta_number": "8012", "total_area_sqm": 322.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000283", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-02-15", "can_number": "133280025643209", "applicant_name": "Zulaiha Shakeel", "mobile_number": "9894184511", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1364", "patta_number": "7947", "total_area_sqm": 72.0, "current_stage": "COMPLETED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000419", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-02-26", "can_number": "133280112330412", "applicant_name": "Ramakrishnan", "mobile_number": "9443135770", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNASSMLA-214", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000576", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-04", "can_number": "133280131012873", "applicant_name": "Karuppasamy V", "mobile_number": "9944965115", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNASSMLA-214", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000592", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-04", "can_number": "133280131018171", "applicant_name": "Natchiyar A", "mobile_number": "9790365446", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNASSMLA-214", "submission_camp_flag": null, "ward_number": "102", "survey_no": "13", "patta_number": "59104", "total_area_sqm": 0.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000655", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-07", "can_number": "133280130978727", "applicant_name": "Manimala", "mobile_number": "9442723129", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000761", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-14", "can_number": "133280111537085", "applicant_name": "Bavani", "mobile_number": "9791329797", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "EE464", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000838", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-03-17", "can_number": "133280131018171", "applicant_name": "Natchiyar A", "mobile_number": "9790365446", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "EE464", "submission_camp_flag": null, "ward_number": "102", "survey_no": "13", "patta_number": "59104", "total_area_sqm": 0.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001105", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-04", "can_number": "133280129759775", "applicant_name": "A Saminathan", "mobile_number": "9487446159", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "EE464", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001109", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-04", "can_number": "133280131353891", "applicant_name": "Subbu", "mobile_number": "9087848329", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "EE464", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001276", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-10", "can_number": "133280130766384", "applicant_name": "Kumaraselvi S", "mobile_number": "8189899482", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_pac_o961_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001516", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-17", "can_number": "133280117312751", "applicant_name": "Venkatesan V S", "mobile_number": "9385244550", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1362", "patta_number": "7726", "total_area_sqm": 1409.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001558", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-19", "can_number": "133280117312751", "applicant_name": "Venkatesan V S", "mobile_number": "9385244550", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_pac_o961_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1362", "patta_number": "7726", "total_area_sqm": 1409.5, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001624", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-23", "can_number": "133280012909217", "applicant_name": "Jebamalai Lourdu Princy", "mobile_number": "9080115727", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "EE464", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001678", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-04-26", "can_number": "133280131616197", "applicant_name": "Antony Xavier Stephen", "mobile_number": "9442051557", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1362", "patta_number": "7726", "total_area_sqm": 1409.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002357", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-06-27", "can_number": "133280129759775", "applicant_name": "A Saminathan", "mobile_number": "9487446159", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002435", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-07-01", "can_number": "133280232616515", "applicant_name": "Murugan S", "mobile_number": "9865824411", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002500", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-07-03", "can_number": "133280018381376", "applicant_name": "Deivasoodamani", "mobile_number": "6385524562", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002614", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-07-11", "can_number": "133280018381376", "applicant_name": "Deivasoodamani", "mobile_number": "6385524562", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": "U", "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002623", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-07-12", "can_number": "133280121704636", "applicant_name": "Sivakami", "mobile_number": "9442949124", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003050", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-08", "can_number": "133280232616515", "applicant_name": "Murugan S", "mobile_number": "9865824411", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003179", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-14", "can_number": "133280133227600", "applicant_name": "Sudha S", "mobile_number": "9442885435", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0521-01", "submission_camp_flag": "S", "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003182", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-14", "can_number": "133280133227560", "applicant_name": "Joy Suganthi R", "mobile_number": "9994114475", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0521-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003201", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-14", "can_number": "133280129759775", "applicant_name": "A Saminathan", "mobile_number": "9487446159", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003243", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-15", "can_number": "133280125006776", "applicant_name": "Dhanasekaran", "mobile_number": "9486471958", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003249", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-15", "can_number": "133280133185491", "applicant_name": "P Chellaiyaa", "mobile_number": "9952162696", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": "S", "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003308", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-16", "can_number": "133280133252710", "applicant_name": "Omar Pulvartharick T", "mobile_number": "9894046748", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": "S", "ward_number": "002", "survey_no": "1393", "patta_number": "7850", "total_area_sqm": 238.5, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003493", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-24", "can_number": "133280133357748", "applicant_name": "Thilaiammal A", "mobile_number": "8753737290", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": "S", "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003494", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-24", "can_number": "133280133357743", "applicant_name": "Saroja K", "mobile_number": "6379396442", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": "S", "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003495", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-24", "can_number": "133280133357740", "applicant_name": "Mallika", "mobile_number": "8122494661", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": "S", "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003511", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-08-24", "can_number": "133280129474230", "applicant_name": "Jeyalakshmi", "mobile_number": "8300482365", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": "S", "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003922", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-09-09", "can_number": "133280126776166", "applicant_name": "Chinnadurai G", "mobile_number": "9944411467", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT019-01", "submission_camp_flag": "S", "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/004824", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-10-30", "can_number": "133020833541616", "applicant_name": "Nanditha  Krishna", "mobile_number": "9716299119", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1372", "patta_number": "7774", "total_area_sqm": 201.0, "current_stage": "COMPLETED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/004916", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-11-10", "can_number": "133280129913920", "applicant_name": "Balavannan", "mobile_number": "9894880574", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005405", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-12-19", "can_number": "133280131122972", "applicant_name": "S Kannan", "mobile_number": "8610060157", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005475", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2025-12-22", "can_number": "133280129914559", "applicant_name": "U N Amutha", "mobile_number": "9894880574", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000160", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-01-14", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000340", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-01-23", "can_number": "133280131122972", "applicant_name": "S Kannan", "mobile_number": "8610060157", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000390", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-01-29", "can_number": "133280134958436", "applicant_name": "Karthi S", "mobile_number": "8348688598", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000391", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-01-29", "can_number": "133280134958436", "applicant_name": "Karthi S", "mobile_number": "8348688598", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000994", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-03-27", "can_number": "133280057699148", "applicant_name": "S Saravanan", "mobile_number": "9443305999", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1358", "patta_number": "7716", "total_area_sqm": 346.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001075", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-04-09", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001076", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-04-09", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001077", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-04-09", "can_number": "133280121762226", "applicant_name": "Arunkumar", "mobile_number": "9626184372", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "COMPLETED", "declared_reason": "inheritance", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001190", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-05-04", "can_number": "133280135708219", "applicant_name": "Jegadeesapandian", "mobile_number": "9443132488", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001258", "application_type": "NISD", "current_status": "approved", "submission_channel": "CSC", "submission_date": "2026-05-11", "can_number": "133280134958436", "applicant_name": "Karthi S", "mobile_number": "8348688598", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001839", "application_type": "NISD", "current_status": "in_progress", "submission_channel": "CSC", "submission_date": "2026-06-28", "can_number": "133280135708219", "applicant_name": "Jegadeesapandian", "mobile_number": "9443132488", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "8", "patta_number": "59099", "total_area_sqm": 0.0, "current_stage": "TAHSILDAR", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/000280", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2022-04-21", "can_number": "133280117991838", "applicant_name": "Ajitha Nachiar", "mobile_number": "7904685134", "gender": "Female", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/000290", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2022-04-27", "can_number": "133280118097786", "applicant_name": "Manikandan Sathishkumar", "mobile_number": "9894879527", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/001095", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2022-10-11", "can_number": "133280120778738", "applicant_name": "Avudaiammal", "mobile_number": "9790365941", "gender": "Female", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/001148", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2022-10-20", "can_number": "133280120923010", "applicant_name": "Anbu Singh", "mobile_number": "9444462296", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1372", "patta_number": "7774", "total_area_sqm": 201.0, "current_stage": "REJECTED", "declared_reason": "court_order", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0153/28/000220", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-02-16", "can_number": "133280122203291", "applicant_name": "Lawrence", "mobile_number": "9486320079", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "102", "survey_no": "26", "patta_number": "59119", "total_area_sqm": 40.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0153/28/000346", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-03-08", "can_number": "133280122474821", "applicant_name": "Selva Ganesan R", "mobile_number": "9894122407", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0153/28/001316", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-07-01", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002533", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2023-10-04", "can_number": "133280115971814", "applicant_name": "Marimuthu", "mobile_number": "8056887635", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "102", "survey_no": "18", "patta_number": "59109", "total_area_sqm": 5.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/000576", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-02-21", "can_number": "133280016768131", "applicant_name": "Helina S", "mobile_number": "8220623188", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001048", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-03-25", "can_number": "133280122203291", "applicant_name": "THANGARAJ", "mobile_number": "9486320079", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001058", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-03-27", "can_number": "133280227212937", "applicant_name": "Yasmin", "mobile_number": "9443381280", "gender": "Female", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1366", "patta_number": "8012", "total_area_sqm": 322.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/001059", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-03-27", "can_number": "133280227212230", "applicant_name": "V M H Shajitha Parvin", "mobile_number": "9952734967", "gender": "Female", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1366", "patta_number": "8012", "total_area_sqm": 322.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002099", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-07-22", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002124", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-07-23", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "O961", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002528", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-09-12", "can_number": "133280018014908", "applicant_name": "Antony Micheal Nicholas", "mobile_number": "8270281296", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003035", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2024-11-05", "can_number": "133280129913920", "applicant_name": "Balavannan", "mobile_number": "9894880574", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "REJECTED", "declared_reason": "gift_deed", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000802", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-03-15", "can_number": "133280131122972", "applicant_name": "S Kannan", "mobile_number": "8610060157", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000813", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-03-15", "can_number": "133280121704636", "applicant_name": "Sivakami", "mobile_number": "9442949124", "gender": "Female", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT059-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001278", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-04-10", "can_number": "133280131428073", "applicant_name": "Shanmugavel K", "mobile_number": "9942303611", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNTUTVLE_1807", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001357", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-04-13", "can_number": "133280128164873", "applicant_name": "Radhakrishnan S R", "mobile_number": "9360334590", "gender": "Male", "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNASSMLA-214", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001715", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-04-29", "can_number": "133280131122972", "applicant_name": "S Kannan", "mobile_number": "8610060157", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003853", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2025-09-04", "can_number": "133280127830932", "applicant_name": "Jayakani", "mobile_number": "9443187101", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT0540-01", "submission_camp_flag": null, "ward_number": "102", "survey_no": "35", "patta_number": "59128", "total_area_sqm": 1550.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000659", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2026-02-25", "can_number": "133280134958436", "applicant_name": "Karthi S", "mobile_number": "8348688598", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000863", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2026-03-13", "can_number": "133280134958436", "applicant_name": "Karthi S", "mobile_number": "8348688598", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": null, "submission_source_name": "tut_tct_t131_02", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "REJECTED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001321", "application_type": "NISD", "current_status": "rejected", "submission_channel": "CSC", "submission_date": "2026-05-19", "can_number": "133280135386670", "applicant_name": "Kamalathas S", "mobile_number": "9443374788", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": null, "submission_source_name": "TNEFATUT400-01", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/000468", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2022-06-28", "can_number": "202224771887", "applicant_name": "\u0b9a\u0b95\u0bbe\u0baf\u0bb0\u0bbe\u0b9c\u0bcd", "mobile_number": "9754324158", "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": "202224771887", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2022/0153/28/000526", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2022-07-17", "can_number": "202224809008", "applicant_name": "R \u0b85\u0bb0\u0bcd\u0b9a\u0bcd\u0b9a\u0ba9\u0bbe", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": "202224809008", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "24", "patta_number": "59115", "total_area_sqm": 260.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2022/0153/28/000984", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2022-09-28", "can_number": "202225473787", "applicant_name": "\u0b86 \u0ba4\u0b99\u0bcd\u0b95\u0bb5\u0bc7\u0bb2\u0bcd", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": "202225473787", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000367", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-03-10", "can_number": "202328031714", "applicant_name": "T.S. \u0b95\u0bbf\u0bb0\u0bc1\u0bb7\u0bcd\u0ba3 \u0bae\u0bc2\u0bb0\u0bcd\u0ba4\u0bcd\u0ba4\u0bbf", "mobile_number": "9444999555", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328031714", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1372", "patta_number": "7774", "total_area_sqm": 201.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000479", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-03-19", "can_number": "202327598935", "applicant_name": "M \u0bae\u0bc1\u0b95\u0bae\u0bcd\u0bae\u0ba4\u0bc1 \u0baf\u0bc2\u0ba9\u0bc1\u0bb8\u0bcd", "mobile_number": "9843154317", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202327598935", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "20", "patta_number": "59111", "total_area_sqm": 40.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000812", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-04-22", "can_number": "202328229788", "applicant_name": "S.\u0bae\u0ba4\u0bbf\u0baf\u0bb4\u0b95\u0ba9\u0bcd", "mobile_number": "9894407288", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328229788", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000942", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-05-05", "can_number": "202328845868", "applicant_name": "\u0bb0\u0b95\u0bc1\u0baa\u0ba4\u0bbf", "mobile_number": "9442510442", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328845868", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1369", "patta_number": "7765", "total_area_sqm": 278.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/000991", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-05-15", "can_number": "202328954099", "applicant_name": "\u0b95\u0bcb.\u0ba8\u0bbe\u0b95\u0bb0\u0bbe\u0b9c\u0ba9\u0bcd", "mobile_number": "9363140237", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328954099", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001014", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-05-18", "can_number": "202329010572", "applicant_name": "S.\u0b85\u0ba8\u0bcd\u0ba4\u0bcb\u0ba3\u0bbf \u0bae\u0bbf\u0b95\u0bcd\u0b95\u0bc7\u0bb2\u0bcd \u0ba8\u0bbf\u0b95\u0bcd\u0b95\u0bcb\u0bb2\u0bb8\u0bcd", "mobile_number": "8754143303", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329010572", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001046", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-05-23", "can_number": "202329072095", "applicant_name": "\u0bae\u0bc1\u0ba4\u0bcd\u0ba4\u0bc1\u0bb5\u0bc7\u0bb2\u0bcd", "mobile_number": "9442520442", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329072095", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1369", "patta_number": "7765", "total_area_sqm": 278.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001164", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-06-01", "can_number": "202329213678", "applicant_name": "\u0baa\u0bc6\u0bb0\u0bc1\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9600309409", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329213678", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1362", "patta_number": "7726", "total_area_sqm": 1409.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001198", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-06-06", "can_number": "202328828436", "applicant_name": "T.\u0baa\u0b99\u0bcd\u0b95\u0bc1\u0bb0\u0bbe\u0b9c\u0bcd", "mobile_number": "9443416926", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328828436", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "15", "patta_number": "59106", "total_area_sqm": 0.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001232", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-06-12", "can_number": "202329380999", "applicant_name": "\u0bb0\u0bbe\u0bae\u0bb2\u0bc6\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9629731878", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329380999", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001397", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-07-13", "can_number": "202328420553", "applicant_name": "RAJAMOHAN SELVIN", "mobile_number": "9842102926", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328420553", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001492", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-07-24", "can_number": "202329017078", "applicant_name": "S.\u0b9a\u0bc6\u0bb2\u0bcd\u0bb2\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9952217092", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329017078", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001593", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-08-02", "can_number": "202328916012", "applicant_name": "C.A.S.\u0b86\u0bb2\u0bcd\u0baa\u0bb0\u0bcd\u0b9f\u0bcd", "mobile_number": "7200400564", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202328916012", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001815", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-08-24", "can_number": "202329640885", "applicant_name": "FRANCIA", "mobile_number": "8870885390", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202329640885", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002107", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-09-15", "can_number": "202330482015", "applicant_name": "\u0b9a\u0b95\u0bbe\u0baf\u0bb0\u0bbe\u0b9c\u0bcd", "mobile_number": "9942450400", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330482015", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "20", "patta_number": "59111", "total_area_sqm": 40.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002148", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-09-16", "can_number": "202330711443", "applicant_name": "\u0b9a\u0bc6\u0bb2\u0bcd\u0bb5\u0bb0\u0bbe\u0b9c\u0bcd", "mobile_number": "9487211465", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330711443", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002263", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-09-21", "can_number": "202330615334", "applicant_name": "P.\u0baa\u0bca\u0ba9\u0bcd\u0ba4\u0bc1\u0bb0\u0bc8", "mobile_number": "9443113210", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330615334", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1350", "patta_number": "8034", "total_area_sqm": 222.5, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002458", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-10-02", "can_number": "202330863213", "applicant_name": "\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0b9a\u0bbe\u0bae\u0bbf", "mobile_number": "4545345345", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330863213", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002558", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-10-09", "can_number": "202330913044", "applicant_name": "S \u0b9a\u0bc1\u0ba8\u0bcd\u0ba4\u0bb0\u0bcd \u0b86\u0bb1\u0bc1\u0bae\u0bc1\u0b95\u0bae\u0bcd", "mobile_number": "9952228198", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330913044", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002577", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-10-10", "can_number": "202330861356", "applicant_name": "S.SUGANYA RANI", "mobile_number": "9345354220", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202330861356", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002764", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-10-29", "can_number": "202331157229", "applicant_name": "C.A.S.\u0b86\u0bb2\u0bcd\u0baa\u0bb0\u0bcd\u0b9f\u0bcd", "mobile_number": "7200400564", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202331157229", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/002911", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2023-11-16", "can_number": "202331337044", "applicant_name": "C H D \u0b95\u0bbf\u0bb0\u0bb9\u0bbe\u0bae\u0bcd \u0bb8\u0bcd\u0b9f\u0bc6\u0baf\u0bbf\u0ba9\u0bcd\u0bb8\u0bcd", "mobile_number": "9487403252", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202331337044", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/000520", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-02-17", "can_number": "202432312126", "applicant_name": "M.\u0bb0\u0bbe\u0bae\u0b95\u0bbf\u0bb0\u0bc1\u0bb7\u0bcd\u0ba3\u0ba9\u0bcd", "mobile_number": "9487051403", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202432312126", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/000948", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-03-14", "can_number": "202432311692", "applicant_name": "S.\u0ba8\u0bbf\u0ba4\u0bcd\u0baf\u0bbe", "mobile_number": "9629769390", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202432311692", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "1", "patta_number": "59092", "total_area_sqm": 18.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001235", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-04-23", "can_number": "202433693606", "applicant_name": "\u0b85\u0ba9\u0bcd\u0ba9\u0bb2\u0bc6\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9994837845", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202433693606", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001460", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-05-17", "can_number": "202434008443", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0ba4\u0bcd\u0ba4\u0bbe\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9976698527", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202434008443", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/001464", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-05-17", "can_number": "202434010885", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0ba4\u0bcd\u0ba4\u0bbe\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9976698527", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202434010885", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2024/0153/28/002431", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-08-29", "can_number": "202434964652", "applicant_name": "DR.\u0b85\u0ba8\u0bcd\u0ba4\u0bcb\u0ba3\u0bbf \u0bb0\u0bbe\u0b9c\u0bc7\u0bb7\u0bcd \u0ba4\u0bbf\u0bb2\u0b95\u0bcd", "mobile_number": "9442622718", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202434964652", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002682", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-09-27", "can_number": "202436036060", "applicant_name": "S.\u0b9a\u0bbf\u0bb5\u0bb0\u0bbe\u0bae\u0bcd", "mobile_number": "9659765169", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436036060", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002782", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-07", "can_number": "202435704323", "applicant_name": "M.M.\u0b95\u0bbe\u0b9c\u0bbe \u0ba8\u0b9c\u0bcd\u0bae\u0bc1\u0ba4\u0bc0\u0ba9\u0bcd", "mobile_number": "6380354492", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202435704323", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1364", "patta_number": "7947", "total_area_sqm": 72.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002844", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-10", "can_number": "202436159999", "applicant_name": "\u0b9a\u0bbf\u0bb5\u0b95\u0bbe\u0bae\u0bbf", "mobile_number": "9894557021", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436159999", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002845", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-10", "can_number": "202436160772", "applicant_name": "\u0bae\u0bc1\u0ba4\u0bcd\u0ba4\u0bc1\u0bb0\u0bbe\u0b9c\u0bbe", "mobile_number": "9585111750", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436160772", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002965", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-25", "can_number": "202436313670", "applicant_name": "G.\u0b8e\u0bb8\u0bcd\u0ba4\u0bb0\u0bcd \u0b9c\u0bc6\u0baa\u0b95\u0bc1\u0bb3\u0bcb\u0bb0\u0bbf", "mobile_number": "9842150133", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436313670", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1383", "patta_number": "7808", "total_area_sqm": 204.5, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002972", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-25", "can_number": "202436472420", "applicant_name": "\u0baa\u0bbe\u0bb0\u0bcd\u0bb5\u0ba4\u0bbf", "mobile_number": "9894024071", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436472420", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/002993", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-10-28", "can_number": "202436564243", "applicant_name": "G \u0b9c\u0bc6\u0baf\u0bb2\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "8122534225", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436564243", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003095", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-11-12", "can_number": "202436536860", "applicant_name": "M \u0ba4\u0bbf\u0ba9\u0bc7\u0bb7\u0bcd\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0bcd", "mobile_number": "9597045594", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436536860", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1349", "patta_number": "8028", "total_area_sqm": 216.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003302", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-12-10", "can_number": "202437242904", "applicant_name": "Citizen Applicant", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202437242904", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1350", "patta_number": "8034", "total_area_sqm": 222.5, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003352", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-12-13", "can_number": "202437333664", "applicant_name": "M.\u0b86\u0ba9\u0ba8\u0bcd\u0ba4\u0b9a\u0b99\u0bcd\u0b95\u0bb0\u0bbf", "mobile_number": "8220000452", "gender": "Female", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202437333664", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003395", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-12-23", "can_number": "202436912610", "applicant_name": "\u0bae\u0bc1\u0bb0\u0bc1\u0b95\u0bc7\u0b9a\u0ba9\u0bcd", "mobile_number": "9751363765", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436912610", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/003396", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2024-12-23", "can_number": "202436912384", "applicant_name": "\u0bae\u0bc1\u0bb0\u0bc1\u0b95\u0bc7\u0b9a\u0ba9\u0bcd", "mobile_number": "9751363765", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202436912384", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000509", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-02-28", "can_number": "202537958930", "applicant_name": "\u0b9a\u0b99\u0bcd\u0b95\u0bb0\u0ba9\u0bcd", "mobile_number": "9442885435", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202537958930", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/001871", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-05-15", "can_number": "202539815793", "applicant_name": "\u0bb2\u0bbf\u0bb2\u0bcd\u0bb2\u0bbf \u0baa\u0bc1\u0bb7\u0bcd\u0baa\u0bae\u0bcd", "mobile_number": "9677929702", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202539815793", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002488", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-02", "can_number": "202540668171", "applicant_name": "M.\u0b9a\u0bc1\u0ba8\u0bcd\u0ba4\u0bb0\u0bb2\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9789366710", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540668171", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002489", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-02", "can_number": "202540668672", "applicant_name": "M.\u0b9a\u0bc1\u0ba8\u0bcd\u0ba4\u0bb0\u0bb2\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9789366710", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540668672", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1398", "patta_number": "7593", "total_area_sqm": 445.5, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002691", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-14", "can_number": "202540567355", "applicant_name": "\u0bae\u0b95\u0bc7\u0bb8\u0bcd\u0bb5\u0bb0\u0bbf", "mobile_number": "9965589356", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540567355", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002888", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-28", "can_number": "202540714790", "applicant_name": "R.\u0baa\u0bc2\u0bb0\u0bcd\u0ba3 \u0b9a\u0ba8\u0bcd\u0ba4\u0bbf\u0bb0\u0bbe", "mobile_number": "9489503677", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540714790", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002889", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-28", "can_number": "202540714952", "applicant_name": "R.\u0baa\u0bc2\u0bb0\u0bcd\u0ba3 \u0b9a\u0ba8\u0bcd\u0ba4\u0bbf\u0bb0\u0bbe", "mobile_number": "9489503677", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540714952", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/002893", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-07-28", "can_number": "202540948095", "applicant_name": "\u0bb0\u0bbe\u0bae\u0bb2\u0bc6\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9442723600", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202540948095", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "11", "patta_number": "59102", "total_area_sqm": 59.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/003703", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-08-26", "can_number": "202541391447", "applicant_name": "\u0b87\u0b9a\u0b95\u0bcd\u0b95\u0bbf\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9790279740", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202541391447", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/004814", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-10-30", "can_number": "202541655601", "applicant_name": "A.\u0b9a\u0bc1\u0baa\u0bcd\u0baa\u0bc1\u0bb2\u0bc6\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "9003608974", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202541655601", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/004815", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-10-30", "can_number": "202541656301", "applicant_name": "V.\u0b9a\u0ba3\u0bcd\u0bae\u0bc1\u0b95\u0bae\u0bcd", "mobile_number": "9095025950", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202541656301", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/004818", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-10-30", "can_number": "202541730476", "applicant_name": "S \u0b95\u0ba3\u0bcd\u0ba3\u0ba9\u0bcd", "mobile_number": "8610060157", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202541730476", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005039", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-11-15", "can_number": "202542342054", "applicant_name": "S.\u0b9c\u0bc6\u0baf\u0b9a\u0b99\u0bcd\u0b95\u0bb0\u0bcd", "mobile_number": "9842330835", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202542342054", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005072", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-11-15", "can_number": "202542557702", "applicant_name": "\u0bae\u0b95\u0bc7\u0bb7\u0bcd\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0bcd", "mobile_number": "9894024071", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202542557702", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005534", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-12-23", "can_number": "202543792027", "applicant_name": "T.\u0baa\u0bc7\u0b9a\u0bcd\u0b9a\u0bbf\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9843471714", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202543792027", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005611", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-12-29", "can_number": "202543019750", "applicant_name": "\u0b85.\u0b95\u0bbf\u0b99\u0bcd\u0bb8\u0bcd \u0bb5\u0bbf\u0ba9\u0bcb\u0ba4\u0bcd\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0bcd", "mobile_number": "9003456358", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202543019750", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/005633", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2025-12-29", "can_number": "202543581442", "applicant_name": "\u0b86\u0ba4\u0bbf\u0bb2\u0bc6\u0b9f\u0bcd\u0b9a\u0bc1\u0bae\u0bbf", "mobile_number": "8610379221", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202543581442", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000062", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-01-08", "can_number": "202644069247", "applicant_name": "\u0b9a\u0ba8\u0bcd\u0ba4\u0bbf\u0bb0 \u0bae\u0bcb\u0b95\u0ba9\u0bcd", "mobile_number": "9443145093", "gender": "Male", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202644069247", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1366", "patta_number": "8012", "total_area_sqm": 322.0, "current_stage": "COMPLETED", "declared_reason": "partition", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000648", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-02-23", "can_number": "202645682730", "applicant_name": "\u0baa\u0bbe\u0bb2\u0bcd\u0b95\u0ba9\u0bbf", "mobile_number": "7639041448", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202645682730", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000898", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-03-15", "can_number": "202645473470", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0bb5\u0bc7\u0bb2\u0bcd", "mobile_number": "7904729747", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202645473470", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1355", "patta_number": "7905", "total_area_sqm": 2563.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000899", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-03-15", "can_number": "202645595501", "applicant_name": "\u0b95\u0bae\u0bb2\u0ba4\u0bbe\u0bb8\u0bcd", "mobile_number": "9443374788", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202645595501", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1363", "patta_number": "8011", "total_area_sqm": 14.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001056", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-04-06", "can_number": "202647592643", "applicant_name": "\u0b95\u0bbf\u0bb0\u0bc1\u0bb7\u0bcd\u0ba3\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0bcd", "mobile_number": "9442323581", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202647592643", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001057", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-04-06", "can_number": "202647593502", "applicant_name": "\u0b95\u0bbf\u0bb0\u0bc1\u0bb7\u0bcd\u0ba3\u0b95\u0bc1\u0bae\u0bbe\u0bb0\u0bcd", "mobile_number": "9442323581", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202647593502", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "COMPLETED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001398", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-05-21", "can_number": "202649080412", "applicant_name": "K.\u0bae\u0bc1\u0ba4\u0bcd\u0ba4\u0bc1\u0bb5\u0bc7\u0bb2\u0bcd", "mobile_number": "9442520442", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202649080412", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1369", "patta_number": "7765", "total_area_sqm": 278.5, "current_stage": "COMPLETED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001720", "application_type": "NISD", "current_status": "approved", "submission_channel": "sub_registrar", "submission_date": "2026-06-21", "can_number": "202648399252", "applicant_name": "\u0b86\u0ba9\u0ba8\u0bcd\u0ba4\u0bcd", "mobile_number": "9842330835", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202648399252", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1361", "patta_number": "8061", "total_area_sqm": 3140.0, "current_stage": "COMPLETED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001876", "application_type": "NISD", "current_status": "in_progress", "submission_channel": "sub_registrar", "submission_date": "2026-06-28", "can_number": "202649936652", "applicant_name": "\u0bb0\u0bbe\u0b9c\u0bb0\u0ba4\u0bcd\u0ba4\u0bbf\u0ba9\u0bae\u0bcd", "mobile_number": "9489232323", "gender": null, "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202649936652", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "TAHSILDAR", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/001854", "application_type": "NISD", "current_status": "pending", "submission_channel": "sub_registrar", "submission_date": "2026-06-28", "can_number": "202649535833", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0bb5\u0bc7\u0bb2\u0bcd", "mobile_number": "7904729747", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202649535833", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "002", "survey_no": "1345", "patta_number": "8022", "total_area_sqm": 224.0, "current_stage": "SIS", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2022/0153/28/000463", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2022-06-28", "can_number": "202224708630", "applicant_name": "\u0bb5\u0bc7\u0bb2\u0bcd\u0bae\u0bc1\u0bb0\u0bc1\u0b95\u0ba9\u0bcd", "mobile_number": "9360394571", "gender": null, "occupation": null, "fee_amount": 400.0, "igrs_form6_number": "202224708630", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "20", "patta_number": "59111", "total_area_sqm": 40.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": "00", "payment_mode": "bank"}, {"application_number": "2022/0153/28/001487", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2022-12-30", "can_number": "202227078308", "applicant_name": "\u0b8e\u0bae\u0bbf \u0b95\u0bbf\u0bb0\u0bc7\u0ba9\u0bbe\u0baa\u0bcd\u0baa\u0bc1", "mobile_number": null, "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": 0.0, "igrs_form6_number": "202227078308", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "release", "challan_number": "0", "payment_mode": "bank"}, {"application_number": "2023/0153/28/001535", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-07-27", "can_number": "202328404570", "applicant_name": "\u0bb0\u0bb5\u0bbf \u0b9a\u0bc6\u0bb2\u0bcd\u0bb5\u0bbf", "mobile_number": "9944623246", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202328404570", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "5", "patta_number": "60738", "total_area_sqm": 183.0, "current_stage": "REJECTED", "declared_reason": "sale", "challan_number": null, "payment_mode": null}, {"application_number": "2023/0153/28/002989", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2023-11-22", "can_number": "202330974087", "applicant_name": "Citizen Applicant", "mobile_number": null, "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202330974087", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "102", "survey_no": "6", "patta_number": "59097", "total_area_sqm": 60.0, "current_stage": "REJECTED", "declared_reason": null, "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/001461", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2024-05-17", "can_number": "202434008444", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0ba4\u0bcd\u0ba4\u0bbe\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9976698527", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": null, "igrs_form6_number": "202434008444", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/001462", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2024-05-17", "can_number": "202434009169", "applicant_name": "K.\u0bae\u0bbe\u0ba3\u0bbf\u0b95\u0bcd\u0b95\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9944798733", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": null, "igrs_form6_number": "202434009169", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2024/0153/28/001465", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2024-05-17", "can_number": "202434011388", "applicant_name": "\u0ba4\u0b99\u0bcd\u0b95\u0ba4\u0bcd\u0ba4\u0bbe\u0baf\u0bae\u0bcd\u0bae\u0bbe\u0bb3\u0bcd", "mobile_number": "9976698527", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": null, "igrs_form6_number": "202434011388", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000123", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2025-01-20", "can_number": "202437549691", "applicant_name": "\u0bae\u0bb2\u0bcd\u0bb2\u0bbf\u0b95\u0bbe", "mobile_number": "9600247849", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202437549691", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "85", "patta_number": "60853", "total_area_sqm": 2.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}, {"application_number": "2025/0153/28/000137", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2025-01-20", "can_number": "202537747536", "applicant_name": "\u0bb0\u0bbe\u0b9c\u0ba4\u0bc1\u0bb0\u0bc8", "mobile_number": "9443496418", "gender": null, "occupation": null, "fee_amount": null, "igrs_form6_number": "202537747536", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "90", "patta_number": "60858", "total_area_sqm": 7.0, "current_stage": "REJECTED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000494", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2026-02-09", "can_number": "202644974080", "applicant_name": "\u0baa\u0bbe\u0ba9\u0bc1\u0bae\u0ba4\u0bbf", "mobile_number": "9600220614", "gender": "\u0baa\u0bc6\u0ba3\u0bcd", "occupation": null, "fee_amount": null, "igrs_form6_number": "202644974080", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "release", "challan_number": null, "payment_mode": null}, {"application_number": "2026/0153/28/000515", "application_type": "NISD", "current_status": "rejected", "submission_channel": "sub_registrar", "submission_date": "2026-02-12", "can_number": "202645144610", "applicant_name": "\u0b85\u0bb0\u0bc1\u0ba3\u0bbe\u0b9a\u0bb2\u0bae\u0bcd", "mobile_number": "9043919677", "gender": "\u0b86\u0ba3\u0bcd", "occupation": null, "fee_amount": null, "igrs_form6_number": "202645144610", "submission_source_name": "-", "submission_camp_flag": null, "ward_number": "103", "survey_no": "6", "patta_number": "60742", "total_area_sqm": 165.0, "current_stage": "REJECTED", "declared_reason": "settlement", "challan_number": null, "payment_mode": null}];
+
+const CH_META = {
+  CSC:           { label:'CSC / e-Sevai',        cls:'csc',     icon:'🏪', short:'CSC'     },
+  sub_registrar: { label:'Sub-Registrar (SRO)',   cls:'sro',     icon:'🏛️', short:'SRO'     },
+  citizen:       { label:'Citizen (Camp)',         cls:'citizen', icon:'👤', short:'Citizen' },
+};
+const ST_ICON = { approved:'✅', pending:'⏳', in_progress:'🔄', rejected:'❌' };
+const ST_LABEL = { approved:'Approved', pending:'Pending', in_progress:'In Progress', rejected:'Rejected' };
+const ALL_CH = ['CSC','sub_registrar','citizen'];
+const ALL_TP = ['ISD','NISD'];
+const ALL_ST = ['pending','in_progress','approved','rejected'];
+const COMPLETED_ST = ['approved','rejected'];
+const OPEN_ST = ['pending','in_progress'];
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let activeCh  = new Set(ALL_CH);
+let activeTp  = new Set(ALL_TP);
+let activeSt  = new Set(ALL_ST);
+let searchVal = '';
+let viewMode  = 'all';   // 'all' | 'NISD' | 'ISD'
+let comboView = 'all';
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function fmt_date(d){ return d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—' }
+function fmt_fee(f) { return f ? '₹'+parseFloat(f).toLocaleString('en-IN',{minimumFractionDigits:2}) : '—' }
+function count(data, pred){ return data.filter(pred).length; }
+function by(data, key, val){ return data.filter(r=>r[key]===val); }
+
+// ─── HERO STATS ───────────────────────────────────────────────────────────────
+function renderHero(){
+  const nisd = by(RAW,'application_type','NISD');
+  const isd  = by(RAW,'application_type','ISD');
+  const all  = RAW;
+
+  const items = [
+    {
+      cls:'nisd-hero', icon:'📋', label:'NISD Applications', num: nisd.length, numCls:'nisd-color',
+      chips:[
+        ...OPEN_ST.map(s=>({ st:s, n:by(nisd,'current_status',s).length })).filter(x=>x.n),
+        ...COMPLETED_ST.map(s=>({ st:s, n:by(nisd,'current_status',s).length })).filter(x=>x.n),
+      ],
+      chChips: ALL_CH.map(ch=>({ch, n:by(nisd,'submission_channel',ch).length})).filter(x=>x.n)
+    },
+    {
+      cls:'isd-hero', icon:'🏗️', label:'ISD Applications', num: isd.length, numCls:'isd-color',
+      chips:[
+        ...ALL_ST.map(s=>({ st:s, n:by(isd,'current_status',s).length })).filter(x=>x.n),
+      ],
+      chChips: ALL_CH.map(ch=>({ch, n:by(isd,'submission_channel',ch).length})).filter(x=>x.n)
+    },
+    {
+      cls:'all-hero', icon:'🌐', label:'All Applications', num: all.length, numCls:'all-color',
+      chips: ALL_ST.map(s=>({st:s, n:by(all,'current_status',s).length})).filter(x=>x.n),
+      chChips: ALL_CH.map(ch=>({ch, n:by(all,'submission_channel',ch).length})).filter(x=>x.n)
+    }
+  ];
+
+  document.getElementById('heroStats').innerHTML = items.map(item=>`
+    <div class="hero-card ${item.cls}">
+      <div class="hero-top">
+        <span class="hero-icon">${item.icon}</span>
+        <div>
+          <div class="hero-label">${item.label}</div>
+          <div class="hero-num ${item.numCls}">${item.num}</div>
+        </div>
+      </div>
+      <div class="hero-chips">
+        ${item.chips.map(x=>`<span class="hchip hchip-${x.st}">${ST_ICON[x.st]} ${x.n} ${ST_LABEL[x.st]}</span>`).join('')}
+      </div>
+      <div class="hero-chips" style="margin-top:6px">
+        ${item.chChips.map(x=>`<span class="hchip hchip-${x.ch==='sub_registrar'?'sro':x.ch}">${CH_META[x.ch].icon} ${x.n} ${CH_META[x.ch].short}</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('totalPill').textContent = `${RAW.length} applications`;
+}
+
+// ─── NISD SPOTLIGHT ──────────────────────────────────────────────────────────
+function renderNISDSpotlight(){
+  const nisd = by(RAW,'application_type','NISD');
+  document.getElementById('nisdSubCount').textContent = `${nisd.length} total NISD`;
+
+  // Left: pending+in_progress | Right: approved+rejected
+  const gridEl = document.getElementById('nisdStatusGrid');
+  const makeHalf = (title, cls, statuses) => {
+    const rows = ALL_CH.map(ch=>{
+      const chData = by(nisd,'submission_channel',ch);
+      const items  = statuses.map(st=>({st, n:by(chData,'current_status',st).length})).filter(x=>x.n);
+      const total  = items.reduce((a,b)=>a+b.n,0);
+      return {ch, items, total};
+    }).filter(r=>r.total>0);
+    const maxN = Math.max(...rows.map(r=>r.total),1);
+    const barColors = {pending:'var(--pending)',in_progress:'var(--inprog)',approved:'var(--approved)',rejected:'var(--rejected)'};
+    return `
+      <div class="nisd-half">
+        <div class="nisd-half-title ${cls}">${title === 'Pending / In-Progress' ? '⏳' : '✅'} ${title}</div>
+        ${rows.map(r=>`
+          <div class="nisd-channel-row">
+            <span class="nisd-ch-icon">${CH_META[r.ch].icon}</span>
+            <div style="flex:1">
+              <div style="font-size:12px;font-weight:700;margin-bottom:4px">${CH_META[r.ch].short}</div>
+              <div class="nisd-ch-bars">
+                ${r.items.map(it=>`
+                  <div class="nisd-bar-row">
+                    <span style="width:70px;color:var(--muted)">${ST_LABEL[it.st]}</span>
+                    <div class="nisd-bar-track"><div class="nisd-bar-fill" style="width:${Math.round(it.n/maxN*100)}%;background:${barColors[it.st]}"></div></div>
+                    <span class="nisd-bar-val" style="color:${barColors[it.st]}">${it.n}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+            <div class="nisd-ch-total">${r.total}</div>
+          </div>
+        `).join('')}
+        ${rows.length===0?`<div style="color:var(--muted);font-size:12px;padding:12px 0">None in this state</div>`:''}
+      </div>
+    `;
+  };
+
+  gridEl.innerHTML =
+    makeHalf('Pending / In-Progress','pending-title', OPEN_ST) +
+    makeHalf('Completed (Approved + Rejected)','completed-title', COMPLETED_ST);
+
+  // NISD tables by channel → pending first, then completed
+  const nisdArea = document.getElementById('nisdTablesArea');
+  nisdArea.innerHTML = '';
+
+  // Group: show pending first, then approved, then rejected — per channel
+  const STATUS_ORDER = ['pending','in_progress','approved','rejected'];
+
+  ALL_CH.forEach(ch=>{
+    const chData = nisd.filter(r=>r.submission_channel===ch);
+    if(!chData.length) return;
+    const meta = CH_META[ch];
+
+    // Section header
+    const hdr = document.createElement('div');
+    hdr.innerHTML = `
+      <div class="section-hdr ${meta.cls}" style="margin-top:0;border-top:1px solid var(--border)">
+        <span class="sh-icon">${meta.icon}</span>
+        <span class="sh-label">${meta.label} — NISD</span>
+        <span class="sh-badge">${chData.length} applications</span>
+      </div>
+    `;
+    nisdArea.appendChild(hdr);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tbl-wrap';
+    wrap.style.border = '1px solid var(--border)';
+    wrap.style.borderTop = 'none';
+    wrap.style.borderRadius = '0 0 12px 12px';
+    wrap.style.marginBottom = '16px';
+
+    STATUS_ORDER.forEach(st=>{
+      const stData = chData.filter(r=>r.current_status===st);
+      if(!stData.length) return;
+      const dotCls = st==='in_progress'?'in_progress':st;
+
+      const subHdr = document.createElement('div');
+      subHdr.className='status-sub-hdr';
+      subHdr.innerHTML=`
+        <span class="ssh-dot dot-${dotCls}"></span>
+        <span class="ssh-label ${st==='in_progress'?'in_progress':st}">${st==='in_progress'?'In Progress':ST_LABEL[st]} NISD</span>
+        <span class="ssh-count">${stData.length} records</span>
+      `;
+      wrap.appendChild(subHdr);
+
+      const tbl = buildTable(stData, true);
+      wrap.appendChild(tbl);
+    });
+
+    nisdArea.appendChild(wrap);
+  });
+}
+
+// ─── ISD SECTION ─────────────────────────────────────────────────────────────
+function renderISDSection(){
+  const isd = by(RAW,'application_type','ISD');
+  document.getElementById('isdTotalBadge').textContent = `${isd.length} total`;
+  const area = document.getElementById('isdTablesArea');
+  area.innerHTML = '';
+
+  ALL_CH.forEach(ch=>{
+    const chData = isd.filter(r=>r.submission_channel===ch);
+    if(!chData.length) return;
+    const meta = CH_META[ch];
+
+    const hdr = document.createElement('div');
+    hdr.innerHTML = `
+      <div class="section-hdr ${meta.cls}">
+        <span class="sh-icon">${meta.icon}</span>
+        <span class="sh-label">${meta.label} — ISD</span>
+        <span class="sh-badge">${chData.length} applications</span>
+      </div>
+    `;
+    area.appendChild(hdr);
+
+    const wrap = document.createElement('div');
+    wrap.className='tbl-wrap';
+    wrap.style.border='1px solid var(--border)';
+    wrap.style.borderTop='none';
+    wrap.style.borderRadius='0 0 12px 12px';
+    wrap.style.marginBottom='16px';
+
+    ['pending','in_progress','approved','rejected'].forEach(st=>{
+      const stData = chData.filter(r=>r.current_status===st);
+      if(!stData.length) return;
+      const hdr2 = document.createElement('div');
+      hdr2.className='status-sub-hdr';
+      hdr2.innerHTML=`
+        <span class="ssh-dot dot-${st==='in_progress'?'in_progress':st}"></span>
+        <span class="ssh-label ${st==='in_progress'?'in_progress':st}">${ST_LABEL[st]} ISD</span>
+        <span class="ssh-count">${stData.length} records</span>
+      `;
+      wrap.appendChild(hdr2);
+      wrap.appendChild(buildTable(stData, false));
+    });
+    area.appendChild(wrap);
+  });
+}
+
+// ─── TABLE BUILDER ────────────────────────────────────────────────────────────
+function buildTable(data, isNISD){
+  const tbl = document.createElement('table');
+  tbl.innerHTML=`
+    <thead><tr>
+      <th>#</th>
+      <th>Application No.</th>
+      <th>Type</th>
+      <th>Status</th>
+      <th>Channel</th>
+      <th>Applicant</th>
+      <th>Mobile</th>
+      <th>Ward</th>
+      <th>Survey No.</th>
+      <th>CAN</th>
+      <th>Date</th>
+      <th>Fee</th>
+      <th>${isNISD?'IGRS Form6':'Current Stage'}</th>
+      <th>Source</th>
+    </tr></thead>
+    <tbody></tbody>
+  `;
+  const tbody = tbl.querySelector('tbody');
+  if(!data.length){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td colspan="14" class="empty-state" style="border:none;background:none">No records</td>`;
+    tbody.appendChild(tr);
+    return tbl;
+  }
+  data.forEach((r,i)=>{
+    const chMeta = CH_META[r.submission_channel]||{icon:'📄',cls:'csc',short:r.submission_channel};
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td class="muted" style="font-size:11px">${i+1}</td>
+      <td><span class="app-link" onclick='showDetail(${JSON.stringify(JSON.stringify(r))})'>${r.application_number}</span></td>
+      <td><span class="badge b-${r.application_type}">${r.application_type}</span></td>
+      <td><span class="badge b-${r.current_status}">${ST_ICON[r.current_status]||''} ${ST_LABEL[r.current_status]||r.current_status}</span></td>
+      <td><span class="badge b-${r.submission_channel==='sub_registrar'?'sro':r.submission_channel}">${chMeta.icon} ${chMeta.short}</span></td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.applicant_name||''}">${r.applicant_name||'—'}</td>
+      <td class="mono muted">${r.mobile_number||'—'}</td>
+      <td><span class="ward-c">W-${r.ward_number||'?'}</span></td>
+      <td><span class="sno-c">${r.survey_no||'—'}</span></td>
+      <td class="mono muted" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.can_number||'—'}</td>
+      <td class="mono muted">${fmt_date(r.submission_date)}</td>
+      <td class="fee">${fmt_fee(r.fee_amount)}</td>
+      <td>${isNISD
+            ? (r.igrs_form6_number?`<span class="igrs-c">${r.igrs_form6_number}</span>`:'<span class="muted">—</span>')
+            : `<span class="stage-c">${r.current_stage||'—'}</span>`}</td>
+      <td class="mono muted" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.submission_source_name||''}">${r.submission_source_name||'—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  return tbl;
+}
+
+// ─── CHANNEL CARDS ────────────────────────────────────────────────────────────
+function renderChannelCards(){
+  const el = document.getElementById('channelCards');
+  el.innerHTML = '';
+  ALL_CH.forEach(ch=>{
+    const meta = CH_META[ch];
+    const chData = by(RAW,'submission_channel',ch);
+    const nisdN = by(chData,'application_type','NISD').length;
+    const isdN  = by(chData,'application_type','ISD').length;
+    const maxTP = Math.max(nisdN,isdN,1);
+    const stChips = ALL_ST.map(s=>({s, n:by(chData,'current_status',s).length})).filter(x=>x.n);
+
+    const card = document.createElement('div');
+    card.className=`ch-card ${meta.cls} ${activeCh.has(ch)?'ch-active':''}`;
+    card.id=`chCard_${ch}`;
+    card.onclick=()=>toggleChannelCard(ch);
+    card.innerHTML=`
+      <div class="ch-card-bar"></div>
+      <div class="ch-card-body">
+        <div class="ch-card-top">
+          <span class="ch-icon">${meta.icon}</span>
+          <div>
+            <div class="ch-name">${meta.label}</div>
+            <div class="ch-desc">${ch==='sub_registrar'?'IGRS auto-mutation · No operator':ch==='CSC'?'Common Service Centre / e-Sevai':'Revenue camp filing'}</div>
+          </div>
+          <div class="ch-total">${chData.length}</div>
+        </div>
+        <div class="ch-type-grid">
+          <div class="ch-type-row">
+            <span class="ch-type-label" style="color:var(--nisd)">NISD</span>
+            <div class="ch-track"><div class="ch-fill ch-fill-nisd" style="width:${Math.round(nisdN/maxTP*100)}%"></div></div>
+            <span class="ch-type-count" style="color:var(--nisd)">${nisdN}</span>
+          </div>
+          <div class="ch-type-row">
+            <span class="ch-type-label" style="color:var(--isd)">ISD</span>
+            <div class="ch-track"><div class="ch-fill ch-fill-isd" style="width:${Math.round(isdN/maxTP*100)}%"></div></div>
+            <span class="ch-type-count" style="color:var(--isd)">${isdN}</span>
+          </div>
+        </div>
+        <div class="ch-status-pills">
+          ${stChips.map(x=>`<span class="badge b-${x.s}">${ST_ICON[x.s]} ${x.n} ${ST_LABEL[x.s]}</span>`).join('')}
+        </div>
+      </div>
+    `;
+    el.appendChild(card);
+  });
+}
+function toggleChannelCard(ch){
+  if(activeCh.has(ch)){ if(activeCh.size>1){ activeCh.delete(ch); } }
+  else { activeCh.add(ch); }
+  renderChannelCards();
+  renderFilters();
+  renderMainTables();
+}
+
+// ─── FILTER BUTTONS ──────────────────────────────────────────────────────────
+function renderFilters(){
+  // Channel
+  const chEl=document.getElementById('chF'); chEl.innerHTML='';
+  [['CSC','CSC'],['sub_registrar','SRO'],['citizen','Citizen']].forEach(([val,lbl])=>{
+    const b=document.createElement('button');
+    b.className=`fb ch-${val} ${activeCh.has(val)?'on':''}`;
+    b.textContent=lbl;
+    b.onclick=()=>toggleFilter(activeCh,val,b,'ch');
+    chEl.appendChild(b);
+  });
+  // Type
+  const tpEl=document.getElementById('tpF'); tpEl.innerHTML='';
+  ['NISD','ISD'].forEach(tp=>{
+    const b=document.createElement('button');
+    b.className=`fb tp-${tp} ${activeTp.has(tp)?'on':''}`;
+    b.textContent=tp;
+    b.onclick=()=>toggleFilter(activeTp,tp,b,'tp');
+    tpEl.appendChild(b);
+  });
+  // Status
+  const stEl=document.getElementById('stF'); stEl.innerHTML='';
+  [['pending','Pending'],['in_progress','In Progress'],['approved','Approved'],['rejected','Rejected']].forEach(([val,lbl])=>{
+    const b=document.createElement('button');
+    b.className=`fb st-${val} ${activeSt.has(val)?'on':''}`;
+    b.textContent=lbl;
+    b.onclick=()=>toggleFilter(activeSt,val,b,'st');
+    stEl.appendChild(b);
+  });
+}
+function toggleFilter(set,val,btn,kind){
+  if(set.has(val)){ if(set.size>1){ set.delete(val); btn.classList.remove('on'); } }
+  else { set.add(val); btn.classList.add('on'); }
+  if(kind==='ch') renderChannelCards();
+  renderMainTables();
+}
+
+// ─── VIEW MODE ───────────────────────────────────────────────────────────────
+function setViewMode(mode){
+  viewMode=mode;
+  ['all','NISD','ISD'].forEach(m=>{
+    const el=document.getElementById(`tt${m==='all'?'All':m}`);
+    if(el) el.classList.toggle('tt-on',m===mode);
+  });
+  renderMainTables();
+}
+
+// ─── MAIN TABLES ─────────────────────────────────────────────────────────────
+function renderMainTables(){
+  let data = RAW.filter(r=>
+    activeCh.has(r.submission_channel) &&
+    activeTp.has(r.application_type) &&
+    activeSt.has(r.current_status) &&
+    (!searchVal ||
+      (r.application_number||'').toLowerCase().includes(searchVal)||
+      (r.applicant_name||'').toLowerCase().includes(searchVal)||
+      (r.can_number||'').toLowerCase().includes(searchVal)||
+      (r.mobile_number||'').toLowerCase().includes(searchVal)
+    )
+  );
+  if(viewMode!=='all') data=data.filter(r=>r.application_type===viewMode);
+
+  document.getElementById('fcount').textContent = `${data.length} record${data.length!==1?'s':''}`;
+  const area=document.getElementById('tablesArea');
+  area.innerHTML='';
+
+  if(!data.length){
+    area.innerHTML='<div class="empty-state">⚠️ No applications match the current filters.</div>';
+    return;
+  }
+
+  const channels=[...activeCh].sort();
+  channels.forEach(ch=>{
+    const chData = data.filter(r=>r.submission_channel===ch);
+    if(!chData.length) return;
+    const meta=CH_META[ch];
+
+    const hdr=document.createElement('div');
+    hdr.innerHTML=`<div class="section-hdr ${meta.cls}">
+      <span class="sh-icon">${meta.icon}</span>
+      <span class="sh-label">${meta.label}</span>
+      <span class="sh-badge">${chData.length} records</span>
+    </div>`;
+    area.appendChild(hdr);
+
+    const wrap=document.createElement('div');
+    wrap.className='tbl-wrap';
+    wrap.style.border='1px solid var(--border)';
+    wrap.style.borderTop='none';
+    wrap.style.borderRadius='0 0 12px 12px';
+    wrap.style.marginBottom='16px';
+
+    // Group by status in a sensible order
+    ['pending','in_progress','approved','rejected'].forEach(st=>{
+      if(!activeSt.has(st)) return;
+      const stData=chData.filter(r=>r.current_status===st);
+      if(!stData.length) return;
+      const subHdr=document.createElement('div');
+      subHdr.className='status-sub-hdr';
+      subHdr.innerHTML=`
+        <span class="ssh-dot dot-${st==='in_progress'?'in_progress':st}"></span>
+        <span class="ssh-label ${st==='in_progress'?'in_progress':st}">${ST_LABEL[st]}</span>
+        <span class="ssh-count">${stData.length} records</span>
+      `;
+      wrap.appendChild(subHdr);
+      wrap.appendChild(buildTable(stData, false));
+    });
+    area.appendChild(wrap);
+  });
+}
+
+// ─── COMBINATION MATRIX ───────────────────────────────────────────────────────
+function buildCombos(){
+  const all=[];
+  const nisd=by(RAW,'application_type','NISD');
+  const isd =by(RAW,'application_type','ISD');
+
+  // Per channel per type with status breakdown
+  ALL_CH.forEach(ch=>{
+    ['NISD','ISD'].forEach(tp=>{
+      const d=RAW.filter(r=>r.submission_channel===ch&&r.application_type===tp);
+      if(!d.length) return;
+      const pending=OPEN_ST.reduce((a,s)=>a+by(d,'current_status',s).length,0);
+      const completed=COMPLETED_ST.reduce((a,s)=>a+by(d,'current_status',s).length,0);
+      const chips=[
+        ...OPEN_ST.map(s=>({cl:s,label:`${ST_LABEL[s]}: ${by(d,'current_status',s).length}`})).filter(x=>x.label.slice(-1)!=='0'),
+        ...COMPLETED_ST.map(s=>({cl:s,label:`${ST_LABEL[s]}: ${by(d,'current_status',s).length}`})).filter(x=>x.label.slice(-1)!=='0'),
+      ];
+      all.push({
+        view:tp, multiView:false,
+        label:`${CH_META[ch].short} × ${tp}`,
+        icon:`${CH_META[ch].icon}`,
+        count:d.length, chips,
+        sub:[`Open: ${pending}`,`Completed: ${completed}`],
+        comboClass:tp==='NISD'?'nisd-combo':'isd-combo',
+        filter:()=>{ activeCh=new Set([ch]); activeTp=new Set([tp]); activeSt=new Set(ALL_ST); renderChannelCards();renderFilters();renderMainTables(); setViewMode(tp); document.getElementById('channel-view').scrollIntoView({behavior:'smooth'}); }
+      });
+    });
+  });
+
+  // Per channel all types
+  ALL_CH.forEach(ch=>{
+    const d=by(RAW,'submission_channel',ch);
+    const chips=ALL_TP.map(tp=>({cl:'',label:`${tp}: ${by(d,'application_type',tp).length}`}));
+    all.push({
+      view:'ch', multiView:false,
+      label:`${CH_META[ch].short} — All`,
+      icon:CH_META[ch].icon, count:d.length, chips,
+      sub:ALL_ST.map(s=>`${ST_LABEL[s]}: ${by(d,'current_status',s).length}`),
+      comboClass:'multi-combo',
+      filter:()=>{ activeCh=new Set([ch]); activeTp=new Set(ALL_TP); activeSt=new Set(ALL_ST); renderChannelCards();renderFilters();renderMainTables(); setViewMode('all'); document.getElementById('channel-view').scrollIntoView({behavior:'smooth'}); }
+    });
+  });
+
+  // Multi-channel NISD: CSC+SRO, CSC+Citizen, SRO+Citizen, All
+  [
+    {key:'csc_sro',     chs:['CSC','sub_registrar'], lbl:'CSC + SRO',      icon:'🏪🏛️'},
+    {key:'csc_cit',     chs:['CSC','citizen'],        lbl:'CSC + Citizen',  icon:'🏪👤'},
+    {key:'sro_cit',     chs:['sub_registrar','citizen'],lbl:'SRO + Citizen',icon:'🏛️👤'},
+    {key:'all3',        chs:ALL_CH,                   lbl:'All Channels',   icon:'🌐'},
+  ].forEach(g=>{
+    ALL_TP.forEach(tp=>{
+      const d=RAW.filter(r=>g.chs.includes(r.submission_channel)&&r.application_type===tp);
+      if(!d.length) return;
+      const pending=OPEN_ST.reduce((a,s)=>a+by(d,'current_status',s).length,0);
+      const completed=COMPLETED_ST.reduce((a,s)=>a+by(d,'current_status',s).length,0);
+      all.push({
+        view:'multi', multiView:true,
+        label:`${g.lbl} × ${tp}`,
+        icon:g.icon, count:d.length,
+        chips:[{cl:'pending',label:`Open: ${pending}`},{cl:'completed',label:`Completed: ${completed}`}],
+        sub:ALL_ST.map(s=>({cl:s,label:`${ST_LABEL[s]}: ${by(d,'current_status',s).length}`})).filter(x=>x.label.slice(-1)!=='0').map(x=>x.label),
+        comboClass:tp==='NISD'?'nisd-combo':'isd-combo',
+        filter:()=>{ activeCh=new Set(g.chs); activeTp=new Set([tp]); activeSt=new Set(ALL_ST); renderChannelCards();renderFilters();renderMainTables(); setViewMode(tp); document.getElementById('channel-view').scrollIntoView({behavior:'smooth'}); }
+      });
+    });
+    // all types
+    const d=RAW.filter(r=>g.chs.includes(r.submission_channel));
+    if(d.length){
+      all.push({
+        view:'multi', multiView:true,
+        label:`${g.lbl} — All Types`,
+        icon:g.icon, count:d.length,
+        chips:ALL_TP.map(tp=>({cl:'',label:`${tp}: ${by(d,'application_type',tp).length}`})),
+        sub:ALL_ST.map(s=>`${ST_LABEL[s]}: ${by(d,'current_status',s).length}`),
+        comboClass:'multi-combo',
+        filter:()=>{ activeCh=new Set(g.chs); activeTp=new Set(ALL_TP); activeSt=new Set(ALL_ST); renderChannelCards();renderFilters();renderMainTables(); setViewMode('all'); document.getElementById('channel-view').scrollIntoView({behavior:'smooth'}); }
+      });
+    }
+  });
+
+  return all;
+}
+
+let allCombos = [];
+function setComboView(v, btn){
+  comboView=v;
+  document.querySelectorAll('.ctab').forEach(el=>el.classList.remove('ctab-on'));
+  btn.classList.add('ctab-on');
+  renderComboGrid();
+}
+function renderComboGrid(){
+  const grid=document.getElementById('comboGrid');
+  grid.innerHTML='';
+  let items=allCombos;
+  if(comboView==='NISD') items=items.filter(c=>c.label.includes('NISD'));
+  else if(comboView==='ISD') items=items.filter(c=>c.label.includes('ISD')||c.label.includes('All'));
+  else if(comboView==='multi') items=items.filter(c=>c.multiView);
+
+  items.forEach(c=>{
+    const card=document.createElement('div');
+    card.className=`combo-card ${c.comboClass}`;
+    card.onclick=c.filter;
+    card.innerHTML=`
+      <div class="combo-card-label"><span>${c.icon}</span><span>${c.label}</span></div>
+      <div class="combo-card-count">${c.count}</div>
+      <div class="combo-chips">${c.chips.map(ch=>typeof ch==='string'?`<span class="cc">${ch}</span>`:`<span class="cc ${ch.cl||''}">${ch.label}</span>`).join('')}</div>
+      <div class="combo-chips" style="margin-top:4px">${(c.sub||[]).map(s=>typeof s==='string'?`<span class="cc">${s}</span>`:`<span class="cc ${s.cl||''}">${s.label}</span>`).join('')}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// ─── DETAIL DRAWER ────────────────────────────────────────────────────────────
+function showDetail(jsonStr){
+  const r=JSON.parse(jsonStr);
+  const chMeta=CH_META[r.submission_channel]||{icon:'📄',label:r.submission_channel};
+  document.getElementById('drawerHdr').innerHTML=`
+    <div class="drawer-hdr-title">${r.application_number}</div>
+    <span class="badge b-${r.application_type}">${r.application_type}</span>
+    <span class="badge b-${r.current_status}">${ST_ICON[r.current_status]||''} ${ST_LABEL[r.current_status]||r.current_status}</span>
+    <span class="badge b-${r.submission_channel==='sub_registrar'?'sro':r.submission_channel}">${chMeta.icon} ${chMeta.label}</span>
+  `;
+  const fields=[
+    ['Application No.', r.application_number],
+    ['Type', r.application_type],
+    ['Status', ST_LABEL[r.current_status]||r.current_status],
+    ['Channel', chMeta.label],
+    ['Submission Date', fmt_date(r.submission_date)],
+    ['Applicant Name', r.applicant_name||'—'],
+    ['Mobile', r.mobile_number||'—'],
+    ['Gender', r.gender||'—'],
+    ['Occupation', r.occupation||'—'],
+    ['CAN Number', r.can_number||'—'],
+    ['Ward', r.ward_number?`Ward ${r.ward_number}`:'—'],
+    ['Survey No.', r.survey_no||'—'],
+    ['Patta No.', r.patta_number||'—'],
+    ['Area (sqm)', r.total_area_sqm||'—'],
+    ['Fee Amount', fmt_fee(r.fee_amount)],
+    ['Payment Mode', r.payment_mode||'—'],
+    ['Challan No.', r.challan_number||'—'],
+    ['IGRS Form6', r.igrs_form6_number||'—'],
+    ['Current Stage', r.current_stage||'—'],
+    ['Declared Reason', r.declared_reason||'—'],
+    ['Source Name', r.submission_source_name||'—'],
+    ['Camp Flag', r.submission_camp_flag||'—'],
+  ];
+  document.getElementById('drawerGrid').innerHTML=fields.map(([l,v])=>`
+    <div class="df"><div class="df-label">${l}</div><div class="df-val">${v}</div></div>
+  `).join('');
+  document.getElementById('overlay').classList.add('open');
+}
+function closeDrawer(){document.getElementById('overlay').classList.remove('open')}
+document.getElementById('overlay').addEventListener('click',function(e){if(e.target===this)closeDrawer()});
+
+// ─── SEARCH ───────────────────────────────────────────────────────────────────
+document.getElementById('searchBox').addEventListener('input',function(){
+  searchVal=this.value.toLowerCase().trim();
+  renderMainTables();
+});
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+renderHero();
+renderNISDSpotlight();
+renderISDSection();
+renderChannelCards();
+renderFilters();
+renderMainTables();
+allCombos=buildCombos();
+renderComboGrid();
+</script>
+</body>
+</html>

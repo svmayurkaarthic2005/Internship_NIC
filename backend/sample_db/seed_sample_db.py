@@ -31,6 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import psycopg2
 from psycopg2.extras import execute_values
 
+from dbconn import conn_params
 from identifiers import aadhaar_for
 from schema_builder import (SAMPLE_TABLE_DIR, TABLE_NAMES, build_ddl,
                             read_header, table_specs)
@@ -39,7 +40,6 @@ from schema_builder import (SAMPLE_TABLE_DIR, TABLE_NAMES, build_ddl,
 csv.field_size_limit(1 << 30)
 
 DB_NAME = "sis_chatbot_db"
-CONN = dict(host="127.0.0.1", port=5432, user="postgres", password="Mayur@2005")
 
 BATCH = 2000
 
@@ -120,7 +120,7 @@ def load_table(cur, csv_name: str, table: str, cols: list[tuple[str, str]],
 # --- driver ---------------------------------------------------------------
 
 def create_database() -> None:
-    conn = psycopg2.connect(dbname="postgres", **CONN)
+    conn = psycopg2.connect(**conn_params("postgres"))
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
@@ -145,7 +145,7 @@ def main() -> None:
     create_database()
     specs = table_specs()
 
-    conn = psycopg2.connect(dbname=DB_NAME, **CONN)
+    conn = psycopg2.connect(**conn_params(DB_NAME))
     conn.autocommit = False
     with conn.cursor() as cur:
         cur.execute(build_ddl())

@@ -35,6 +35,7 @@ __all__ = [
     "match_phrase",
     "match_deterministic_code",
     "extract_month_from_text",
+    "normalize_relative_date_tokens",
     "MONTH_PATTERNS",
 ]
 
@@ -513,3 +514,118 @@ def extract_month_from_text(text: Any) -> Optional[int]:
             return month
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Relative date phrase normalization
+# ─────────────────────────────────────────────────────────────────────────────
+# "lastt month", "this weak", "yestarday" — the date phrases in
+# services/rag.py are matched as literal strings, so a single typo made the
+# whole scope disappear (the query silently answered for all time instead).
+# Month names already tolerate typos via extract_month_from_text; these do the
+# same for the relative phrases.
+#
+# Precision rule: a qualifier ("last", "this", …) is only corrected when the
+# token beside it is a period word ("month", "week", …), optionally with a
+# count between them ("last 30 dayz"). That two-token requirement is what keeps
+# "list applications" from being rewritten to "last applications" — 'list' is
+# one edit from 'last', but 'applications' is not a period word.
+_REL_DATE_QUALIFIERS = (
+    "last", "past", "previous", "prev", "this", "next", "current",
+    "preceding", "coming", "upcoming",
+)
+_REL_DATE_PERIODS = (
+    "day", "days", "week", "weeks", "fortnight", "month", "months",
+    "quarter", "quarters", "year", "years",
+)
+# Standalone day words carry their own meaning and need no neighbour.
+_REL_DATE_STANDALONE = (
+    "today", "tonight", "yesterday", "tomorrow", "onwards",
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+)
+# Words that are legitimate domain vocabulary and must never be "corrected"
+# into a date token, however close the edit distance.
+_REL_DATE_PROTECTED = frozenset({
+    "list", "lists", "listed", "least", "lost", "post", "part", "parts",
+    "pass", "passed", "text", "test", "tests", "next",  # 'next' is itself canonical
+    "these", "those", "that", "than", "then", "thus", "his", "is",
+    "wear", "year",  # 'year' is itself canonical
+    "day", "days", "week", "month", "year",  # canonical periods
+    "quarter", "quarters",
+})
+
+
+def _canonical_rel_token(token: str, vocabulary: Sequence[str]) -> Optional[str]:
+    """Canonical spelling for `token` within `vocabulary`, or None."""
+    if token in vocabulary:
+        return token
+    if token in _REL_DATE_PROTECTED:
+        return None
+    return resolve_unique_match(
+        token, {word: word for word in vocabulary}, keys_normalized=True
+    )
+
+
+def normalize_relative_date_tokens(text: Any) -> str:
+    """
+    Repair typos in relative date phrases, leaving everything else untouched.
+
+    "how many appications did i approve lastt month" →
+    "how many appications did i approve last month"
+
+    Returns the text unchanged (apart from the repairs) so callers can keep
+    matching their existing literal phrase lists against the result.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    matches = list(_TOKEN_RE.finditer(text))
+    if not matches:
+        return text
+
+    tokens = [m.group(0).lower() for m in matches]
+    replacements: Dict[int, str] = {}
+
+    for idx, token in enumerate(tokens):
+        if idx in replacements:
+            continue
+        # Standalone day words: "yestarday", "tommorow", "todya"
+        canonical = _canonical_rel_token(token, _REL_DATE_STANDALONE)
+        if canonical:
+            if canonical != token:
+                replacements[idx] = canonical
+            continue
+
+        qualifier = _canonical_rel_token(token, _REL_DATE_QUALIFIERS)
+        if not qualifier:
+            continue
+        # The period word sits next to the qualifier, or one count token away
+        # ("last 30 days").
+        for offset in (1, 2):
+            nxt = idx + offset
+            if nxt >= len(tokens):
+                break
+            if offset == 2 and not tokens[idx + 1].isdigit():
+                break
+            period = _canonical_rel_token(tokens[nxt], _REL_DATE_PERIODS)
+            if period:
+                if qualifier != token:
+                    replacements[idx] = qualifier
+                if period != tokens[nxt]:
+                    replacements[nxt] = period
+                break
+
+    if not replacements:
+        return text
+
+    out, cursor = [], 0
+    for idx, m in enumerate(matches):
+        if idx not in replacements:
+            continue
+        out.append(text[cursor:m.start()])
+        out.append(replacements[idx])
+        cursor = m.end()
+    out.append(text[cursor:])
+    return "".join(out)

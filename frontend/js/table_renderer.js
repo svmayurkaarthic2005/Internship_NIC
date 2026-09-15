@@ -43,10 +43,15 @@ const DISTRICT_CODES = {
     "31": "Krishnagiri",
     "32": "Tiruppur",
     "33": "Kallakurichi",
-    "34": "Chengalpattu",
-    "35": "Ranipet",
+    // Codes 34/35/37 were rotated against the department's own master
+    // (district_unicode, loaded from the TAMILNILAM district.sql dump), which
+    // reads 34 = Tenkasi, 35 = Chengalpattu, 37 = Ranipet. A wrong entry here
+    // does not blank the field, it prints somebody else's district onto a land
+    // record. Keep this table in step with backend/config.py DISTRICT_CODE_MAP.
+    "34": "Tenkasi",
+    "35": "Chengalpattu",
     "36": "Tirupathur",
-    "37": "Tenkasi",
+    "37": "Ranipet",
     "38": "Mayiladuthurai"
 };
 
@@ -119,8 +124,8 @@ const TAMIL_LABELS = {
     'App No':             'விண்ணப்ப எண்',
     'Applicant':          'விண்ணப்பதாரர்',
     'Survey No':          'கணக்கெண்',
-    'Temp Sub Div (SIS)': 'தற்காலிக உட்பிரிவு (SIS)',
-    'Fixed Sub Div (DIS)':'நிரந்தர உட்பிரிவு (DIS)',
+    'Temp Sub Div': 'தற்காலிக உட்பிரிவு',
+    'Final Sub Div': 'இறுதி உட்பிரிவு',
     'Stage':              'கட்டம்',
     'Days Pending':       'நிலுவையில் உள்ள நாட்கள்',
     'Priority':           'முன்னுரிமை',
@@ -274,55 +279,47 @@ function prepareApplicationsTable(data, isTamil = false) {
     const isFvDetail = apps.length > 0 && ('applicant_name' in apps[0] || 'days_pending' in apps[0]);
 
     if (isFvDetail) {
-        // === Single record: show as full detail card ===
-        if (apps.length === 1) {
-            const app = apps[0];
-            const engCols = ['Field', 'Value'];
-            const tamCols = _translateCols(engCols, isTamil);
-            const fld = (k) => _th(k, isTamil);
-            const rows = [
-                { [tamCols[0]]: fld('App No'),                  [tamCols[1]]: app.application_number  || 'N/A' },
-                { [tamCols[0]]: fld('Applicant'),               [tamCols[1]]: app.applicant_name      || 'N/A' },
-                { [tamCols[0]]: fld('Survey No'),               [tamCols[1]]: app.survey_no           || 'N/A' },
-                { [tamCols[0]]: fld('Temp Sub Div (SIS)'),      [tamCols[1]]: app.sis_temp_sub_div    || 'N/A' },
-                { [tamCols[0]]: fld('Fixed Sub Div (DIS)'),     [tamCols[1]]: app.dis_fixed_sub_div   || 'N/A' },
-                { [tamCols[0]]: fld('Town'),                    [tamCols[1]]: app.town_name           || 'N/A' },
-                { [tamCols[0]]: fld('Ward'),                    [tamCols[1]]: app.ward_number  ? `Ward ${app.ward_number}`   : 'N/A' },
-                { [tamCols[0]]: fld('Block'),                   [tamCols[1]]: app.block_number ? `Block ${app.block_number}` : 'N/A' },
-                { [tamCols[0]]: fld('Stage'),                   [tamCols[1]]: app.current_stage   || 'N/A' },
-                { [tamCols[0]]: fld('Status'),                  [tamCols[1]]: app.current_status  || 'N/A' },
-                { [tamCols[0]]: fld('Submitted Date'),          [tamCols[1]]: app.submission_date ? new Date(app.submission_date).toLocaleDateString() : 'N/A' },
-                { [tamCols[0]]: fld('Days Pending'),            [tamCols[1]]: app.days_pending ?? 'N/A' },
-                { [tamCols[0]]: fld('Priority'),                [tamCols[1]]: app.priority || 'Normal' },
-            ];
-            return {
-                title: data.query_type || 'Application Details',
-                columns: tamCols,
-                rows: rows,
-                icon: '📋',
-                disablePagination: true
-            };
-        }
+        // A single unassigned/priority application used to switch to a
+        // Field/Value detail card instead of this table -- inconsistent
+        // with every other listing in the app (a one-row result from any
+        // other query still gets the normal columns), and its count badge
+        // read "N records" using the number of FIELD rows (11-13), not
+        // applications: "1 application awaiting scheduling" in the text
+        // right above it, "11 records" on the table right below it, both
+        // describing the same single application. Always the wide table
+        // now, whatever the row count -- see `prepareApplicationDetailTable`
+        // a few functions down for the genuine single-application detail
+        // view (asking about ONE named application, not a list that
+        // happens to have one row).
 
-        // === Multiple records: show as wide table ===
-        const engCols = ['App No', 'Applicant', 'Survey No', 'Temp Sub Div (SIS)', 'Fixed Sub Div (DIS)',
-                         'Town', 'Ward', 'Block', 'Stage', 'Status', 'Days Pending', 'Priority'];
+        // === Show as wide table ===
+        // Only show Temp/Final Sub Div columns when at least one ISD/MERGE app is present.
+        const hasIsdOrMerge = apps.some(a => a.application_type === 'ISD' || a.application_type === 'MERGE'
+                                           || a.type === 'ISD' || a.type === 'MERGE');
+        const baseEngCols = ['App No', 'Applicant', 'Survey No'];
+        if (hasIsdOrMerge) baseEngCols.push('Temp Sub Div', 'Final Sub Div');
+        baseEngCols.push('Town', 'Ward', 'Block', 'Stage', 'Status', 'Days Pending', 'Priority');
+        const engCols = baseEngCols;
         const tamCols = _translateCols(engCols, isTamil);
         const rows = apps.map(app => {
+            const isIsd = app.application_type === 'ISD' || app.application_type === 'MERGE'
+                       || app.type === 'ISD' || app.type === 'MERGE';
             const r = {
-                'App No':                app.application_number || 'N/A',
-                'Applicant':             app.applicant_name     || 'N/A',
-                'Survey No':             app.survey_no          || 'N/A',
-                'Temp Sub Div (SIS)':    app.sis_temp_sub_div   || 'N/A',
-                'Fixed Sub Div (DIS)':   app.dis_fixed_sub_div  || 'N/A',
-                'Town':                  app.town_name          || 'N/A',
-                'Ward':                  app.ward_number  ? `Ward ${app.ward_number}`   : 'N/A',
-                'Block':                 app.block_number ? `Block ${app.block_number}` : 'N/A',
-                'Stage':                 app.current_stage  || 'N/A',
-                'Status':                app.current_status || 'N/A',
-                'Days Pending':          app.days_pending ?? 'N/A',
-                'Priority':              app.priority || 'Normal'
+                'App No':         app.application_number || 'N/A',
+                'Applicant':      app.applicant_name     || 'N/A',
+                'Survey No':      app.survey_no          || 'N/A',
+                'Town':           app.town_name          || 'N/A',
+                'Ward':           app.ward_number  ? `Ward ${app.ward_number}`   : 'N/A',
+                'Block':          app.block_number ? `Block ${app.block_number}` : 'N/A',
+                'Stage':          app.current_stage  || 'N/A',
+                'Status':         app.current_status || 'N/A',
+                'Days Pending':   app.days_pending ?? 'N/A',
+                'Priority':       app.priority || 'Normal'
             };
+            if (hasIsdOrMerge) {
+                r['Temp Sub Div']  = isIsd ? (app.sis_temp_sub_div  || 'Not assigned') : '-';
+                r['Final Sub Div'] = isIsd ? (app.dis_fixed_sub_div || 'Not assigned') : '-';
+            }
             return _translateRow(r, engCols, tamCols);
         });
         return {
@@ -333,15 +330,28 @@ function prepareApplicationsTable(data, isTamil = false) {
         };
     }
 
-    // Standard style
-    const engCols = ['Application Number', 'Type', 'Survey Number', 'Sub-Divisions', 'District', 'Taluk', 'Town', 'Ward', 'Block', 'Status', 'Stage', 'Submitted Date'];
+    // Standard style. Location columns are trimmed to what actually varies for
+    // this officer's jurisdiction level -- the same rule build_html_response
+    // follows for every other listing in the app (backend/services/rag.py).
+    // Showing District/Taluk/Town on every row for a ward-level officer just
+    // repeats the same value down the whole column and pushes the table into
+    // horizontal scroll for no reason.
+    // District is always shown too -- an officer still wants to see which
+    // district the row belongs to even when it's the same on every line.
+    const jType = (data.jurisdiction_type || 'block').toLowerCase();
+    const locCols = jType === 'district' ? ['District', 'Taluk', 'Town', 'Ward', 'Block']
+        : jType === 'taluk' ? ['District', 'Taluk', 'Town', 'Ward', 'Block']
+        : jType === 'town'  ? ['District', 'Town', 'Ward', 'Block']
+        : jType === 'ward'  ? ['District', 'Ward', 'Block']
+        : ['District', 'Block'];
+    const engCols = ['Application Number', 'Type', 'Survey Number', 'Sub-Divisions', ...locCols, 'Status', 'Stage', 'Submitted Date'];
     const tamCols = _translateCols(engCols, isTamil);
     const rows = apps.map(app => {
         const jur = app.jurisdiction || {};
         const getVal = (primary, secondary) => (primary && primary !== 'N/A') ? primary : ((secondary && secondary !== 'N/A') ? secondary : 'N/A');
 
         const rawBlock = (jur.block && jur.block !== 'N/A') ? jur.block : (app.block_number || app.block);
-        const blockVal = rawBlock && rawBlock !== 'N/A' 
+        const blockVal = rawBlock && rawBlock !== 'N/A'
             ? (String(rawBlock).toLowerCase().includes('block') ? String(rawBlock) : `Block ${rawBlock}`)
             : 'N/A';
 
@@ -665,7 +675,7 @@ function prepareApplicationDetailTable(data, isTamil = false) {
     };
 
     const formatSubdivVal = (v) => {
-        if (v === undefined || v === null || v === '') return null;
+        if (v === undefined || v === null || v === '' || v === 'None') return null;
         if (typeof v === 'object') {
             if (v.proposed_sub_division_no) {
                 return v.proposed_area_sqm ? `${v.proposed_sub_division_no} (${v.proposed_area_sqm} sq.m)` : v.proposed_sub_division_no;
@@ -687,6 +697,8 @@ function prepareApplicationDetailTable(data, isTamil = false) {
         { [fld.fieldCol]: fld.appDate,      [fld.detailCol]: formatDateVal(data.application_date || data.submission_date) },
         { [fld.fieldCol]: fld.surveyNo,     [fld.detailCol]: data.survey_number || data.survey_no || 'N/A' },
         { [fld.fieldCol]: fld.pattaNo,      [fld.detailCol]: data.patta_number },
+        // For NISD apps, subdivision_number / included_subdivisions will be absent;
+        // formatSubdivVal returns null → the null-filter below removes these rows automatically.
         { [fld.fieldCol]: fld.subdivNo,     [fld.detailCol]: formatSubdivVal(data.subdivision_number || data.included_subdivisions) },
         { [fld.fieldCol]: fld.currSubdivNo, [fld.detailCol]: formatSubdivVal(data.current_subdivision_number) },
         { [fld.fieldCol]: fld.canNumber,    [fld.detailCol]: data.can_number || 'N/A' },
@@ -710,7 +722,7 @@ function prepareApplicationDetailTable(data, isTamil = false) {
     });
 
     return {
-        title: data.query_type || 'Application & Applicant Details',
+        title: data.query_type || 'Application Details',
         columns: [fld.fieldCol, fld.detailCol],
         rows: rows,
         icon: '📋',
@@ -719,44 +731,23 @@ function prepareApplicationDetailTable(data, isTamil = false) {
 }
 
 /**
- * Helper to build badge HTML for status columns
- */
-function getStatusBadge(val) {
-    if (!val) return 'N/A';
-    const s = String(val).toUpperCase();
-    
-    if (s.includes('PENDING')) {
-        return `<span class="status-badge status-pending">${escapeHtml(val)}</span>`;
-    } else if (s.includes('APPROVED') || s === 'COMPLETED') {
-        return `<span class="status-badge status-approved">${escapeHtml(val)}</span>`;
-    } else if (s.includes('REJECTED')) {
-        return `<span class="status-badge status-rejected">${escapeHtml(val)}</span>`;
-    } else if (s === 'SCHEDULED' || s === 'RESCHEDULED') {
-        return `<span class="status-badge status-scheduled">${escapeHtml(val)}</span>`;
-    } else if (s === 'OVERDUE') {
-        return `<span class="status-badge status-overdue">${escapeHtml(val)}</span>`;
-    } else if (s === 'SUBMITTED') {
-        return `<span class="status-badge status-submitted">${escapeHtml(val)}</span>`;
-    } else if (s.includes('SIS')) {
-        return `<span class="status-badge status-sis">${escapeHtml(val)}</span>`;
-    } else if (s.includes('SD')) {
-        return `<span class="status-badge status-sd">${escapeHtml(val)}</span>`;
-    } else if (s.includes('DIS')) {
-        return `<span class="status-badge status-dis">${escapeHtml(val)}</span>`;
-    } else if (s.includes('TAHSILDAR')) {
-        return `<span class="status-badge status-tahsildar">${escapeHtml(val)}</span>`;
-    } else if (s === 'PATTA_ORDER_GENERATED') {
-        return `<span class="status-badge status-approved">${escapeHtml(val)}</span>`;
-    } else if (s === 'CLOSED') {
-        return `<span class="status-badge status-closed">${escapeHtml(val)}</span>`;
-    }
-    
-    return escapeHtml(val);
-}
-
-/**
  * Create HTML string for the table config
  */
+/**
+ * Columns whose values are free text or long lists — these wrap inside a bounded
+ * width instead of overflowing into the next column. A long value in any other
+ * column gets the same treatment.
+ */
+const WRAP_COLUMNS = new Set([
+    'Sub-Divisions', 'Sub-Division', 'உட்பிரிவுகள்', 'உட்பிரிவு',
+    'Address', 'Owner Name', 'Applicant Name', 'Remarks', 'Reason',
+    'முகவரி', 'உரிமையாளர் பெயர்', 'விண்ணப்பதாரர் பெயர்'
+]);
+
+function cellClass(col, strVal) {
+    return (WRAP_COLUMNS.has(col) || strVal.length > 28) ? ' class="cell-wrap"' : '';
+}
+
 function createTableHTML(config) {
     const { title, columns, rows, icon, disablePagination } = config;
 
@@ -797,15 +788,12 @@ function createTableHTML(config) {
     let rowsHTML = visibleRows.map(row => {
         let cells = columns.map(col => {
             const val = row[col];
-            if (col === 'Status' || col === 'Stage') {
-                return `<td>${getStatusBadge(val)}</td>`;
-            }
             const strVal = String(val !== undefined && val !== null ? val : 'N/A');
             const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD|MERGE)\/\w+\/\d+\/\d+$/i.test(strVal);
             if (isAppNo && strVal !== 'N/A') {
                 return `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
             }
-            return `<td>${escapeHtml(strVal)}</td>`;
+            return `<td${cellClass(col, strVal)}>${escapeHtml(strVal)}</td>`;
         }).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
@@ -908,9 +896,6 @@ function handlePagination(event) {
     tbody.innerHTML = visibleRows.map(row => {
         let cells = state.columns.map(col => {
             const val = row[col];
-            if (col === 'Status' || col === 'Stage') {
-                return `<td>${getStatusBadge(val)}</td>`;
-            }
             return `<td>${escapeHtml(String(val !== undefined && val !== null ? val : 'N/A'))}</td>`;
         }).join('');
         return `<tr>${cells}</tr>`;

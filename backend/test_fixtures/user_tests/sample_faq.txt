@@ -1,0 +1,25 @@
+SIS CHATBOT TESTING FAQ - REFERENCE FOR UPLOADS
+
+=== CITIZEN IDENTIFIERS: CAN AND IGRS ===
+
+Q: What is a CAN number, and what does its length indicate?
+A: CAN stands for Citizen Access Number. Every application carries one. The length of the CAN number indicates the counter that ISSUED the number, NOT the submission channel of the application:
+- 15 digits (starting with 133, e.g., 133280122203291) indicates it was issued by a CSC / e-Sevai counter.
+- 12 digits (e.g., 202329380999) indicates it was issued by the TN citizen portal.
+A Sub-Registrar referral carries a 12-digit portal-issued CAN because it is generated automatically, so a 12-digit CAN does not automatically mean a citizen submission.
+
+Q: This application has no IGRS Form 6 number. What does that mean?
+A: An application without an IGRS Form 6 number indicates it was filed via a CSC/e-Sevai counter or directly by a citizen at a revenue camp. Only Sub-Registrar (SRO) referrals carry an IGRS Form 6 number, which is raised automatically off the registered deed. For CSC and citizen channels, an empty IGRS field is the standard rule, not a missing record or data gap.
+
+=== SUBMISSION CHANNELS ===
+
+Q: How is the submission channel decided?
+A: The submission channel is derived strictly from two columns in the application log: 'source_name' and 'camp_flag':
+1. Sub-Registrar: source_name is "-" (indicating no operator touched the file). This means IGRS automatically raised the mutation off the registered deed.
+2. Citizen: source_name holds a bare mobile number (10 digits) AND camp_flag is "P" (special revenue camp).
+3. CSC (Common Service Centre): source_name holds an operator or VLE code (e.g., tut_tct_t131_02) and camp_flag is anything else.
+
+=== SURVEY NUMBER LOCKS ===
+
+Q: Can multiple applications be active on the same survey number?
+A: No. Mutation on a survey number is a synchronous process. While one application on a survey number is active (status is pending, in_progress, or escalated), no other application may be filed on it. This rule applies across all sub-divisions of that survey number because the entire parcel record is locked.

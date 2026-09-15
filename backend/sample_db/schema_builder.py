@@ -58,13 +58,17 @@ SERVICE_CODES = {
 _TIMESTAMP_COLS = {
     "last_updated_datetime", "submitted_datetime", "generated_datetime",
     "signed_datetime", "verified_datetime", "dateofverify",
+    # despite the name, every submission_date in the extracts carries a time
+    # ("2023-05-03 17:19:44.413") -- DATE would drop it. It appears in one
+    # table, sub_div_patta_transfer_urban_demo.csv.
+    "submission_date",
 }
 _DATE_COLS = {
     "application_date", "action_date", "field_visit_date", "dispatch_date",
     "received_date", "date_of_birth", "proposed_field_visit_date",
     "document_sent_date", "document_received_date", "challan_date",
     "registration_date", "order_date", "succession_certificate_date",
-    "court_order_date", "submission_date", "receipt_date",
+    "court_order_date", "receipt_date",
     "tahsildar_receipt_date", "surveyor_received_date",
     "surveyor_completed_date", "sketch_sent_date", "sketch_received_date",
     "incorporation_date", "handover_received_date", "commissioner_change_date",

@@ -12,11 +12,13 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
 from datetime import datetime
 from uuid import UUID
+import asyncio
 
+from backend.config import settings
 from backend.database import get_db
 from backend.schemas import StandardResponse, OfficerContext
 from backend.dependencies import get_current_officer
-from backend.services import upload_store
+from backend.services import attachment_store
 from backend.services import doc_extract
 from backend.services.chatbot import (
     process_chat,
@@ -145,7 +147,10 @@ async def send_chat_message(
             "sources": result.get("sources", []),
             "context_used": result.get("context_used", False),
             "response_time_ms": result.get("response_time_ms"),
-            "table_data": result.get("table_data")
+            "table_data": result.get("table_data"),
+            # Present only when the turn is a command the client must carry
+            # out -- currently "clear_chat", from a typed "clear".
+            "action": result.get("action")
         }
         
         return StandardResponse.success_response(
@@ -204,30 +209,49 @@ async def stream_chat_message(
         )
 
 
-_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
-
+# ── Attachments ──────────────────────────────────────────────────────────────
+# The officer is taken from the JWT; the session and every document are checked
+# against that officer server-side. Nothing in the request body decides who the
+# caller is, and a document_id that is not theirs is indistinguishable from one
+# that does not exist.
 
 @router.post("/upload", response_model=StandardResponse)
 async def upload_chat_file(
     file: UploadFile = File(...),
     session_id: str = Form(...),
+    db: AsyncSession = Depends(get_db),
     current_officer: OfficerContext = Depends(get_current_officer),
 ):
     """
-    Attach a .txt / .csv / .pdf / .docx file to a chat session.
+    Attach a .txt / .csv / .pdf / .docx file to one of the officer's own chat
+    sessions.
 
-    The text is extracted and kept in a session-scoped store so subsequent chat
-    messages in that session can be answered from it. The legacy binary .doc
-    format is reported as not supported (save as .docx / PDF or paste the text);
-    everything else is rejected.
+    The text is extracted with its source locations (PDF page, DOCX paragraph
+    or table, CSV row, TXT line), chunked and stored in PostgreSQL, so later
+    questions are answered from the few chunks that bear on them — with a
+    citation built from that stored location. A scanned / image-only PDF is
+    recorded as `no_extractable_text`: there is no OCR here and never a guess
+    at what the image said. The legacy binary .doc format is not read.
     """
     name = (file.filename or "file").strip()
-    ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+    ext = doc_extract.normalise_extension(name)
     raw = await file.read()
 
-    if len(raw) > _UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            detail="File exceeds the 5 MB limit.")
+    # Size is measured on the bytes actually read, not on a client header.
+    if len(raw) > settings.UPLOAD_MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the "
+                   f"{settings.UPLOAD_MAX_FILE_BYTES // (1024 * 1024)} MB limit.")
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="The file is empty.")
+
+    # Ownership of the session before anything is parsed or written.
+    try:
+        await attachment_store.verify_session(db, session_id, current_officer.officer_id)
+    except attachment_store.AttachmentAccessError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     if ext in doc_extract.UNSUPPORTED_HINT:
         return StandardResponse.success_response(
@@ -236,33 +260,121 @@ async def upload_chat_file(
 
     if ext not in doc_extract.SUPPORTED_EXTS:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                            detail="Unsupported file type. Upload a .txt, .csv, .pdf or .docx file.")
+                            detail="Unsupported file type. Upload a .txt, .csv, "
+                                   ".pdf or .docx file.")
 
     try:
-        content = doc_extract.extract_text(ext, raw)
+        doc_extract.validate_signature(ext, raw, file.content_type or "")
+    except doc_extract.UnsupportedFile as e:
+        return StandardResponse.success_response(
+            data={"supported": False, "filename": name}, message=str(e))
     except doc_extract.ExtractionError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
-
-    if not content.strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="The file appears to be empty.")
+                            detail=str(e))
 
-    doc = upload_store.add(session_id, name, content)
-    attached = upload_store.filenames(session_id)
-    logger.info(f"Chat upload: '{name}' ({doc['chars']} chars) -> session {session_id} "
-                f"[{len(attached)}/{upload_store.MAX_DOCS_PER_SESSION} files]")
-    msg = (f'"{name}" attached ({doc["chars"]} characters'
-           + (", trimmed" if doc["truncated"] else "")
-           + f"). {len(attached)} file(s) attached this session — ask your question about them now.")
-    if len(attached) >= upload_store.MAX_DOCS_PER_SESSION:
-        msg += (f" (Limit is {upload_store.MAX_DOCS_PER_SESSION}; the oldest is dropped "
-                f"when you add more.)")
+    # Extraction runs in a worker thread under a wall-clock budget: a crafted
+    # file must not hold a request open indefinitely.
+    try:
+        extracted = await asyncio.wait_for(
+            asyncio.to_thread(doc_extract.extract, ext, raw),
+            timeout=settings.UPLOAD_EXTRACTION_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("attachment extraction timed out", ext=ext, bytes=len(raw))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This file took too long to read. Upload a smaller extract.")
+    except doc_extract.UnsupportedFile as e:
+        return StandardResponse.success_response(
+            data={"supported": False, "filename": name}, message=str(e))
+    except doc_extract.ExtractionError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=str(e))
+
+    # Housekeeping is explicit and cheap; nothing expires by being forgotten.
+    try:
+        await attachment_store.cleanup_expired(db)
+    except Exception as e:
+        logger.warning(f"attachment cleanup skipped: {e}")
+
+    doc = await attachment_store.save_document(
+        db=db, officer_id=current_officer.officer_id, session_id=session_id,
+        filename=name, ext=ext, mime_type=file.content_type or "",
+        raw=raw, extracted=extracted)
+
+    if doc.extraction_status == doc_extract.STATUS_NO_TEXT:
+        return StandardResponse.success_response(
+            data={"supported": True, "document_id": str(doc.id), "filename": name,
+                  "extraction_status": doc.extraction_status, "chars": 0,
+                  "attached_files": [], "attached_count": 0},
+            message=doc.status_detail or
+                    "No selectable text found — this assistant does not read images.")
+
+    active = await attachment_store.active_documents(
+        db, current_officer.officer_id, session_id)
+    names = [d.filename for d in active]
+    msg = (f'"{name}" attached ({doc.char_count} characters'
+           + (", trimmed" if extracted.truncated else "")
+           + f"). {len(names)} file(s) attached this session — ask your question "
+             f"about them now.")
+    if doc.csv_row_count is not None:
+        msg += (f" {doc.csv_row_count} data row(s) stored, so counts and totals "
+                f"are computed from the rows themselves.")
     return StandardResponse.success_response(
-        data={"supported": True, "filename": name, "chars": doc["chars"],
-              "truncated": doc["truncated"], "attached_files": attached,
-              "attached_count": len(attached),
-              "max_files": upload_store.MAX_DOCS_PER_SESSION},
+        data={"supported": True, "document_id": str(doc.id), "filename": name,
+              "extraction_status": doc.extraction_status,
+              "chars": doc.char_count, "pages": doc.page_count,
+              "chunks": doc.chunk_count, "csv_rows": doc.csv_row_count,
+              "truncated": extracted.truncated,
+              "attached_files": names, "attached_count": len(names),
+              "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION},
         message=msg)
+
+
+@router.get("/sessions/{session_id}/attachments", response_model=StandardResponse)
+async def list_session_attachments(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_officer: OfficerContext = Depends(get_current_officer),
+):
+    """List the attachments of one of the officer's own sessions."""
+    try:
+        await attachment_store.verify_session(db, session_id, current_officer.officer_id)
+    except attachment_store.AttachmentAccessError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    docs = await attachment_store.active_documents(
+        db, current_officer.officer_id, session_id)
+    return StandardResponse.success_response(
+        data={"attachments": [
+            {"document_id": str(d.id), "filename": d.filename,
+             "type": d.file_ext, "chars": d.char_count, "pages": d.page_count,
+             "csv_rows": d.csv_row_count,
+             "extraction_status": d.extraction_status,
+             "created_at": d.created_at.isoformat() if d.created_at else None,
+             "expires_at": d.expires_at.isoformat() if d.expires_at else None}
+            for d in docs], "count": len(docs)},
+        message="Attachments retrieved successfully")
+
+
+@router.delete("/sessions/{session_id}/attachments/{document_id}",
+               response_model=StandardResponse)
+async def delete_session_attachment(
+    session_id: str,
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_officer: OfficerContext = Depends(get_current_officer),
+):
+    """Remove one attachment the officer owns, with its chunks, rows and file."""
+    try:
+        await attachment_store.verify_session(db, session_id, current_officer.officer_id)
+    except attachment_store.AttachmentAccessError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    removed = await attachment_store.delete_document(
+        db, current_officer.officer_id, session_id, document_id)
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found.")
+    return StandardResponse.success_response(
+        data={"document_id": document_id}, message="Attachment removed.")
 
 
 @router.get("/sessions", response_model=StandardResponse)

@@ -1,0 +1,84 @@
+%PDF-1.4
+% synthetic fixture
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 650 >>
+stream
+BT
+/F1 15 Tf
+50 760 Td
+(Synthetic SIS Field Visit Memo) Tj
+/F1 10 Tf
+0 -28 Td
+() Tj
+0 -15 Td
+(Page 1 - Test-only case: TEST-2026-ISD-001.) Tj
+0 -15 Td
+(Visit date: 18 October 2026, 10:30 AM. Ward: 102. Survey: 77/3B. Applicant: Kavitha) Tj
+0 -15 Td
+(Raman \(fictional\).) Tj
+0 -15 Td
+(Purpose: verify a proposed ISD boundary before sketch review. The eastern boundary is) Tj
+0 -15 Td
+(described as a public pathway. The northern boundary is noted as Survey 77/4.) Tj
+0 -15 Td
+(Observation: corner stones were said to be visible at three points. This is an invented) Tj
+0 -15 Td
+(observation for chatbot attachment testing, not a field finding.) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 578 >>
+stream
+BT
+/F1 15 Tf
+50 760 Td
+(Synthetic SIS Field Visit Memo) Tj
+/F1 10 Tf
+0 -28 Td
+() Tj
+0 -15 Td
+(Page 2 - Checklist and follow-up.) Tj
+0 -15 Td
+(Carry the field book, measuring tape, owner notice acknowledgement, and the prior) Tj
+0 -15 Td
+(sketch. Check that the sketch has a north arrow, scale, boundary measurements, adjoining) Tj
+0 -15 Td
+(survey references, surveyor signature, and date.) Tj
+0 -15 Td
+(Follow-up: the field measurement sketch is missing from the fictional application pack.) Tj
+0 -15 Td
+(Do not approve or reject any real case on the basis of this memo.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000029 00000 n 
+0000000099 00000 n 
+0000000800 00000 n 
+0000000926 00000 n 
+0000001555 00000 n 
+0000001681 00000 n 
+0000001744 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+1793
+%%EOF

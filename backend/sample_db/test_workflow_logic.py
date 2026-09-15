@@ -224,18 +224,31 @@ async def check_answer_consistency(db) -> list[str]:
                    JOIN officer_jurisdictions j ON j.officer_id = :o
                    WHERE b.ward_id = j.ward_id
                      AND a.current_status <> 'rejected'
-                     AND a.current_stage = 'SIS' {extra}"""
+                     {stage} {extra}"""
+        _AT_DESK = "AND a.current_stage = 'SIS'"
+        # An unscoped queue is what is at the officer's own desk, so its expected
+        # count carries the stage pin get_officer_applications applies.
+        #
+        # An application-type scope does NOT: "show my ISD applications" asks the
+        # officer's whole ISD history, not the ISD files still sitting at SIS --
+        # has_scope_filter drops the pin for an explicit type, so the expected
+        # count must drop it too. Pinned, this check asserted the very behaviour
+        # that answered 2 to an officer holding 9 ISD files.
         listings = [
-            ("queue", {}, ""),
-            ("queue pending", dict(status="pending"), "AND a.current_status = 'pending'"),
-            ("queue ISD", dict(application_type="ISD"), "AND a.application_type = 'ISD'"),
-            ("queue NISD", dict(application_type="NISD"), "AND a.application_type = 'NISD'"),
-            ("queue MERGE", dict(application_type="MERGE"), "AND a.application_type = 'MERGE'"),
-            ("queue overdue", dict(is_overdue=True), "AND a.is_overdue"),
+            ("queue", {}, _AT_DESK, ""),
+            ("queue pending", dict(status="pending"), _AT_DESK,
+             "AND a.current_status = 'pending'"),
+            ("queue ISD", dict(application_type="ISD"), "",
+             "AND a.application_type = 'ISD'"),
+            ("queue NISD", dict(application_type="NISD"), "",
+             "AND a.application_type = 'NISD'"),
+            ("queue MERGE", dict(application_type="MERGE"), "",
+             "AND a.application_type = 'MERGE'"),
+            ("queue overdue", dict(is_overdue=True), _AT_DESK, "AND a.is_overdue"),
         ]
-        for label, kwargs, extra in listings:
+        for label, kwargs, stage, extra in listings:
             got = (await postgres.get_officer_applications(db, ctx, **kwargs)).get("count", 0)
-            want = (await db.execute(text(queue.format(extra=extra)),
+            want = (await db.execute(text(queue.format(stage=stage, extra=extra)),
                                      {"o": officer.id})).scalar()
             checks.append((f"{label} == database", got == want, f"{got} vs {want}"))
 

@@ -35,9 +35,8 @@ SURVEY = "1355"
 #
 # "Expected" is the routing that was *verified to answer the question well*, not
 # the intent whose name reads closest. Several questions are answered correctly
-# by a more general handler -- "Is X NISD or ISD?" lands on application_status
-# and replies "is of type: ISD" -- and pinning those to the tidier-sounding
-# intent would report a passing system as broken. Known gaps are marked.
+# by a more general handler, and pinning those to the tidier-sounding intent
+# would report a passing system as broken. Known gaps are marked.
 CASES: list[tuple[str, str]] = [
     # ── my queue ─────────────────────────────────────────────────────────
     ("What is my workload?", "officer_workload"),
@@ -55,10 +54,13 @@ CASES: list[tuple[str, str]] = [
     ("Show me ISD applications", "isd_applications"),
     ("List all NISD applications", "nisd_applications"),
     ("Show merge applications", "merge_applications"),
-    (f"Is {APP} NISD or ISD?", "application_status"),   # answers "is of type: ISD"
+    (f"Is {APP} NISD or ISD?", "is_nisd_or_isd"),
     ("Show both ISD and NISD applications", "both_applications"),
 
     # ── one application ──────────────────────────────────────────────────
+    ("What is my previous application?", "last_application"),
+    ("My last approved application", "last_application"),
+    ("Is my previous application approved?", "last_application"),
     (f"What is the status of {NISD_APP}?", "application_status"),
     (f"What documents are missing in {NISD_APP}?", "check_documents"),
     (f"Is the sale deed registered for {NISD_APP}?", "sale_deed_check"),
@@ -80,7 +82,11 @@ CASES: list[tuple[str, str]] = [
 
     # ── field visits ─────────────────────────────────────────────────────
     ("Show my field visits", "field_visits"),
-    ("Which applications are awaiting a field visit?", "field_visits"),  # lists unscheduled visits
+    # Answered by the visit planner: the applications with no visit booked,
+    # oldest first, with the ward and block to go to.
+    ("Which applications are awaiting a field visit?", "fv_visit_plan"),
+    ("Which application should I field visit tomorrow?", "fv_visit_plan"),
+    ("In which block is my next field visit?", "fv_visit_plan"),
     ("Which field visits are scheduled this week?", "fv_scheduled_this_week"),
     ("Are there any field visit scheduling conflicts?", "fv_scheduling_conflicts"),
     ("Which field inspections are overdue?", "fv_overdue_inspections"),
@@ -104,9 +110,13 @@ CASES: list[tuple[str, str]] = [
     ("Which taluks have active applications?", "active_applications_taluks"),
 
     # ── reference / knowledge ────────────────────────────────────────────
-    ("What is service code 0154?", "service_code_guide"),  # returns the code table
+    ("What is service code 0154?", "service_code_lookup"),  # names the code asked about
+    ("What is the service charge for an ISD application?", "service_code_guide"),
+    ("What is the CSC service charge?", "service_code_guide"),
+    ("What is the total fee collected from my applications?", "fee_summary"),
+    ("Fee collection breakdown by payment mode", "fee_summary"),
     ("Show me the service code guide", "service_code_guide"),
-    ("How many service codes start with 016?", "service_code_guide"),  # KNOWN GAP: dumps the whole guide instead of counting
+    ("How many service codes start with 016?", "service_code_lookup"),  # counts the prefix
     ("What documents are required for an ISD application?", "general_query"),
     ("What is the 15 working day rule?", "general_query"),
     ("What is the escalation process?", "general_query"),

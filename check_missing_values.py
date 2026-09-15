@@ -180,9 +180,16 @@ async def check_missing_values():
         ("wards", "town_id", "Town reference"),
         ("towns", "name", "Town name"),
         ("towns", "taluk_id", "Taluk reference"),
-        ("taluks", "name", "Taluk name"),
-        ("taluks", "district_id", "District reference"),
-        ("districts", "name", "District name")
+        # District and taluk are the TAMILNILAM master tables now
+        # (district_unicode / taluk), not the app's own -- their key columns
+        # come straight from the dumps. `district_uid` is the parent link the
+        # app added, and it is legitimately NULL for the few master taluks
+        # whose district is not in the data, so only the seeded jurisdiction
+        # is required to resolve.
+        ("taluk", "taluk_ename", "Taluk name"),
+        ("taluk", "app_uid", "Taluk surrogate id"),
+        ("district_unicode", "district_name", "District name"),
+        ("district_unicode", "app_uid", "District surrogate id"),
     ]
     
     for table, field, description in geo_checks:

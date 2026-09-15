@@ -39,23 +39,23 @@ async def login(
     officer = result.scalar_one_or_none()
     
     if not officer:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
+        response.status_code = status.HTTP_401_UNAUTHORIZED
+        return StandardResponse.error_response(
+            message="Email or password is incorrect."
         )
     
     # Verify password
     if not verify_password(login_data.password, officer.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
+        response.status_code = status.HTTP_401_UNAUTHORIZED
+        return StandardResponse.error_response(
+            message="Email or password is incorrect."
         )
     
     # Check if officer is active
     if not officer.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Officer account is inactive"
+        response.status_code = status.HTTP_403_FORBIDDEN
+        return StandardResponse.error_response(
+            message="Officer account is inactive. Please contact your administrator."
         )
     
     # Resolve jurisdiction

@@ -1,0 +1,9 @@
+INTENTIONALLY NON-SIS RANDOM TOPICS
+
+This text is deliberately unrelated to land survey work. It helps test that the chatbot grounds an attachment question in the file, while its normal SIS-only scope rules remain effective for ordinary chat.
+
+Tea tasting notes: a fictional club compared jasmine tea, masala chai, and lemon tea. The group preferred jasmine tea for its floral aroma and chose lemon tea for a hot afternoon.
+
+Space trivia: the fictional science club schedule says its next discussion is about the James Webb Space Telescope, infrared observation, and star formation. This is a conversation prompt, not a scientific source.
+
+Chess result: in a mock tournament, player Nila won 3 points, player Omar won 2 points, and player Tara won 1 point.

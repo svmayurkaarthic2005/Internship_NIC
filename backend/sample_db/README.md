@@ -79,6 +79,16 @@ What the projection maps:
 | `nisd_/isd_transfer_urban_detail` | `patta_transfers` |
 | workflow usernames at role 41 | `sis_officers`, `officer_jurisdictions` |
 
+Both sub-division numbers survive the projection. `application_sub_divisions`
+keeps the temporary `{subdiv}/T{seq}` number the file runs under in
+`temporary_sub_division_no` (always set) and the number the parcel ends up with
+in `proposed_sub_division_no` — the final number once assigned, the temporary
+one while the file is open or was rejected. The parent parcel is resolved from
+the row's patta, else from the temporary number's parent sub-division, else from
+an earlier row of the same file, else from the survey: a big split is filed as
+several applications sharing one temporary series (survey 35's `2A/T1`..`2A/T8`
+is five files) and only the first of them carries the parent's patta.
+
 Only service codes `0153` (NISD), `0154` (ISD) and `0155` (MERGE) become
 `applications` — the model's `ck_application_type` admits no others, so
 settlement and govt-to-private rows (`0167`, `0169`, …) stay in the CSV-shaped
@@ -86,7 +96,8 @@ tables only.
 
 Officers are the SIS usernames that open the workflow chain, one ward each, so
 jurisdiction filtering has real effect. Sign in with the seeded emails
-(e.g. `amuthavalli@sis.tn.gov.in`) and password `Test@1234`.
+(e.g. `csenthil@sis.tn.gov.in`) and password `Test@1234` -- run
+`python check_login_credentials.py` for the current list.
 
 ## Tables
 
@@ -94,8 +105,8 @@ CSV file → table name (the `_demo` suffix is dropped, names tightened):
 
 | CSV | Table | Rows |
 | --- | --- | --- |
-| `appl_log_urban_demo.csv` | `urban_application_log` | 1180 |
-| `application_workflow_demo.csv` | `application_workflow_action` | 4589 |
+| `appl_log_urban_demo.csv` | `urban_application_log` | 1211 |
+| `application_workflow_demo.csv` | `application_workflow_action` | 288087 |
 | `areg_temp_subdivclub_demo.csv` | `urban_temp_subdivision_parcel` | 49 |
 | `chitta_temp_subdivclub_demo.csv` | `urban_temp_subdivision_owner` | 117 |
 | `full_field_patta_transfer_application_information_demo.csv` | `nisd_transfer_application_info` | 166 |
@@ -107,9 +118,15 @@ CSV file → table name (the `_demo` suffix is dropped, names tightened):
 | `sub_div_patta_transfer_application_information_urban_demo.csv` | `isd_transfer_application_info` | 41 |
 | `sub_div_patta_transfer_urban_demo.csv` | `isd_transfer_urban_detail` | 50 |
 | `uareg_demo.csv` | `urban_parcel_register` | 1033 |
-| `uaregmap_ds_demo.csv` | `urban_parcel_signature` | 800 |
+| `uaregmap_ds_demo.csv` | `urban_parcel_signature` | 1036 |
 | `uchitta_natham_demo.csv` | `urban_natham_chitta_owner` | 551 |
-| `uchitta_nathammap_ds_demo.csv` | `urban_natham_chitta_signature` | 400 |
+| `uchitta_nathammap_ds_demo.csv` | `urban_natham_chitta_signature` | 439 |
+
+`application_workflow_action` is a district-wide dump: most of its 288087 rows
+belong to settlement service codes (`0167` / `0169`, …) that never become an
+application. Only 4694 rows name an `application_id` that `urban_application_log`
+also carries, and 982 of those belong to the `0153` / `0154` / `0155` codes the
+chatbot works with.
 
 Each table gets a `row_id BIGSERIAL PRIMARY KEY` on top of the CSV columns —
 the extracts have no usable natural key. Indexes are created on
@@ -291,21 +308,29 @@ an application who also holds a natham chitta patta matches their owner row.
 The numbers belong to no one. `applicants.aadhaar_last4` and
 `owners.aadhaar_last4` hold the last four digits -- all the ORM model stores.
 
-**CAN** (Citizen Access Number) comes from the extracts, and its length says
-which channel issued it:
+**CAN** (Citizen Access Number) comes from the extracts. Its length says which
+counter issued it -- 15 digits (the `133` series) for an e-Sevai counter, 12
+for the TN portal -- but the length is not what decides the channel.
 
-| channel | issued by | digits | example |
-| --- | --- | --- | --- |
-| `CSC` | Common Service Centre / e-Sevai operator | 15 | `133280122203291` |
-| `citizen` | the citizen on the TN portal | 12 | `202329380999` |
+**The submission channel** is derived from two columns of
+`urban_application_log`:
 
-`urban_application_log.source_name` records the operator or VLE code that
-filed it, or `-` when the citizen did, and in the extracts the two signals
-agree on every well-formed row -- all 108 twelve-digit CANs carry `-` and all
-151 fifteen-digit ones carry an operator code. The projection therefore takes
-the channel from `source_name` and enforces the length against it. The CSV-
-shaped tables keep the value verbatim; only the `applications` projection is
-normalised, and only where the repair is unambiguous:
+| channel | `source_name` | `camp_flag` | meaning | apps |
+| --- | --- | --- | --- | --- |
+| `sub_registrar` | `-` | -- | nobody keyed it in; IGRS raised the mutation off the registered deed | 93 |
+| `citizen` | an operator / VLE code | `P` | a special revenue camp -- the operator keys the file in for the citizen present, so the submission is the citizen's own | 1 |
+| `CSC` | an operator / VLE code | anything else | keyed in at a Common Service Centre / e-Sevai counter | 115 |
+
+All 93 unattended applications carry an `igrs_form6_number` equal to their CAN
+-- the registered deed the application is built on. No CSC application has one.
+`camp_flag` also takes `S`, `U` and `Y` in the extracts; only `P` marks the
+citizen route.
+
+`build_app_tables.py` then enforces the lengths a CAN may have on its channel
+(`CSC` 15, `sub_registrar` 12, `citizen` either -- a camp file can carry the
+number from whichever counter issued it). The CSV-shaped tables keep the value
+verbatim; only the `applications` projection is normalised, and only where the
+repair is unambiguous:
 
 * a CSC number short of 15 digits with its `133` series code intact
   (`13328018014908`) is re-padded to `133280018014908`;

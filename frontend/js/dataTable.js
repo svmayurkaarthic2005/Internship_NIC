@@ -4,6 +4,21 @@
  */
 
 /**
+ * Columns whose values are free text or long lists — these wrap inside a bounded
+ * width instead of overflowing into the next column. A long value in any other
+ * column gets the same treatment.
+ */
+const DT_WRAP_COLUMNS = new Set([
+    'Sub-Divisions', 'Sub-Division', 'உட்பிரிவுகள்', 'உட்பிரிவு',
+    'Address', 'Owner Name', 'Applicant Name', 'Remarks', 'Reason',
+    'முகவரி', 'உரிமையாளர் பெயர்', 'விண்ணப்பதாரர் பெயர்'
+]);
+
+function dtCellClass(col, strVal) {
+    return (DT_WRAP_COLUMNS.has(col) || strVal.length > 28) ? ' class="cell-wrap"' : '';
+}
+
+/**
  * Render structured data as a professional HTML table
  * @param {HTMLElement} container - Container element for the table
  * @param {Object} data - Structured data from backend
@@ -236,7 +251,7 @@ function prepareApplicationDetailTable(data) {
     });
 
     return {
-        title: data.query_type || 'Application & Applicant Details',
+        title: data.query_type || 'Application Details',
         columns: ['Field', 'Details'],
         rows: rows,
         icon: '📋',
@@ -311,7 +326,7 @@ function createTableHTML(config) {
             if (isAppNo && strVal !== 'N/A') {
                 tableHTML += `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
             } else {
-                tableHTML += `<td>${escapeHtml(strVal)}</td>`;
+                tableHTML += `<td${dtCellClass(col, strVal)}>${escapeHtml(strVal)}</td>`;
             }
         });
         tableHTML += '</tr>';

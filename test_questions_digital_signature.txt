@@ -1,0 +1,177 @@
+=================================================================
+SIS CHATBOT - DIGITAL SIGNATURE TEST QUESTIONS (50 Questions)
+=================================================================
+
+=================================================================
+SECTION 1: PATTA DIGITAL SIGNATURE STATUS (15 Questions)
+=================================================================
+
+1. Is patta 7585 digitally signed?
+   பட்டா 7585 டிஜிட்டல் கையொப்பம் இடப்பட்டதா?
+
+2. Who signed patta 7585?
+   பட்டா 7585 யார் கையொப்பமிட்டார்?
+
+3. When was patta 7585 signed?
+   பட்டா 7585 எப்போது கையொப்பமிடப்பட்டது?
+
+4. Show me the digital signature details for patta number 7585
+   பட்டா எண் 7585க்கான டிஜிட்டல் கையொப்ப விவரங்களைக் காட்டு
+
+5. Is patta number 8456 digitally signed?
+   பட்டா எண் 8456 டிஜிட்டல் கையொப்பம் இடப்பட்டதா?
+
+6. Has patta 9123 been digitally verified?
+   பட்டா 9123 டிஜிட்டல் சரிபார்க்கப்பட்டதா?
+
+7. Which officer signed patta 7585?
+   எந்த அதிகாரி பட்டா 7585 கையொப்பமிட்டார்?
+
+8. Give me signature information for patta 8456
+   பட்டா 8456க்கான கையொப்ப தகவலை கொடு
+
+9. Is there a digital signature on patta 7585?
+   பட்டா 7585 இல் டிஜிட்டல் கையொப்பம் உள்ளதா?
+
+10. Check digital signature status of patta 9123
+    பட்டா 9123 இன் டிஜிட்டல் கையொப்ப நிலையை சரிபார்
+
+11. patta 7585 la digital signature irukka?
+    பட்டா 7585 ல டிஜிட்டல் சிக்னேச்சர் இருக்கா?
+
+12. patta 8456 yaaru sign pannanga?
+    பட்டா 8456 யாரு சைன் பண்ணாங்க?
+
+13. patta number 7585 signed aachaa?
+    பட்டா நம்பர் 7585 சைன்ட் ஆச்சா?
+
+14. Show digital signature for patta 9123
+    பட்டா 9123 க்கான டிஜிட்டல் கையொப்பத்தை காட்டு
+
+15. Is digital signature present for patta 7585?
+    பட்டா 7585க்கு டிஜிட்டல் கையொப்பம் உள்ளதா?
+
+=================================================================
+SECTION 2: PARCEL/SURVEY NUMBER SIGNATURES (10 Questions)
+=================================================================
+
+16. Is survey number 1343 subdivision 0 digitally signed?
+    சர்வே எண் 1343 துணைப்பிரிவு 0 டிஜிட்டல் கையொப்பம் இடப்பட்டதா?
+
+17. Check digital signature for survey 1343/0
+    சர்வே 1343/0 க்கான டிஜிட்டல் கையொப்பத்தை சரிபார்
+
+18. Who signed survey number 1343 subdivision 0?
+    சர்வே எண் 1343 துணைப்பிரிவு 0 யார் கையொப்பமிட்டார்?
+
+19. When was survey 1343/0 digitally signed?
+    சர்வே 1343/0 எப்போது டிஜிட்டல் கையொப்பமிடப்பட்டது?
+
+20. Is there a signature on parcel 1343/0?
+    பார்சல் 1343/0 இல் கையொப்பம் உள்ளதா?
+
+21. Show me signature details for survey 1343 subdivision 0
+    சர்வே 1343 துணைப்பிரிவு 0 க்கான கையொப்ப விவரங்களைக் காட்டு
+
+22. survey number 1343/0 signed aachaa?
+    சர்வே நம்பர் 1343/0 சைன்ட் ஆச்சா?
+
+23. parcel 1343/0 digital signature irukka?
+    பார்சல் 1343/0 டிஜிட்டல் சிக்னேச்சர் இருக்கா?
+
+24. Check if survey 1343 has digital signature
+    சர்வே 1343 டிஜிட்டல் கையொப்பம் உள்ளதா என சரிபார்
+
+25. Is survey 1343 subdivision 0 verified with digital signature?
+    சர்வே 1343 துணைப்பிரிவு 0 டிஜிட்டல் கையொப்பத்துடன் சரிபார்க்கப்பட்டதா?
+
+=================================================================
+SECTION 3: SIGNATURE BY OFFICER NAME (10 Questions)
+=================================================================
+
+26. Which pattas were signed by tut_ramyadevi?
+    tut_ramyadevi கையொப்பமிட்ட பட்டாக்கள் எவை?
+
+27. Show me all digital signatures by officer ramyadevi
+    அதிகாரி ராமதேவி மூலம் கையொப்பமிடப்பட்ட அனைத்தையும் காட்டு
+
+28. How many pattas did tut_ramyadevi sign?
+    tut_ramyadevi எத்தனை பட்டாக்களில் கையொப்பமிட்டார்?
+
+29. List pattas signed by ramyadevi
+    ராமதேவி கையொப்பமிட்ட பட்டாக்களை பட்டியலிடு
+
+30. Did officer ramyadevi sign patta 7585?
+    அதிகாரி ராமதேவி பட்டா 7585 கையொப்பமிட்டாரா?
+
+31. tut_ramyadevi sign panna patta list
+    tut_ramyadevi சைன் பண்ண பட்டா லிஸ்ட்
+
+32. ramyadevi yaaru yaaru patta sign pannanga?
+    ராமதேவி யாரு யாரு பட்டா சைன் பண்ணாங்க?
+
+33. Show digital signatures by officer tut_ramyadevi
+    அதிகாரி tut_ramyadevi இன் டிஜிட்டல் கையொப்பங்களைக் காட்டு
+
+34. Which officer signed the most pattas?
+    அதிகபட்ச பட்டாக்களில் கையொப்பமிட்ட அதிகாரி யார்?
+
+35. List all officers who signed digital signatures
+    டிஜிட்டல் கையொப்பம் இட்ட அனைத்து அதிகாரிகளையும் பட்டியலிடு
+
+=================================================================
+SECTION 4: SIGNATURE DATE QUERIES (10 Questions)
+=================================================================
+
+36. Which pattas were signed on 2022-12-15?
+    2022-12-15 அன்று கையொப்பமிடப்பட்ட பட்டாக்கள் எவை?
+
+37. Show me pattas signed in December 2022
+    டிசம்பர் 2022 இல் கையொப்பமிடப்பட்ட பட்டாக்களைக் காட்டு
+
+38. How many pattas were signed on December 15th 2022?
+    டிசம்பர் 15, 2022 அன்று எத்தனை பட்டாக்கள் கையொப்பமிடப்பட்டன?
+
+39. List all digital signatures created in 2022
+    2022 இல் உருவாக்கப்பட்ட அனைத்து டிஜிட்டல் கையொப்பங்களையும் பட்டியலிடு
+
+40. When was the last digital signature created?
+    கடைசி டிஜிட்டல் கையொப்பம் எப்போது உருவாக்கப்பட்டது?
+
+41. 2022-12-15 la sign panna patta
+    2022-12-15 ல சைன் பண்ண பட்டா
+
+42. December 2022 la evlo patta sign aachu?
+    டிசம்பர் 2022 ல எவ்வளவு பட்டா சைன் ஆச்சு?
+
+43. Show pattas signed after December 10, 2022
+    டிசம்பர் 10, 2022 க்கு பிறகு கையொப்பமிடப்பட்ட பட்டாக்களைக் காட்டு
+
+44. Which is the oldest digital signature?
+    மிகவும் பழைய டிஜிட்டல் கையொப்பம் எது?
+
+45. How many signatures were created in December?
+    டிசம்பரில் எத்தனை கையொப்பங்கள் உருவாக்கப்பட்டன?
+
+=================================================================
+SECTION 5: GENERAL SIGNATURE QUERIES (5 Questions)
+=================================================================
+
+46. How many pattas have digital signatures?
+    எத்தனை பட்டாக்களில் டிஜிட்டல் கையொப்பம் உள்ளது?
+
+47. Are all pattas digitally signed?
+    அனைத்து பட்டாக்களும் டிஜிட்டல் கையொப்பம் இடப்பட்டுள்ளதா?
+
+48. Show me unsigned pattas
+    கையொப்பமிடப்படாத பட்டாக்களைக் காட்டு
+
+49. Which pattas don't have digital signatures?
+    எந்த பட்டாக்களில் டிஜிட்டல் கையொப்பம் இல்லை?
+
+50. Total digital signatures in the system
+    அமைப்பில் மொத்த டிஜிட்டல் கையொப்பங்கள்
+
+=================================================================
+END OF TEST QUESTIONS
+=================================================================

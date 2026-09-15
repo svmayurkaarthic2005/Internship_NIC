@@ -38,7 +38,13 @@ Q: Is there a pending court application or litigation flag on this survey number
 A: The system checks for any litigation flags or court case references on the survey number. If litigation is detected, it's recommended to confirm with the Tahsildar before proceeding with the field visit.
 
 Q: Who submitted this application - CSC, citizen directly, or via Sub-Registrar referral?
-A: The application record shows the submission channel (CSC with location, citizen portal, or Sub-Registrar referral) along with the submission date.
+A: The application record shows the submission channel along with the submission date. There are three: a Common Service Centre / e-Sevai counter (an operator code is recorded against the file), the citizen themselves (a file keyed in at a special revenue camp, marked with camp flag "P"), or a Sub-Registrar referral (no operator touched it - IGRS raised the mutation off the registered deed, and the file carries an IGRS Form 6 number).
+
+Q: This application has no IGRS Form 6 number - what does that mean? Is it not from the SRO?
+A: Correct - it did not come from the SRO. SRO is the Sub-Registrar Office, and only its IGRS system issues an IGRS Form 6 number, raised off the registered deed. An application without one was filed at a CSC / e-Sevai counter or by the citizen at a revenue camp. For those two channels an empty IGRS field is the rule, not a gap in the record: nothing is missing and there is nothing to chase up with the Sub-Registrar. An IGRS number that IS present is positive evidence the file came from the SRO, and on such a file it is the same number as the application's CAN.
+
+Q: What is a CAN number, and does its length tell me the submission channel?
+A: CAN is the Citizen Access Number, the unique identity number a citizen quotes on an application; every application carries one. Its length names the counter that ISSUED it, not the channel the application came in through - 15 digits (133 series) from a CSC / e-Sevai counter, 12 digits from the TN citizen portal. A Sub-Registrar referral carries a 12-digit portal-issued CAN even though no citizen keyed it in, so a 12-digit CAN does not mean "citizen" and a 15-digit CAN does not mean "CSC". The channel is decided by the source name and camp flag on the file.
 
 Q: Is the applicant the sole owner, or are there joint owners listed?
 A: The system displays the number of joint owners and their names. All joint owner signatures are required at the field visit.
@@ -88,6 +94,13 @@ A: The system checks if the district code matches the survey jurisdiction. If a 
 
 === FIELD VISIT SCHEDULING ===
 
+Q: What is a field visit?
+A: A field visit (field inspection or site inspection) is the on-site verification an SIS officer carries out at the actual land parcel. The officer visits the survey number in person, measures the boundaries and area, records GPS coordinates, checks the boundary stones, looks for encroachment, collects the signatures of the applicant and all joint owners, and prepares field notes with photographs. It is mandatory for ISD (0154) and MERGE (0155) applications, must be scheduled within 15 working days of submission, and its date can only be changed with the Tahsildar's approval. NISD (0153) applications are verified from documents and normally need no field visit.
+
+Q: What does the SIS officer check during a field visit?
+A: The officer verifies the survey number and sub-division on the ground, measures the actual boundaries and area against the patta and the sale deed, marks the corners with GPS coordinates, checks the boundary stones, records any encroachment, and takes the signatures of the applicant and joint owners.
+
+
 Q: What field visit date did I select for this application?
 A: The system confirms the selected field visit date for each application number.
 
@@ -136,13 +149,30 @@ Q: Display the proposed sub-divisions in this application.
 A: All proposed sub-divisions are listed with their details from the application.
 
 Q: Retrieve the assigned sub-division numbers for the approved application.
-A: Sub-division numbers become available after the Senior Draughtsman (SD) approves the subdivision sketch.
+A: Final sub-division numbers are assigned by the Deputy Inspector Surveyor (DIS) after reviewing the subdivision sketch. Before approval, parcels carry temporary numbers (e.g. 3/T1, 3/T2). On DIS approval, these become final numbers (e.g. 3, 4).
 
 Q: Compare the original survey area with the total sub-division area.
 A: The system validates that the sum of all sub-division areas equals the original survey area, for example Original: 2,400 sq.m, Total sub-divisions: 2,400 sq.m (validation passed).
 
 Q: Show the latest action taken for each sub-division.
 A: The system displays the current status and latest action for each sub-division, showing which are approved and which are pending with SD or other stages.
+
+=== TEMPORARY SUBDIVISION NUMBERS ===
+
+Q: What is a temporary subdivision number?
+A: A temporary subdivision number is a provisional number assigned by the Deputy Inspector Surveyor (DIS) to each proposed parcel in an ISD (0154) or MERGE (0155) application. It follows the format {existing_subdivision}/T{sequence}, for example 3/T1, 3/T2, 0/T1, 2A/T3. These temporary numbers track the proposed parcels through the workflow until DIS approves the application and assigns final subdivision numbers.
+
+Q: Who assigns temporary subdivision numbers?
+A: The Deputy Inspector Surveyor (DIS) assigns temporary subdivision numbers during the ISD workflow, after the Senior Draughtsman (SD) has prepared the survey sketch. DIS reviews the field report and sketch, verifies compliance with survey rules and area calculations, and then assigns a temporary number to each proposed parcel.
+
+Q: What does the temporary number format mean?
+A: The format is {existing_subdivision}/T{sequence}. The part before /T is the existing subdivision being split (0 if the survey has no prior subdivision). T stands for Temporary. The number after T is a sequence counter. For example, 3/T1 means "first temporary parcel from existing subdivision 3", and 0/T2 means "second temporary parcel from a survey with no prior subdivision".
+
+Q: How do temporary numbers become final subdivision numbers?
+A: When DIS approves the application, each temporary number is replaced with a final subdivision number. Typically, the first parcel (T1) retains the existing subdivision number, and subsequent parcels (T2, T3, etc.) receive new sequential numbers. For example, 3/T1 becomes 3 and 3/T2 becomes 4. Rejected applications never receive final numbers.
+
+Q: Can I see both the temporary and final subdivision numbers for an application?
+A: Yes, the system stores both the temporary subdivision number assigned during processing and the final new subdivision number assigned after DIS approval. For approved applications, you can see both; for rejected or pending applications, only the temporary number exists.
 
 === HANDOFF TO SENIOR DRAUGHTSMAN (SD) ===
 

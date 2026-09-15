@@ -15,8 +15,16 @@ from sqlalchemy import select
 
 async def run_all_tests():
     async with AsyncSessionLocal() as db:
-        res = await db.execute(select(SISOfficer).where(SISOfficer.id == 'de221b0e-41e6-4389-89a0-fd62e935d1cb'))
-        officer_model = res.scalar_one()
+        # build_app_tables.py regenerates officer UUIDs on every run, so a
+        # hardcoded id names an officer that no longer exists. Resolve the
+        # first active officer by employee_id instead -- stable across rebuilds.
+        res = await db.execute(
+            select(SISOfficer).where(SISOfficer.is_active.is_(True))
+            .order_by(SISOfficer.employee_id).limit(1))
+        officer_model = res.scalars().first()
+        if officer_model is None:
+            print('No active officer in the database -- run build_app_tables first.')
+            return
         jurisdiction_data = await get_officer_jurisdiction_ids(officer_model.id, db)
         all_jur_ids = (
             jurisdiction_data['district_ids'] +
@@ -32,8 +40,8 @@ async def run_all_tests():
             name_tamil=officer_model.name_tamil,
             email=officer_model.email,
             designation=officer_model.designation,
-            jurisdiction_type='block',
-            jurisdiction_name='Block B1',
+            jurisdiction_type=jurisdiction_data.get('jurisdiction_type', 'ward'),
+            jurisdiction_name=jurisdiction_data.get('jurisdiction_name', ''),
             jurisdiction_ids=all_jur_ids,
             district_ids=jurisdiction_data['district_ids'],
             taluk_ids=jurisdiction_data['taluk_ids'],

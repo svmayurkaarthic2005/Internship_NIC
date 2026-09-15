@@ -1,0 +1,135 @@
+=================================================================
+SIS CHATBOT - SERVICE CHARGE / FEE / MONEY TEST QUESTIONS (40)
+=================================================================
+Data note: fee_amount / challan_number / payment_mode on `applications`
+are projected from the NISD/ISD application-info extracts. 162 of 209
+applications carry a fee record; modes seen are bank, SRO and CP.
+
+=================================================================
+SECTION 1: FEE ON ONE APPLICATION (12 Questions)
+=================================================================
+
+1. What is the fee amount for application 2025/0154/28/000286?
+   விண்ணப்பம் 2025/0154/28/000286 கட்டணம் எவ்வளவு?
+
+2. How much was paid for 2025/0154/28/001635?
+   2025/0154/28/001635 க்கு எவ்வளவு செலுத்தப்பட்டது?
+
+3. What is the challan number for 2025/0154/28/000286?
+   2025/0154/28/000286 சலான் எண் என்ன?
+
+4. What is the payment mode for 2024/0154/28/002252?
+   2024/0154/28/002252 கட்டண முறை என்ன?
+
+5. Show the fee and challan number for 2023/0154/28/000571
+   2023/0154/28/000571 கட்டணம் மற்றும் சலான் எண்ணைக் காட்டு
+
+6. 2025/0154/28/000286 kku evvalavu fee?
+   2025/0154/28/000286 க்கு எவ்வளவு கட்டணம்?
+
+7. Was the fee paid for 2026/0154/28/001197?
+   2026/0154/28/001197 க்கு கட்டணம் செலுத்தப்பட்டதா?
+
+8. Fee amount of 2025/0154/28/001637
+   2025/0154/28/001637 இன் கட்டணத் தொகை
+
+9. What is the payment amount for 2025/0154/28/001633?
+   2025/0154/28/001633 க்கான கட்டணத் தொகை என்ன?
+
+10. Which payment mode was used for 2023/0154/28/000572?
+    2023/0154/28/000572 க்கு எந்த கட்டண முறை பயன்படுத்தப்பட்டது?
+
+11. challan no 2025/0154/28/000286
+    சலான் எண் 2025/0154/28/000286
+
+12. Show me the fee, challan and payment mode for 2024/0154/28/002252
+    2024/0154/28/002252 கட்டணம், சலான், கட்டண முறை காட்டு
+
+=================================================================
+SECTION 2: FEE SCHEDULE / SERVICE CHARGE GUIDE (12 Questions)
+=================================================================
+
+13. What is the service charge for an ISD application?
+    ISD விண்ணப்பத்திற்கான சேவை கட்டணம் என்ன?
+
+14. How much does a NISD application cost?
+    NISD விண்ணப்பம் எவ்வளவு செலவாகும்?
+
+15. What is the CSC service charge?
+    CSC சேவை கட்டணம் என்ன?
+
+16. What is the government fee for a MERGE application?
+    MERGE விண்ணப்பத்திற்கான அரசு கட்டணம் என்ன?
+
+17. Compare the fees for 0153, 0154 and 0155
+    0153, 0154, 0155 கட்டணங்களை ஒப்பிடு
+
+18. Is there any fee difference between ISD and NISD?
+    ISD மற்றும் NISD இடையே கட்டண வேறுபாடு உள்ளதா?
+
+19. How much does the citizen pay at a common service centre?
+    பொது சேவை மையத்தில் குடிமகன் எவ்வளவு செலுத்த வேண்டும்?
+
+20. What is the price of a patta transfer application?
+    பட்டா மாறுதல் விண்ணப்பத்தின் விலை என்ன?
+
+21. ISD ku enna fee?
+    ISD க்கு என்ன கட்டணம்?
+
+22. service charge details
+    சேவை கட்டண விவரங்கள்
+
+23. Are there any charges for a merge application?
+    இணைப்பு விண்ணப்பத்திற்கு கட்டணம் உள்ளதா?
+
+24. What does the CSC charge on top of the government fee?
+    அரசு கட்டணத்திற்கு மேல் CSC என்ன வசூலிக்கிறது?
+
+=================================================================
+SECTION 3: FEE COLLECTION SUMMARY (10 Questions)
+=================================================================
+
+25. What is the total fee collected from my applications?
+    என் விண்ணப்பங்களிலிருந்து வசூலிக்கப்பட்ட மொத்த கட்டணம் என்ன?
+
+26. How much money was collected in my jurisdiction?
+    என் அதிகார எல்லையில் எவ்வளவு பணம் வசூலிக்கப்பட்டது?
+
+27. Total fee collected for ISD applications
+    ISD விண்ணப்பங்களுக்கான மொத்த கட்டணம்
+
+28. Total fee collected for NISD applications
+    NISD விண்ணப்பங்களுக்கான மொத்த கட்டணம்
+
+29. Fee collection breakdown by payment mode
+    கட்டண முறை வாரியான வசூல் விவரம்
+
+30. How much fee did I collect in June 2026?
+    ஜூன் 2026 இல் எவ்வளவு கட்டணம் வசூலானது?
+
+31. Total challan amount for my files
+    என் கோப்புகளுக்கான மொத்த சலான் தொகை
+
+32. How many of my applications have a fee record?
+    என் விண்ணப்பங்களில் எத்தனைக்கு கட்டணப் பதிவு உள்ளது?
+
+33. Show fee collection statistics
+    கட்டண வசூல் புள்ளிவிவரங்களைக் காட்டு
+
+34. Total revenue from applications this year
+    இந்த ஆண்டு விண்ணப்பங்களிலிருந்து மொத்த வருவாய்
+
+=================================================================
+SECTION 4: NEGATIVE / BOUNDARY CASES (6 Questions)
+=================================================================
+
+35. Who is in charge of ward 102?          (not a fee question)
+36. How long has 2026/0154/28/001197 been pending?   (not a fee question)
+37. What is the fee for 2022/0153/28/000254?   (outside this officer's ward)
+38. What is the fee amount?                (no application named)
+39. Show my pending applications           (not a fee question)
+40. What is service code 0154?             (guide, not a fee total)
+
+=================================================================
+END OF TEST QUESTIONS
+=================================================================

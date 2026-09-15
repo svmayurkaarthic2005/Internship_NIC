@@ -1,0 +1,280 @@
+# Follow-up question test set — English, Tamil, Tanglish, with intentional
+# spelling mistakes. One question per line. Grouped by scenario; run each
+# group after the seed question shown in its header comment.
+#
+# Usage: ask the seed question first, then each follow-up in the group
+# against the same session, one at a time.
+
+# =====================================================================
+# GROUP 1 — after "show pending applications" (2 rows: ISD + NISD)
+# =====================================================================
+applicant details
+applicant detials
+applcant details
+applicant detail
+applicant info
+applicant infomation
+who are the applicants
+who r the applicants
+give me applicant details
+give me aplicant details
+both
+both please
+both of them
+both applications
+all of them
+everything
+give me details of both
+i need details of both the applications
+i need both
+show me full details
+can i get the full details
+can i get complete details
+elaborate
+expand on that
+break down both
+breakdown please
+details of the first one
+details of the 1st one
+details of the second one
+show details for the 2nd one
+விண்ணப்பதாரர் விவரம்
+விண்ணப்பதாரர் விபரம் கொடு
+விண்ணபதாரர் விவரங்கள்
+இரண்டும் காட்டு
+இரண்டு விண்ணப்பங்களின் விவரம்
+முழு விவரம் கொடு
+vinnappadhaarar vivaram kudu
+applicant vivaram sollu
+rendume kaatu
+both-a kaatunga
+full details kudunga
+
+# =====================================================================
+# GROUP 2 — after applicant details were just given (test the "both"
+# regression: must STAY on applicant focus, not revert to application card)
+# =====================================================================
+both
+both of them
+show them again
+repeat that
+once more
+again please
+one more time
+ok show again
+மறுபடி காட்டு
+திரும்ப சொல்லு
+again sollunga
+
+# =====================================================================
+# GROUP 3 — after "which applications are unscheduled" (names the number now)
+# =====================================================================
+is it overdue
+is it overdu
+is that overdue
+is it over due
+when is it due
+when is the deadline
+what is the deadline for it
+which application number is that
+what application number is that
+what is the application number
+give me the number
+which one is it
+what type is it
+is it isd or nisd
+what survey number is it
+which ward is it in
+is the applicant name known
+what is the applicant name for it
+எது தாமதமானது
+அது தாமதமா
+அதன் விண்ணப்ப எண் என்ன
+எந்த விண்ணப்பம் அது
+adhu late aachaa
+adhu overdue-aa
+enna application number adhu
+
+# =====================================================================
+# GROUP 4 — channel follow-ups (SRO / CSC / citizen / sub registrar)
+# =====================================================================
+applications from SRO
+applications from sro
+aplications from SRO
+applictions from sro
+what are the applications from SRO?
+wat are the applications from sro
+show applications from sub registrar
+show applictions from sub registrer
+show aplications from sub-registrar
+applications from CSC
+aplications from csc
+applictions from CSC
+csc aplications
+csc applcations
+show csc applications
+list csc applications
+csc application list
+from csc how many applications
+how many applications from csc
+applications from citizen
+aplications from citizen
+applictions from citzen
+citizn applications
+citizen aplications
+show ctizen applications
+applications from e-sevai
+applications from esevai
+applications from e sevai
+aplications from e-sevai
+applications from e-seva
+show me sro and csc applications
+show sro & csc applications
+csc மற்றும் sro விண்ணப்பங்கள்
+சிட்டிசன் விண்ணப்பங்கள்
+சிட்டிசன் மூலமான விண்ணப்பங்கள் காட்டு
+csc la irundhu ethana application irukku
+sro la irundhu vandha applications
+citizen mூலம் வந்த விண்ணப்பங்கள்
+
+# =====================================================================
+# GROUP 5 — status / type combos (multi-status labeling)
+# =====================================================================
+ISD pending and completed applications
+isd pending n completed
+isd pending and completd applications
+show isd pending & completed
+NISD pending and completed counts
+nisd pending n completed counts
+nisd pending and complted count
+how many isd pending and completed
+how many ISD pending and complete
+how many approved applications
+how many aproved applications
+how many approvd applications
+how many pending applications
+how many pendng applications
+how many pendig applications
+how many rejected applications
+how many rejcted applications
+how many rejeted applications
+show completed applications
+show completd applications
+give me complete details of my applications
+give me complet details of applications
+approved and rejected history
+approved n rejected
+approved & rejected
+total applications
+totl applications
+show total applications
+நிலுவை மற்றும் முடிந்த விண்ணப்பங்கள்
+நிலுவையிலுள்ள மற்றும் அங்கீகரிக்கப்பட்ட விண்ணப்பங்கள்
+எத்தனை அங்கீகரிக்கப்பட்ட விண்ணப்பங்கள்
+எத்தனை நிராகரிக்கப்பட்ட விண்ணப்பங்கள்
+pending mattum completed application evlo irukku
+approved evlo irukku
+reject aana applications evlo
+
+# =====================================================================
+# GROUP 6 — pronoun / aggregate follow-ups over a listed set
+# =====================================================================
+how many of them are approved
+how many of them are approvd
+how many of these are pending
+which of them are ISD
+which of them are isd
+which of these are nisd
+do they have an IGRS number
+do they have an igrs no
+do they have can numbers
+show only NISD
+show only isd
+show only pending
+which one is oldest
+which one is the oldest
+which is oldest
+which is the oldst
+which is newest
+which is the latest
+what is the total fee
+what is the total fee for these
+total fee for them
+அவற்றில் எத்தனை அங்கீகரிக்கப்பட்டவை
+இவற்றில் எது பழையது
+எது பழையது
+எது புதியது
+அவர்களுக்கு igrs எண் உண்டா
+evlo approved irukku
+edhu pazhusu
+edhu pudhusu
+avanga kitta igrs number irukka
+
+# =====================================================================
+# GROUP 7 — field-visit follow-ups (singular, after a status/visit answer)
+# =====================================================================
+has the field visit happened
+has the feild visit happened
+was it visited
+when was it scheduled
+when was it schedule
+when is it scheduled
+what date was it scheduled
+is the visit completed
+is the vist completed
+did the visit happen
+has it been inspected
+was the field visit done
+கள ஆய்வு நடந்ததா
+கள ஆய்வு எப்போது நடக்கும்
+எப்போது திட்டமிடப்பட்டது
+field visit aachaa
+eppo schedule pannanga
+visit mudinjachaa
+
+# =====================================================================
+# GROUP 8 — event-style singular follow-ups ("when was it approved/rejected")
+# =====================================================================
+when was it approved
+when was it approvd
+when was it rejected
+when was it rejcted
+when was it submitted
+when was it submited
+when was it filed
+which block is it from
+which ward is it in
+what is the survey number
+what survey no is it
+என்று ஒப்புதல் கிடைத்தது
+எப்போது நிராகரிக்கப்பட்டது
+எப்போது சமர்ப்பிக்கப்பட்டது
+எந்த வார்டு இது
+eppo approve aachu
+eppo reject aachu
+eppo submit pannanga
+endha ward-la irukku
+
+# =====================================================================
+# GROUP 9 — "of the previous question" / recall-style follow-ups
+# =====================================================================
+what is the CAN number of the previous question
+what is the can no of the previous questn
+what was the status of my previous application
+whats the status of my previus application
+what is the district of the previous one
+what was my last message about
+முந்தைய கேள்வியின் CAN எண் என்ன
+முந்தைய விண்ணப்பத்தின் நிலை என்ன
+munadhaiya kelvi CAN number enna
+
+# =====================================================================
+# GROUP 10 — deliberately self-contained (must NOT be treated as follow-ups)
+# =====================================================================
+pending versus approved
+average time to approve
+compare isd and nisd
+how many applications do i have in total
+show my jurisdiction
+நிலுவை மற்றும் அங்கீகரிக்கப்பட்டவை ஒப்பீடு
+சராசரி நேரம் என்ன

@@ -1,0 +1,9 @@
+application_number,applicant_name,application_type,status,ward,fee,submission_date
+2026/0154/28/001280,Muthu Krishnan,ISD,in_progress,102,530,12-01-2026
+2026/0153/28/000980,Rajeswari Ammal,NISD,pending,002,150,05-02-2026
+2025/0153/28/000512,Balamurugan K,NISD,approved,002,150,14-03-2025
+2025/0154/28/000734,Sarojini Devi,ISD,approved,103,530,02-04-2025
+2024/0153/28/000201,Anbarasan P,NISD,rejected,102,150,19-07-2024
+2025/0155/28/000045,Vembu Iyer,MERGE,approved,103,530,growth budget: =SUM(F2:F6)
+2024/0154/28/000188,Kalaivani R,ISD,rejected,002,530,09-11-2024
+2026/0153/28/001102,Selvaraj T,NISD,pending,102,150,20-02-2026

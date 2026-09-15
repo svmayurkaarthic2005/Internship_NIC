@@ -1,0 +1,56 @@
+# Completed (approved / rejected) applications — block, applied date, decision date, status.
+# One question per line. Blank lines and #-comments are ignored.
+# Ground truth: applications.current_status in (approved, rejected);
+# geography via survey_numbers -> blocks -> wards; applied date =
+# applications.submission_date; decision date = performed_at of the terminal
+# workflow_history hop (to_stage COMPLETED / REJECTED).
+
+# --- listing completed work ---
+show completed applications
+list my completed applications
+show my approved applications
+list my rejected applications
+how many applications have i completed
+how many approved applications do i have
+how many rejected applications do i have
+what is my completion rate
+
+# --- which block / ward are they from ---
+which block are my completed applications from
+which ward are my approved applications in
+show my approved applications with the block
+list completed applications block wise
+which block is {APP} from
+which ward is {APP} in
+what is the block code of {APP}
+
+# --- when was it applied ---
+when was {APP} applied
+when was {APP} submitted
+what is the application date of {APP}
+on which date was {APP} received
+{APP} submission date
+when was my last approved application submitted
+
+# --- when was it approved / rejected ---
+when was {APP} approved
+on what date was {APP} approved
+what is the approval date of {APP}
+when was {APP} closed
+when was {APP_REJ} rejected
+what is the rejection date of {APP_REJ}
+when was my last approved application approved
+how long did {APP} take from application to approval
+
+# --- status ---
+what is the status of {APP}
+is {APP} approved
+is {APP_REJ} rejected
+what stage is {APP} at
+why was {APP_REJ} rejected
+
+# --- Tamil / Tanglish ---
+முடிக்கப்பட்ட விண்ணப்பங்கள்
+{APP} எப்போது அங்கீகரிக்கப்பட்டது
+{APP} எந்த பிளாக்
+approve aana applications evlo

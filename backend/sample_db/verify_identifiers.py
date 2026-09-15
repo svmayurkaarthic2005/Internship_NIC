@@ -31,7 +31,7 @@ if str(_ROOT) not in sys.path:
 from sqlalchemy import create_engine, text
 
 from backend.sample_db.build_app_tables import DB_URL
-from backend.sample_db.identifiers import CAN_LENGTH, aadhaar_valid, can_valid
+from backend.sample_db.identifiers import CAN_LENGTHS, aadhaar_valid, can_valid
 
 # Every extract that carries an aadhaar_number column.
 AADHAAR_TABLES = [
@@ -67,17 +67,18 @@ def main() -> int:
             "FROM applications")).all()
         check(bool(apps), f"{len(apps)} applications projected")
 
-        no_channel = [a[0] for a in apps if a[1] not in CAN_LENGTH]
+        no_channel = [a[0] for a in apps if a[1] not in CAN_LENGTHS]
         check(not no_channel,
               f"every application has a known channel ({len(no_channel)} without)"
               + (f" e.g. {no_channel[:3]}" if no_channel else ""))
 
-        for channel, want in CAN_LENGTH.items():
+        for channel, want in CAN_LENGTHS.items():
             group = [a for a in apps if a[1] == channel]
             bad = [(a[0], a[2]) for a in group if a[2] and not can_valid(a[2], channel)]
             check(not bad,
                   f"{channel}: {len(group)} applications, "
-                  f"{sum(1 for a in group if a[2])} with a CAN, all {want} digits"
+                  f"{sum(1 for a in group if a[2])} with a CAN, "
+                  f"all {' or '.join(str(n) for n in want)} digits"
                   + (f" -- offenders {bad[:3]}" if bad else ""))
 
         missing = [a[0] for a in apps if not a[2]]

@@ -60,23 +60,28 @@
     .input-container-new {
         gap: var(--spacing-sm);
     }
-    
+
     .message-input-new {
-        font-size: var(--font-size-base);
+        /* Below 16px, iOS Safari auto-zooms the whole page on focus (it does
+           this for ANY input/textarea whose computed font-size is under 16px)
+           and the officer has to pinch back out by hand -- the "input isn't
+           smooth" feel this fixes. --font-size-lg is exactly 16px, so this
+           stops the zoom without changing how the box reads on desktop. */
+        font-size: var(--font-size-lg);
     }
-    
+
     .btn-send-new,
     .btn-icon-action-new {
         width: 32px;
         height: 32px;
     }
-    
+
     .send-icon-new,
     .attach-icon-new {
         width: 16px;
         height: 16px;
     }
-    
+
     /* Toast */
     .toast-container {
         right: var(--spacing-lg);
@@ -133,6 +138,13 @@
         font-size: var(--font-size-xs);
         gap: 0;
     }
+
+    /* Two header buttons (New Chat + Logout) at this width: icon-only, with
+       the label still reachable via aria-label/title, keeps both comfortably
+       inside a 320px viewport instead of wrapping or overflowing. */
+    .icon-btn-new span {
+        display: none;
+    }
     
     /* Messages */
     .chat-messages-new {
@@ -162,9 +174,10 @@
         gap: var(--spacing-xs);
         padding: var(--spacing-sm);
     }
-    
+
     .message-input-new {
-        font-size: var(--font-size-base);
+        /* See the 768px breakpoint above -- same iOS auto-zoom fix. */
+        font-size: var(--font-size-lg);
     }
     
     .btn-send-new,
@@ -289,6 +302,7 @@
     :root {
         --primary: #0B3A99;
         --primary-dark: #051F52;
+        --primary-rgb: 11, 58, 153;
         --danger: #B71C1C;
         --success: #065F46;
     }

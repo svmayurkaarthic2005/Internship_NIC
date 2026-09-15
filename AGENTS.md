@@ -9,7 +9,6 @@
 - **Embeddings**: `nomic-embed-text` via Ollama
 - **Frontend**: Vanilla HTML/CSS/JS (no framework)
 - **Auth**: JWT (python-jose + passlib/bcrypt)
-- **Speech**: Faster-Whisper for STT
 
 ---
 
@@ -36,8 +35,9 @@ python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 python serve_frontend.py       # Serves on http://localhost:3000
 
 # Database integrity checks
-python verify_no_duplicates.py   # Quick duplicate check
-python check_missing_values.py   # Deep field validation
+python backend/sample_db/verify_sample_db.py     # CSV-shaped layer
+python -m backend.sample_db.verify_identifiers   # Aadhaar + CAN, both layers
+python check_missing_values.py                   # ORM layer field validation
 
 # Check login credentials
 python check_login_credentials.py  # Shows current officers and passwords
@@ -68,22 +68,19 @@ nic_internship/
 │   ├── schemas.py            # Pydantic schemas (StandardResponse, OfficerContext, etc.)
 │   ├── dependencies.py       # get_current_officer() JWT dependency
 │   ├── ingest.py             # Document ingestion into pgvector
-│   ├── seed.py               # Full database seeding (officers, applications, etc.)
 │   ├── schema.sql            # Raw SQL schema reference
 │   ├── routers/
 │   │   ├── auth.py           # POST /auth/login
 │   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   ├── survey.py         # Survey endpoints
-│   │   └── speech.py         # TTS/STT endpoints
 │   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~6500 lines) — entry point for all chat logic
+│   │   ├── chatbot.py        # Main orchestrator (~16500 lines) — entry point for all chat logic
 │   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
 │   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
 │   │   ├── embeddings.py     # Embedding generation via Ollama
-│   │   ├── auth_service.py   # Login, JWT creation/verification
-│   │   └── speech_service.py # Faster-Whisper STT
+│   │   └── auth_service.py   # Login, JWT creation/verification
 │   └── utils/
 │       ├── fuzzy.py          # Fuzzy month/token matching for typo tolerance
 │       ├── helpers.py        # Misc helpers
@@ -93,7 +90,6 @@ nic_internship/
 │   ├── chatbot.html
 │   ├── css/
 │   └── js/
-├── vectorstore/              # pgvector document store (via PostgreSQL)
 ├── .env                      # Secrets (not committed)
 ├── .env.example              # Template
 ├── requirements.txt
@@ -122,15 +118,27 @@ POST /api/v1/chat/stream
 
 ### Intent Priority Order (in `rag.py`)
 
-1. `greeting` — "Hello", "வணக்கம்"
-2. `farewell` — "Bye", "நன்றி"
-3. `joint_owner_check` — "Who are the joint owners?"
-4. `application_status` — "Status of APP-2024-000001"
-5. `check_documents` — "What documents are missing?"
-6. `check_sale_deed` — "Is sale deed registered?"
-7. `is_nisd_or_isd` — "What type is this application?"
-8. `field_specific_query` — "What is the applicant name?"
-9. `general_query` — Falls back to RAG/vector search
+A simplified sketch — `parse_intent()` actually resolves ~60 intents by
+token-boundary + typo-tolerant matching; see CLAUDE.md's "Intent Priority
+Order" section for the full, current list (submission channels, IGRS/CAN,
+comparisons, field visits, sub-division desk, the agent fallback, …).
+
+1. `greeting` — "Hello", "hi there", "வணக்கம்", and the sign-offs and
+   thank-yous too ("bye", "நன்றி", "nandri"). There is **no `farewell`
+   intent**; the greeting handler tells hello, thanks and goodbye apart.
+2. `joint_owner_check` — "Who are the joint owners?"
+3. `application_status` — "Status of 2025/0154/28/000001", and per-application
+   field lookups ("what is the applicant name?"). There is no separate
+   `field_specific_query` intent.
+4. `check_documents` — "What documents are missing?"
+5. `check_sale_deed` — "Is sale deed registered?"
+6. `is_nisd_or_isd` — "What type is this application?"
+7. `service_code_lookup` — "what is 0153?", and the type words too ("what is
+   ISD?" is service code 0154, looked up rather than generated)
+8. `general_query` — falls back to the agent tool-calling layer, then plain RAG/vector search
+
+`python -m backend.sample_db.test_intent_coverage` prints the live list; there
+are 67 intents, so treat any enumeration in prose as a sketch.
 
 ### Language Detection
 
@@ -151,19 +159,24 @@ the ORM projection:
 - **Aadhaar** — synthetic, 12 digits, leading digit 2-9, valid Verhoeff check
   digit, derived from the person's name so one person keeps one number across
   every extract and across both layers.
-- **CAN** (Citizen Access Number) — the length identifies the channel: **15
-  digits** for a Common Service Centre / e-Sevai submission, **12 digits** for
-  one the citizen filed on the portal. `urban_application_log.source_name`
-  decides the channel (`-` = citizen, an operator code = CSC) and the length is
-  enforced against it when `applications` is projected. Layer 1 keeps the
-  extract's value verbatim.
+- **CAN** (Citizen Access Number) — the length identifies the **counter that
+  issued it**, not the channel: 15 digits from a Common Service Centre /
+  e-Sevai counter, 12 digits from the TN portal. The channel itself is derived
+  by `can_channel()` from `urban_application_log.source_name` + `camp_flag`:
+  `-` (no operator account) = `sub_registrar`, a bare mobile number with
+  `camp_flag='P'` = `citizen`, everything else attended = `CSC`. See
+  CLAUDE.md's "Submission channels" section for the full derivation and the
+  cross-checks that confirm it.
 
 `python -m backend.sample_db.verify_identifiers` re-checks both in the built DB.
 
 ### Application Types
-- **ISD** — Individual Sub-Division
-- **NISD** — Non-Individual Sub-Division
-- **MERGE** — Merge application (multiple survey numbers combined)
+- **ISD** (`0154`) — **Involving Sub-Division**: the parcel is split, so the file
+  needs a field inspection and an SD sketch.
+- **NISD** (`0153`) — **Not Involving Sub-Division**: a straight patta transfer of
+  the whole survey number, no new sub-division and no field visit.
+- **MERGE** (`0155`) — Merge application (several sub-divisions combined); follows
+  the ISD chain.
 
 ### Officer Hierarchy
 - **Block SIS** → narrowest jurisdiction
@@ -197,10 +210,15 @@ assumed — the applications whose wording says "Send to SIS" are sitting at rol
 
 | role | who | stage |
 |---|---|---|
-| `1` | the CSC / e-Sevai operator who submits | not a desk (no `from_stage`) |
+| `1` | the CSC / e-Sevai operator or citizen who submits | not a desk (no `from_stage`) |
 | `44`, `42`, `41` | the surveyor's office | `SIS` |
 | `8` | Senior Draughtsman | `SD` |
+| `12` | Deputy Inspector Surveyor (DIS) | `DIS` |
 | `16` | ZDT / HQDT, who approves and generates the order | `TAHSILDAR` |
+| `59`, `53` | higher revenue desks (ZDT / DRO) | `TAHSILDAR` |
+
+Note: no seeded ISD application actually reaches `DIS` or `TAHSILDAR` — see
+CLAUDE.md's "Workflow Roles" section for how ISD/NISD actually flow in this data.
 
 `workflow_history.performed_at` comes from `last_updated_datetime`, not
 `action_date`: a file often clears three desks in one day, and dating the hops
@@ -236,7 +254,7 @@ statuses to fit.
 
 ### Service Layer
 
-- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~6500 lines) by design; new intent handlers belong here or in `postgres.py`.
+- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~16500 lines) by design; new intent handlers belong here or in `postgres.py`.
 - **`postgres.py`** contains *only* database query functions. No LLM calls, no intent logic.
 - **`rag.py`** contains *only* NLP utilities: intent detection, language detection, extraction helpers, LLM calls, and prompt builders.
 - Numeric/count data **always** comes from the database directly. Never let the LLM generate counts or application numbers — this prevents hallucination.

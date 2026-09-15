@@ -1,26 +1,33 @@
 /* ========== DESIGN SYSTEM VARIABLES ========== */
 :root {
-    /* Colors - Primary (Blue theme from screenshots) */
-    --primary: #1B5AAF;          /* Main blue color */
-    --primary-dark: #163F82;     /* Darker blue for hover */
-    --primary-light: #E8F1FC;    /* Very light blue backgrounds */
-    
+    /* Colors - Primary (refreshed indigo-blue, still resolves to the same
+       hue family as the old #1B5AAF so nothing that reads "blue = primary"
+       elsewhere breaks) */
+    --primary: #2951C4;          /* Main brand color */
+    --primary-dark: #1E3A9E;     /* Darker shade for hover/active */
+    --primary-light: #ECF1FE;    /* Very light tint for backgrounds */
+    --primary-rgb: 41, 81, 196;  /* For rgba() shadows/glows */
+    --accent: #6D5EF0;           /* Secondary accent (violet) used in gradients */
+    --primary-gradient: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+
     /* Colors - Secondary */
-    --secondary: #E8F1FC;
-    
+    --secondary: #ECF1FE;
+
     /* Colors - Semantic */
     --success: #16A34A;
     --warning: #F59E0B;
     --danger: #DC2626;
-    --info: #1B5AAF;
-    
+    --danger-dark: #B91C1C;      /* Danger hover/active state */
+    --info: #2951C4;
+
     /* Colors - Neutral (Light theme only) */
-    --background: #F5F7FA;       /* Off-white background */
+    --background: #F4F6FB;       /* Off-white background */
     --surface: #FFFFFF;          /* Pure white cards/surfaces */
-    --border: #E2E8F0;           /* Light gray borders */
-    --text-primary: #1E293B;     /* Dark text */
-    --text-secondary: #64748B;   /* Medium gray text */
-    
+    --border: #E4E9F2;           /* Light gray borders */
+    --text-primary: #1B2436;     /* Dark text */
+    --text-secondary: #5C6B84;   /* Medium gray text */
+    --text-muted: #94A3B8;       /* Placeholder / de-emphasised text */
+
     /* Spacing */
     --spacing-xs: 4px;
     --spacing-sm: 8px;
@@ -54,33 +61,38 @@
     --line-height-loose: 1.7;
     
     /* Border radius */
-    --radius-sm: 6px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
+    --radius-sm: 8px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --radius-2xl: 28px;
     --radius-full: 50%;
-    
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
-    --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1), 0 10px 10px rgba(0, 0, 0, 0.04);
-    --shadow-2xl: 0 25px 50px rgba(0, 0, 0, 0.25);
-    
+
+    /* Shadows - softer and slightly tinted toward the brand color instead of
+       flat black, which reads as more contemporary than a pure grey shadow */
+    --shadow-sm: 0 1px 2px rgba(27, 36, 54, 0.05);
+    --shadow: 0 2px 8px rgba(27, 36, 54, 0.06), 0 1px 2px rgba(27, 36, 54, 0.05);
+    --shadow-md: 0 6px 16px rgba(27, 36, 54, 0.08), 0 2px 6px rgba(27, 36, 54, 0.05);
+    --shadow-lg: 0 12px 28px rgba(27, 36, 54, 0.10), 0 4px 10px rgba(27, 36, 54, 0.06);
+    --shadow-xl: 0 24px 48px rgba(27, 36, 54, 0.14), 0 8px 16px rgba(27, 36, 54, 0.06);
+    --shadow-2xl: 0 32px 64px rgba(27, 36, 54, 0.22);
+    /* A brand-colored glow, used sparingly on primary actions/focus rings */
+    --shadow-glow: 0 8px 24px rgba(var(--primary-rgb), 0.28);
+
     /* Transitions */
-    --transition-fast: 150ms ease-out;
-    --transition-base: 200ms ease-out;
-    --transition-slow: 300ms ease-out;
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Force light theme - override browser dark mode preference */
 @media (prefers-color-scheme: dark) {
     :root {
         /* Keep light theme colors even if user prefers dark mode */
-        --background: #F5F7FA;
+        --background: #F4F6FB;
         --surface: #FFFFFF;
-        --border: #E2E8F0;
-        --text-primary: #1E293B;
-        --text-secondary: #64748B;
+        --border: #E4E9F2;
+        --text-primary: #1B2436;
+        --text-secondary: #5C6B84;
     }
 }

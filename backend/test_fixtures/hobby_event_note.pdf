@@ -1,0 +1,52 @@
+%PDF-1.4
+% synthetic fixture
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 521 >>
+stream
+BT
+/F1 15 Tf
+50 760 Td
+(Fictional Hobby Event Note) Tj
+/F1 10 Tf
+0 -28 Td
+() Tj
+0 -15 Td
+(This PDF is unrelated to land records and is supplied only to test a text-layer PDF) Tj
+0 -15 Td
+(attachment.) Tj
+0 -15 Td
+(The chess club mock event starts at 4:00 PM on Saturday. The reading club mock event) Tj
+0 -15 Td
+(starts at 11:00 AM on Sunday.) Tj
+0 -15 Td
+(Bring a notebook to the science club discussion on infrared telescopes. No venue, ticket) Tj
+0 -15 Td
+(price, or organiser contact is stated in this fixture.) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 4 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+5 0 obj
+<< /Type /Catalog /Pages 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000029 00000 n 
+0000000099 00000 n 
+0000000671 00000 n 
+0000000797 00000 n 
+0000000854 00000 n 
+trailer
+<< /Size 6 /Root 5 0 R >>
+startxref
+903
+%%EOF

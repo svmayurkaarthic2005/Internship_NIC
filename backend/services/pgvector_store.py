@@ -117,12 +117,32 @@ def init_pgvector() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Write guard
+#   The corpus is reference data: built offline, read by every officer,
+#   identical for all of them. Nothing in a conversation may change it.
+# ---------------------------------------------------------------------------
+
+def _refuse_during_chat(action: str) -> None:
+    from backend.services.readonly_guard import ReadOnlyViolation, in_chat_turn
+    if in_chat_turn():
+        logger.error(f"pgvector_store: BLOCKED attempt to {action} during a chat turn")
+        raise ReadOnlyViolation(
+            f"The assistant may not {action}. The reference corpus is built "
+            f"offline by 'python -m backend.ingest' and is read-only to chat."
+        )
+
+
+# ---------------------------------------------------------------------------
 # add_documents
 # ---------------------------------------------------------------------------
 
 def add_documents(docs: List[Dict[str, Any]]) -> None:
     """
     Embed and upsert document chunks into ``knowledge_embeddings``.
+
+    Refused outright during a chat turn. The reference corpus is built offline
+    by ``python -m backend.ingest``; a conversation reads it and never writes
+    it, so a call arriving from a chat turn is a bug, not a feature.
 
     Accepts the following dict shape per document:
 
@@ -150,6 +170,7 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
     Embeddings are generated in one batch call to Ollama, then each row is
     upserted individually inside a transaction.
     """
+    _refuse_during_chat("add documents to knowledge_embeddings")
     if not docs:
         logger.warning("add_documents called with empty list")
         return
@@ -232,6 +253,100 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _lexical_search — keyword fallback when the embedding endpoint is unavailable
+# ---------------------------------------------------------------------------
+
+_LANG_ACCEPT = {
+    "en": ("en", "english", "bilingual", "tanglish"),
+    "ta": ("ta", "tamil", "bilingual", "tanglish"),
+}
+_LANG_MAP = {"english": "en", "tamil": "ta"}
+
+
+def _lexical_search(
+    query: str,
+    n_results: int,
+    where_filter: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Postgres full-text ranking over ``knowledge_embeddings.content``.
+
+    Used only when ``generate_embedding`` fails (Ollama's embed endpoint down).
+    It keeps the RAG fallback answering field / concept questions from the
+    corpus instead of handing the LLM nothing. A row is returned only if it
+    actually matches the tsquery, so an off-domain query still yields ``[]`` --
+    the "no evidence, no speculation" rule holds without the vector floor.
+
+    ``distance`` is synthesised as ``1 - ts_rank`` purely so the dict shape and
+    the "lower = better" ordering match the vector path; it is not a cosine
+    distance and callers must not compare it against ``RAG_MAX_DISTANCE``.
+    """
+    params: Dict[str, Any] = {"q": query.strip(), "n": n_results}
+    where_clauses = ["tsv @@ websearch_to_tsquery('english', %(q)s)"]
+
+    if where_filter:
+        for col, val in where_filter.items():
+            if col == "language":
+                normalised = _LANG_MAP.get(str(val), str(val))
+                accept = _LANG_ACCEPT.get(normalised, (normalised,))
+                keys = []
+                for j, a in enumerate(accept):
+                    pk = f"flang_{j}"
+                    params[pk] = a
+                    keys.append(f"%({pk})s")
+                where_clauses.append(f"language IN ({', '.join(keys)})")
+            elif col in ("category", "source", "section"):
+                params[f"f_{col}"] = str(val)
+                where_clauses.append(f"{col} = %(f_{col})s")
+
+    sql = f"""
+        WITH scored AS (
+            SELECT content, source, category, section, language, page,
+                   to_tsvector('english', content) AS tsv
+            FROM knowledge_embeddings
+        )
+        SELECT content, source, category, section, language, page,
+               ts_rank(tsv, websearch_to_tsquery('english', %(q)s)) AS rank
+        FROM scored
+        WHERE {' AND '.join(where_clauses)}
+        ORDER BY rank DESC
+        LIMIT %(n)s;
+    """
+
+    conn = _get_sync_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    except Exception as exc:
+        logger.error(f"_lexical_search query error: {exc}")
+        return []
+    finally:
+        conn.close()
+
+    results = [
+        {
+            "content": r["content"],
+            "metadata": {
+                "document_name": r["source"] or "Unknown",
+                "source":        r["source"],
+                "category":      r["category"],
+                "section":       r["section"],
+                "language":      r["language"],
+                "page_number":   r["page"],
+            },
+            "distance": max(0.0, 1.0 - float(r["rank"])),
+            "retrieval": "lexical",
+        }
+        for r in rows
+    ]
+    logger.info(
+        f"_lexical_search (embedding fallback) returned {len(results)} results "
+        f"for query '{query[:60]}'"
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # similarity_search
 # ---------------------------------------------------------------------------
 
@@ -239,6 +354,7 @@ def similarity_search(
     query: str,
     n_results: int = 5,
     where_filter: Optional[Dict[str, Any]] = None,
+    max_distance: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """
     Returns a list of dicts:
@@ -266,17 +382,29 @@ def similarity_search(
         ``{"category": "workflow"}``  →  ``WHERE category = 'workflow'``
 
     Tanglish / no-filter searches omit the WHERE clause entirely.
+
+    ``max_distance`` caps how far a hit may be (cosine distance, lower = more
+    similar) and still be returned. ``None`` uses ``settings.RAG_MAX_DISTANCE``.
+    A query that matches nothing in the corpus then yields ``[]`` instead of
+    the N least-irrelevant chunks — the caller must not present those as
+    grounding.
     """
     if not query or not query.strip():
         logger.warning("similarity_search called with empty query")
         return []
 
+    if max_distance is None:
+        max_distance = getattr(settings, "RAG_MAX_DISTANCE", 2.0)
+
     # ── 1. Embed the query ───────────────────────────────────────────────
     try:
         query_vec = generate_embedding(query.strip())
     except Exception as exc:
-        logger.error(f"Failed to embed query: {exc}")
-        return []
+        # Ollama's embed endpoint is down. Rather than lose every RAG answer,
+        # fall back to Postgres full-text ranking over the same table so
+        # concept / field questions still get grounded.
+        logger.warning(f"Failed to embed query ({exc}); falling back to lexical search")
+        return _lexical_search(query, n_results, where_filter)
 
     # ── 2. Language normalisation (full words → ISO codes) ──────
     _lang_map = {"english": "en", "tamil": "ta"}
@@ -284,13 +412,28 @@ def similarity_search(
     params: Dict[str, Any] = {"vec": str(query_vec), "n": n_results}
     where_clauses: List[str] = []
 
+    # A document tagged 'bilingual' (Tamil + English in one file) must satisfy
+    # both an English and a Tamil filter, so language matching is set-based.
+    _lang_accept = {
+        "en": ("en", "english", "bilingual", "tanglish"),
+        "ta": ("ta", "tamil", "bilingual", "tanglish"),
+    }
+
     if where_filter:
         for col, val in where_filter.items():
-            if col in ("language", "category", "source", "section"):
+            if col == "language":
                 normalised = _lang_map.get(str(val), str(val))
+                accept = _lang_accept.get(normalised, (normalised,))
+                keys = []
+                for j, a in enumerate(accept):
+                    pk = f"filter_language_{j}"
+                    params[pk] = a
+                    keys.append(f"%({pk})s")
+                where_clauses.append(f"language IN ({', '.join(keys)})")
+            elif col in ("category", "source", "section"):
                 param_key = f"filter_{col}"
                 where_clauses.append(f"{col} = %({param_key})s")
-                params[param_key] = normalised
+                params[param_key] = str(val)
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -321,9 +464,14 @@ def similarity_search(
     finally:
         conn.close()
 
-    # ── 5. Format results ───────────────────────────────────────────────────────
+    # ── 5. Format results, dropping anything past the relevance floor ──────────
     results: List[Dict[str, Any]] = []
+    dropped = 0
     for row in rows:
+        dist = float(row["distance"])
+        if dist > max_distance:
+            dropped += 1
+            continue
         results.append(
             {
                 "content": row["content"],
@@ -335,14 +483,21 @@ def similarity_search(
                     "language":      row["language"],
                     "page_number":   row["page"],
                 },
-                "distance": float(row["distance"]),
+                "distance": dist,
             }
         )
 
-    logger.info(
-        f"similarity_search returned {len(results)} results "
-        f"(filter={where_filter})"
-    )
+    if not results and rows:
+        logger.info(
+            f"similarity_search: all {len(rows)} candidates past the relevance "
+            f"floor ({max_distance}); nearest was {float(rows[0]['distance']):.3f} "
+            f"for query '{query[:60]}'"
+        )
+    else:
+        logger.info(
+            f"similarity_search returned {len(results)} results "
+            f"({dropped} past floor {max_distance}, filter={where_filter})"
+        )
     return results
 
 
@@ -354,7 +509,12 @@ def delete_collection() -> None:
     """
     Remove all rows from ``knowledge_embeddings``.
     Use with caution — data is not recoverable.
+
+    Refused outright during a chat turn; see ``add_documents``. Nothing in the
+    application calls this -- it exists for a deliberate operator rebuild -- and
+    the guard is here so that stays true however the module is imported.
     """
+    _refuse_during_chat("truncate knowledge_embeddings")
     conn = _get_sync_conn()
     try:
         with conn.cursor() as cur:

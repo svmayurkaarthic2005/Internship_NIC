@@ -16,11 +16,21 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import re
 import uuid
 import csv
+import unicodedata
 
 try:
     from pypdf import PdfReader
 except ImportError:  # PDF ingestion is optional; .txt/.csv still work without it
     PdfReader = None
+
+try:
+    import docx as _docx  # python-docx
+except ImportError:
+    _docx = None
+
+# Every extension the loader understands. A file dropped into backend/documents/
+# with one of these suffixes is picked up automatically -- no config entry needed.
+SUPPORTED_SUFFIXES = {".txt", ".md", ".csv", ".pdf", ".docx"}
 
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -95,6 +105,43 @@ DOCUMENT_CONFIG = {
 }
 
 
+# Tamil pre-base vowel signs (ெ ே ை and the two-part ொ ோ ௌ). In a PDF these
+# are drawn to the LEFT of their consonant but stored logically AFTER it; a
+# layout engine that emits glyphs in visual order (Chrome's print-to-PDF, many
+# report generators) makes pypdf read "வே" back as "ேவ" — not a real word, and
+# it wrecks both the embedding and the LLM answer. Swap each pre-base sign back
+# behind its consonant cluster, but ONLY when it is not already preceded by a
+# consonant (valid Tamil always has consonant-then-sign, so that case is left
+# untouched).
+_PREBASE = "ெேைொோௌ"   # left-side vowel signs ெ ே ை ொ ோ ௌ
+_CONS = "க-ஹ"                               # base consonants க .. ஹ
+_TAMIL_SWAP_RE = re.compile(f"([{_PREBASE}])((?:[{_CONS}]்)*[{_CONS}])")
+# A pre-base sign not sitting right after a consonant (or after a virama) is
+# misplaced -- the fingerprint of visual-order glyph extraction.
+_TAMIL_MISPLACED_RE = re.compile(f"(?<![{_CONS}])[{_PREBASE}]")
+_TAMIL_PREBASE_RE = re.compile(f"[{_PREBASE}]")
+
+
+def fix_tamil_reordering(text: str) -> str:
+    """Repair visual-order Tamil pre-base vowels from PDF text extraction.
+
+    In valid Tamil every left-side vowel sign (ெ ே ை ொ ோ ௌ) sits immediately
+    after its consonant. A layout engine that lays glyphs left-to-right (Chrome
+    print-to-PDF and many report generators) makes pypdf read "வே" back as "ேவ".
+    Only runs when a meaningful share of pre-base signs are misplaced, then does
+    one left-to-right pass swapping each sign past the consonant cluster that
+    follows it; NFC then recomposes any split two-part sign (ே + ா -> ோ).
+    """
+    if not text or not _TAMIL_PREBASE_RE.search(text):
+        return text
+    total = len(_TAMIL_PREBASE_RE.findall(text))
+    misplaced = len(_TAMIL_MISPLACED_RE.findall(text))
+    if total == 0 or misplaced / total < 0.12:
+        return text
+    fixed = _TAMIL_SWAP_RE.sub(lambda m: m.group(2) + m.group(1), text)
+    return unicodedata.normalize("NFC", fixed)
+
+
 def load_document(file_path: Path) -> str:
     """
     Load document content from file
@@ -107,7 +154,24 @@ def load_document(file_path: Path) -> str:
                 return ""
             reader = PdfReader(str(file_path))
             content = "\n".join(page.extract_text() or "" for page in reader.pages)
+            content = fix_tamil_reordering(content)
             logger.info(f"Loaded PDF document: {file_path.name} ({len(content)} chars)")
+            return content
+
+        if file_path.suffix.lower() == ".docx":
+            if _docx is None:
+                logger.error(f"Skipping {file_path.name}: python-docx not installed "
+                             f"(pip install python-docx) — .docx ingestion unavailable")
+                return ""
+            d = _docx.Document(str(file_path))
+            parts = [p.text for p in d.paragraphs if p.text.strip()]
+            for tbl in d.tables:
+                for row in tbl.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+            content = "\n".join(parts)
+            logger.info(f"Loaded DOCX document: {file_path.name} ({len(content)} chars)")
             return content
 
         if file_path.suffix.lower() == ".csv":
@@ -137,6 +201,73 @@ def load_document(file_path: Path) -> str:
         logger.error(f"Error loading {file_path}: {e}")
         return ""
 
+
+
+def detect_language(content: str) -> str:
+    """Rough language tag for auto-discovered files: english / tamil / bilingual.
+
+    Only "bilingual" when both scripts are a real presence (each >= 25% of the
+    letters); a mostly-Tamil file with an English footnote is "tamil". The RAG
+    retrieval filter accepts a "bilingual" doc for both en and ta queries, so an
+    over-eager "bilingual" tag is safe but a wrong "english"/"tamil" one hides
+    the file from the other language.
+    """
+    sample = content[:8000]
+    tamil = sum(1 for ch in sample if "஀" <= ch <= "௿")
+    latin = sum(1 for ch in sample if ch.isascii() and ch.isalpha())
+    if tamil + latin < 20:
+        return "english"
+    # Both scripts a real presence (each >= 80 letters or >= 12% share) -> the
+    # doc is useful to both en and ta queries. The RAG filter treats 'bilingual'
+    # as matching either language, so leaning this way only ever helps recall.
+    minor = min(tamil, latin)
+    if minor >= 80 or minor / (tamil + latin) >= 0.12:
+        return "bilingual"
+    return "tamil" if tamil > latin else "english"
+
+
+def discover_documents(documents_dir: Path, extra_paths=None) -> dict:
+    """Every ingestable file, keyed by the name used for its chunk ids.
+
+    Starts from DOCUMENT_CONFIG (explicit metadata), then adds any supported file
+    found under documents/ (recursively) or passed on the command line, with
+    auto-detected metadata. Explicit config always wins.
+    """
+    found = {}
+    for name, meta in DOCUMENT_CONFIG.items():
+        p = documents_dir / name
+        if p.exists():
+            found[name] = (p, dict(meta))
+
+    def _add(path: Path, base: Path):
+        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            return
+        key = path.relative_to(base).as_posix() if base in path.parents or base == path.parent else path.name
+        if key in found:
+            return
+        content_head = load_document(path)[:4000] if path.stat().st_size else ""
+        found[key] = (path, {
+            "category": "user_upload",
+            "language": detect_language(content_head),
+            "source": "sis_upload",
+        })
+
+    if documents_dir.exists():
+        for path in sorted(documents_dir.rglob("*")):
+            if path.is_file():
+                _add(path, documents_dir)
+
+    for raw in (extra_paths or []):
+        p = Path(raw).expanduser()
+        if p.is_dir():
+            for path in sorted(p.rglob("*")):
+                if path.is_file():
+                    _add(path, p)
+        elif p.is_file():
+            _add(p, p.parent)
+        else:
+            print(f"  ⚠ path not found: {raw}")
+    return found
 
 
 _HEADING_RE = re.compile(r'^=== .+? ===$', re.MULTILINE)
@@ -209,9 +340,12 @@ def chunk_document(content: str, document_name: str) -> list:
         return []
 
 
-def ingest_documents():
+def ingest_documents(extra_paths=None):
     """
-    Main ingestion function
+    Main ingestion function.
+
+    extra_paths: optional list of file/dir paths (from the command line) to
+    ingest in addition to everything under backend/documents/.
     """
     print("=" * 60)
     print("SIS CHATBOT - DOCUMENT INGESTION")
@@ -240,14 +374,13 @@ def ingest_documents():
     
     all_chunks = []
     total_docs = 0
-    
-    for doc_name, metadata in DOCUMENT_CONFIG.items():
-        doc_path = documents_dir / doc_name
-        
-        if not doc_path.exists():
-            print(f"  ⚠ Warning: {doc_name} not found, skipping...")
-            continue
-        
+
+    # Explicit config + anything else found under documents/ (or passed on the
+    # command line). A plain .txt/.csv/.pdf/.docx drop-in just works.
+    catalogue = discover_documents(documents_dir, extra_paths)
+    print(f"  Discovered {len(catalogue)} ingestable file(s)")
+
+    for doc_name, (doc_path, metadata) in catalogue.items():
         # Load document
         content = load_document(doc_path)
         if not content:
@@ -321,7 +454,9 @@ def ingest_documents():
 
 if __name__ == "__main__":
     try:
-        ingest_documents()
+        # Any extra file/dir paths after the script name are ingested too:
+        #   python -m backend.ingest ./my_report.pdf ~/case_notes/
+        ingest_documents(extra_paths=sys.argv[1:])
     except KeyboardInterrupt:
         print("\n\nIngestion interrupted by user")
         sys.exit(1)

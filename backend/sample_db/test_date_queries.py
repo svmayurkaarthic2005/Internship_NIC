@@ -44,8 +44,8 @@ from sqlalchemy import select, text
 from backend.database import AsyncSessionLocal
 from backend.models import SISOfficer
 from backend.services import postgres
-from backend.services.chatbot import extract_month_from_query
-from backend.services.rag import extract_date_range
+from backend.services.chatbot import extract_month_from_query, _rescope_followup_message
+from backend.services.rag import DATE_SCOPED_INTENTS, extract_date_range, parse_intent
 
 TODAY = date.today()
 
@@ -197,6 +197,30 @@ async def main() -> int:
                   f"{inside} in + {outside} out = {total}")
             if not ok:
                 failures.append(f"negation: {question}: {inside}+{outside} != {total}")
+
+        print("\n[4/2] a bare period re-scopes the question before it")
+        # "how many did I approve this week" → "lastt month" carries no intent
+        # of its own; it must inherit the previous question, filters included.
+        base = "how many applications did i approve this week"
+        history = [{"role": "user", "content": base},
+                   {"role": "assistant", "content": "There are no applications."}]
+        for follow_up, want_start, want_end in [
+            ("lastt month", *_prev_month()),          # typo tolerated
+            ("last month", *_prev_month()),
+            ("what about 2024?", None, None),         # year filter, not a range
+            ("yesterday", TODAY - timedelta(days=1), TODAY - timedelta(days=1)),
+        ]:
+            merged = _rescope_followup_message(follow_up, history)
+            got_intent = parse_intent(merged)
+            got_start, got_end = extract_date_range(merged)
+            ok = (merged != follow_up
+                  and got_intent in DATE_SCOPED_INTENTS
+                  and "approve" in merged
+                  and (got_start, got_end) == (want_start, want_end))
+            print(f"  {'ok  ' if ok else 'FAIL'} {follow_up[:52]:54s} {merged[:60]}")
+            if not ok:
+                failures.append(f"follow-up: {follow_up} -> {merged} "
+                                f"({got_intent}, {got_start}..{got_end})")
 
     print()
     if failures:

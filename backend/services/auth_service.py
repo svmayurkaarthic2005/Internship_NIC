@@ -89,6 +89,8 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
     """
     Resolve all jurisdiction IDs the officer can access based on their assigned jurisdiction.
     
+    OPTIMIZED: Uses single query with joins instead of multiple sequential queries.
+    
     Returns dict with:
     - jurisdiction_type: str (district/taluk/town/ward/block)
     - district_ids: List[UUID]
@@ -98,9 +100,18 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
     - block_ids: List[UUID]
     - jurisdiction_name: str (human-readable name)
     """
-    # Get officer's jurisdiction assignment
+    from sqlalchemy.orm import selectinload
+    
+    # Get officer's jurisdiction assignment with eager loading
     result = await db.execute(
         select(OfficerJurisdiction)
+        .options(
+            selectinload(OfficerJurisdiction.district),
+            selectinload(OfficerJurisdiction.taluk),
+            selectinload(OfficerJurisdiction.town),
+            selectinload(OfficerJurisdiction.ward),
+            selectinload(OfficerJurisdiction.block)
+        )
         .where(OfficerJurisdiction.officer_id == officer_id)
     )
     jurisdictions = result.scalars().all()
@@ -127,111 +138,75 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
     block_ids = []
     jurisdiction_name = ""
     
-    # Resolve based on jurisdiction level
+    # Resolve based on jurisdiction level using optimized queries
     if jurisdiction_type == "district":
-        # Officer has district-level access - get all child entities
+        # Officer has district-level access
         district_ids = [jurisdiction.district_id]
+        jurisdiction_name = f"{jurisdiction.district.name} District" if jurisdiction.district else "Unknown District"
         
-        # Get district name
-        district_result = await db.execute(
-            select(District).where(District.id == jurisdiction.district_id)
+        # Get ALL child entities in ONE query using joins
+        result = await db.execute(
+            select(Taluk.id, Town.id, Ward.id, Block.id)
+            .select_from(Taluk)
+            .join(Town, Town.taluk_id == Taluk.id, isouter=True)
+            .join(Ward, Ward.town_id == Town.id, isouter=True)
+            .join(Block, Block.ward_id == Ward.id, isouter=True)
+            .where(Taluk.district_id == jurisdiction.district_id)
         )
-        district = district_result.scalar_one_or_none()
-        jurisdiction_name = f"{district.name} District" if district else "Unknown District"
         
-        # Get all taluks in district
-        taluk_result = await db.execute(
-            select(Taluk).where(Taluk.district_id == jurisdiction.district_id)
-        )
-        taluks = taluk_result.scalars().all()
-        taluk_ids = [t.id for t in taluks]
-        
-        # Get all towns in those taluks
-        if taluk_ids:
-            town_result = await db.execute(
-                select(Town).where(Town.taluk_id.in_(taluk_ids))
-            )
-            towns = town_result.scalars().all()
-            town_ids = [t.id for t in towns]
-        
-        # Get all wards in those towns
-        if town_ids:
-            ward_result = await db.execute(
-                select(Ward).where(Ward.town_id.in_(town_ids))
-            )
-            wards = ward_result.scalars().all()
-            ward_ids = [w.id for w in wards]
-        
-        # Get all blocks in those wards
-        if ward_ids:
-            block_result = await db.execute(
-                select(Block).where(Block.ward_id.in_(ward_ids))
-            )
-            blocks = block_result.scalars().all()
-            block_ids = [b.id for b in blocks]
+        for taluk_id, town_id, ward_id, block_id in result.all():
+            if taluk_id and taluk_id not in taluk_ids:
+                taluk_ids.append(taluk_id)
+            if town_id and town_id not in town_ids:
+                town_ids.append(town_id)
+            if ward_id and ward_id not in ward_ids:
+                ward_ids.append(ward_id)
+            if block_id and block_id not in block_ids:
+                block_ids.append(block_id)
     
     elif jurisdiction_type == "taluk":
         # Officer has taluk-level access
         taluk_ids = [jurisdiction.taluk_id]
         district_ids = [jurisdiction.district_id]
+        jurisdiction_name = f"{jurisdiction.taluk.name} Taluk" if jurisdiction.taluk else "Unknown Taluk"
         
-        # Get taluk name
-        taluk_result = await db.execute(
-            select(Taluk).where(Taluk.id == jurisdiction.taluk_id)
+        # Get all child entities in ONE query
+        result = await db.execute(
+            select(Town.id, Ward.id, Block.id)
+            .select_from(Town)
+            .join(Ward, Ward.town_id == Town.id, isouter=True)
+            .join(Block, Block.ward_id == Ward.id, isouter=True)
+            .where(Town.taluk_id == jurisdiction.taluk_id)
         )
-        taluk = taluk_result.scalar_one_or_none()
-        jurisdiction_name = f"{taluk.name} Taluk" if taluk else "Unknown Taluk"
         
-        # Get all towns in taluk
-        town_result = await db.execute(
-            select(Town).where(Town.taluk_id == jurisdiction.taluk_id)
-        )
-        towns = town_result.scalars().all()
-        town_ids = [t.id for t in towns]
-        
-        # Get all wards in those towns
-        if town_ids:
-            ward_result = await db.execute(
-                select(Ward).where(Ward.town_id.in_(town_ids))
-            )
-            wards = ward_result.scalars().all()
-            ward_ids = [w.id for w in wards]
-        
-        # Get all blocks in those wards
-        if ward_ids:
-            block_result = await db.execute(
-                select(Block).where(Block.ward_id.in_(ward_ids))
-            )
-            blocks = block_result.scalars().all()
-            block_ids = [b.id for b in blocks]
+        for town_id, ward_id, block_id in result.all():
+            if town_id and town_id not in town_ids:
+                town_ids.append(town_id)
+            if ward_id and ward_id not in ward_ids:
+                ward_ids.append(ward_id)
+            if block_id and block_id not in block_ids:
+                block_ids.append(block_id)
     
     elif jurisdiction_type == "town":
         # Officer has town-level access
         town_ids = [jurisdiction.town_id]
         taluk_ids = [jurisdiction.taluk_id]
         district_ids = [jurisdiction.district_id]
+        jurisdiction_name = f"{jurisdiction.town.name} Town" if jurisdiction.town else "Unknown Town"
         
-        # Get town name
-        town_result = await db.execute(
-            select(Town).where(Town.id == jurisdiction.town_id)
+        # Get all child entities in ONE query
+        result = await db.execute(
+            select(Ward.id, Block.id)
+            .select_from(Ward)
+            .join(Block, Block.ward_id == Ward.id, isouter=True)
+            .where(Ward.town_id == jurisdiction.town_id)
         )
-        town = town_result.scalar_one_or_none()
-        jurisdiction_name = f"{town.name} Town" if town else "Unknown Town"
         
-        # Get all wards in town
-        ward_result = await db.execute(
-            select(Ward).where(Ward.town_id == jurisdiction.town_id)
-        )
-        wards = ward_result.scalars().all()
-        ward_ids = [w.id for w in wards]
-        
-        # Get all blocks in those wards
-        if ward_ids:
-            block_result = await db.execute(
-                select(Block).where(Block.ward_id.in_(ward_ids))
-            )
-            blocks = block_result.scalars().all()
-            block_ids = [b.id for b in blocks]
+        for ward_id, block_id in result.all():
+            if ward_id and ward_id not in ward_ids:
+                ward_ids.append(ward_id)
+            if block_id and block_id not in block_ids:
+                block_ids.append(block_id)
     
     elif jurisdiction_type == "ward":
         # Officer has ward-level access
@@ -240,19 +215,14 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
         taluk_ids = [jurisdiction.taluk_id]
         district_ids = [jurisdiction.district_id]
         
-        # Get ward name
-        ward_result = await db.execute(
-            select(Ward).where(Ward.id == jurisdiction.ward_id)
-        )
-        ward = ward_result.scalar_one_or_none()
-        jurisdiction_name = f"{ward.ward_name or 'Ward ' + ward.ward_number}" if ward else "Unknown Ward"
+        ward = jurisdiction.ward
+        jurisdiction_name = f"{ward.ward_name or 'Ward ' + str(ward.ward_number)}" if ward else "Unknown Ward"
         
-        # Get all blocks in ward
-        block_result = await db.execute(
-            select(Block).where(Block.ward_id == jurisdiction.ward_id)
+        # Get all blocks in ONE query
+        result = await db.execute(
+            select(Block.id).where(Block.ward_id == jurisdiction.ward_id)
         )
-        blocks = block_result.scalars().all()
-        block_ids = [b.id for b in blocks]
+        block_ids = [row[0] for row in result.all()]
     
     elif jurisdiction_type == "block":
         # Officer has block-level access
@@ -262,12 +232,8 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
         taluk_ids = [jurisdiction.taluk_id]
         district_ids = [jurisdiction.district_id]
         
-        # Get block name
-        block_result = await db.execute(
-            select(Block).where(Block.id == jurisdiction.block_id)
-        )
-        block = block_result.scalar_one_or_none()
-        jurisdiction_name = f"{block.block_name or 'Block ' + block.block_number}" if block else "Unknown Block"
+        block = jurisdiction.block
+        jurisdiction_name = f"{block.block_name or 'Block ' + str(block.block_number)}" if block else "Unknown Block"
     
     return {
         "jurisdiction_type": jurisdiction_type,

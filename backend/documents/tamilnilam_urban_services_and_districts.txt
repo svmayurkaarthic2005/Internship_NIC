@@ -5,8 +5,8 @@ Sub Inspector Surveyors (SIS) operate exclusively in Urban Jurisdictions (Munici
 Their core duties:
 - Physical Field Inspection & Cadastral Verification for Town Survey Numbers (TSLR)
 - Verifying boundaries, sub-divisions, encroachments, and land types (Residential, Commercial, Agricultural)
-- Preparing inspection reports and measurement sketches (Colormap / FMB) for ISD, Merge, and Demarcation applications
-- Forwarding verified ISD / Merge applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS); forwarding verified NISD applications directly to the Zonal Level Tahsildar (ZDT), who holds the DSC key and approves
+- Preparing inspection reports and measurement sketches (Colour Map) for ISD, Merge, and Demarcation applications
+- Forwarding verified ISD / Merge applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS), and after DIS approval to the Tahsildar, who applies the DSC and generates the patta transfer order; forwarding verified NISD applications directly to the Zonal Level Tahsildar (ZDT), who holds the DSC key and approves
 
 2. URBAN APPLICATION NUMBER FORMAT
    YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE
@@ -48,14 +48,16 @@ Their core duties:
 4. ESSENTIAL FIELDS STORED FOR SIS
 - Application Identity: application_id, service_code, application_type, application_date, application_status, workflow_state, last_updated_datetime, user_id (assigned SIS officer)
 - Cadastral / Urban Location: district_code, taluk_code, urban_unit_code, ward_code, block_code, survey_number (Town Survey No.), subdivision_number, current_subdivision_number, patta_number
-- Field Survey Data: field_visit_date, field_visit_scheduled, is_overdue, priority_flag, notes, sale_deed_number, sale_deed_registered, declared_reason, source_code, can_number
-- Applicant Details: applicant_name, applicant_mobile, applicant_email, applicant_address
+- ISD Sub-Division Data: temporary_subdivision_number (DIS-assigned, format: {subdiv}/T{seq}; stored as application_sub_divisions.temporary_sub_division_no and kept after approval), new_subdivision_number (final number after DIS approval, stored as application_sub_divisions.proposed_sub_division_no), area_square_meter, existing_patta_number, new_patta_number
+- Field Survey Data: field_visit_date, field_visit_scheduled, is_overdue, priority_flag, notes, sale_deed_number, sale_deed_registered, declared_reason, can_number, submission_channel (derived from source_name + camp_flag; source_code carries no channel meaning)
+- Applicant Details: applicant_name, applicant_mobile, applicant_address (no e-mail address is stored for applicants - only the mobile number)
 
 5. OFFICIAL DISTRICT CODES (01 to 38)
+   (matches backend/config.py DISTRICT_CODE_MAP and district_codes.txt)
 01: Tiruvallur, 02: Chennai, 03: Kancheepuram, 04: Vellore, 05: Dharmapuri, 06: Tiruvannamalai,
-07: Villupuram, 08: Salem, 09: Namakkal, 10: Erode, 11: Nilgiris, 12: Coimbatore,
+07: Viluppuram, 08: Salem, 09: Namakkal, 10: Erode, 11: Nilgiris, 12: Coimbatore,
 13: Dindigul, 14: Karur, 15: Tiruchirappalli, 16: Perambalur, 17: Ariyalur, 18: Cuddalore,
-19: Nagapattinam, 20: Thiruvarur, 21: Thanjavur, 22: Pudukkottai, 23: Sivaganga, 24: Madurai,
+19: Nagapattinam, 20: Tiruvarur, 21: Thanjavur, 22: Pudukkottai, 23: Sivagangai, 24: Madurai,
 25: Theni, 26: Virudhunagar, 27: Ramanathapuram, 28: Thoothukudi, 29: Tirunelveli, 30: Kanniyakumari,
-31: Krishnagiri, 32: Tiruppur, 33: Kallakurichi, 34: Tenkasi, 35: Chengalpattu, 36: Tirupattur,
-37: Ranipet, 38: Mayiladuthurai.
+31: Krishnagiri, 32: Tiruppur, 33: Kallakurichi, 34: Chengalpattu, 35: Ranipet, 36: Tirupathur,
+37: Tenkasi, 38: Mayiladuthurai.

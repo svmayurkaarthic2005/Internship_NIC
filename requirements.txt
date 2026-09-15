@@ -15,6 +15,7 @@ langchain-community==0.3.27
 langchain-ollama==0.2.3
 pypdf>=5.9.0
 python-docx==1.2.0
+fpdf2>=2.7.0            # test fixtures only: builds the PDFs test_attachments.py reads back
 pgvector>=0.3.0
 ollama>=0.4.4
 structlog==24.4.0

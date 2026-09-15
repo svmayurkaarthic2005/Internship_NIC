@@ -36,8 +36,18 @@ async def lifespan(app: FastAPI):
     # Create tables in development
     try:
         if settings.ENVIRONMENT == "development":
+            from backend.models import app_owned_tables, missing_master_tables
             async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+                # The TAMILNILAM master tables (district_unicode, taluk) are
+                # loaded from pg_dumps, not created here -- create_all() would
+                # otherwise build an empty stub from the mapped columns alone.
+                absent = await conn.run_sync(missing_master_tables)
+                await conn.run_sync(
+                    lambda sync_conn: Base.metadata.create_all(
+                        sync_conn, tables=app_owned_tables()))
+                if absent:
+                    print(f"   ⚠️  master table(s) missing: {', '.join(absent)} "
+                          f"— run backend.sample_db.load_master_dumps")
                 print("   ✅ Database tables created/verified")
     except Exception as e:
         print(f"   ⚠️  Database initialization warning: {e}")
@@ -51,6 +61,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"   ⚠️  pgvector initialization warning: {e}")
         print(f"      Ensure 'CREATE EXTENSION IF NOT EXISTS vector;' has been run")
+
+    # Chat attachments: they live in PostgreSQL, so a restart keeps every live
+    # one. What a restart is a good moment for is dropping the expired ones.
+    try:
+        from backend.database import AsyncSessionLocal
+        from backend.services import attachment_store
+        attachment_store.storage_dir()
+        async with AsyncSessionLocal() as _session:
+            removed = await attachment_store.cleanup_expired(_session)
+        print(f"   ✅ Chat attachment store ready "
+              f"({removed} expired attachment(s) cleared)")
+    except Exception as e:
+        print(f"   ⚠️  Chat attachment store warning: {e}")
 
     
     # Check Ollama connectivity

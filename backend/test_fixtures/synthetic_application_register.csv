@@ -1,0 +1,7 @@
+App No,Ward,Service Code,Type,Status,Fee,Applicant,Visit Status,Submitted Date
+TEST-2026-001,102,0154,ISD,Approved,1250.00,Kavitha Raman,Completed,2026-09-02
+TEST-2026-002,102,0153,NISD,Pending,750.00,Arun Raman,Scheduled,2026-09-05
+TEST-2026-003,103,0155,MERGE,In Progress,2100.00,Meera Iyer,Unscheduled,2026-09-07
+TEST-2026-004,102,0154,ISD,Approved,1750.00,Raj Kumar,Completed,2026-09-10
+TEST-2026-005,103,0153,NISD,Rejected,600.00,Sana Ali,Not Required,2026-09-11
+TEST-2026-006,102,0154,ISD,Approved,900.00,Dev Shah,Overdue,2026-09-12

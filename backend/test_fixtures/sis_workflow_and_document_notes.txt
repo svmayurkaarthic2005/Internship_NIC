@@ -1,0 +1,31 @@
+SYNTHETIC SIS WORKFLOW AND DOCUMENT NOTES
+
+Purpose: attachment test data only. No entry below is a live application.
+
+Case reference: TEST-2026-ISD-001
+Applicant: Kavitha Raman (fictional)
+Service: ISD / service code 0154. ISD means Involving Sub-Division: a parcel is split, a field inspection is normally required, and an SD sketch is needed before the file can be completed.
+Status: in_progress at the Senior Draughtsman stage.
+Survey: Ward 102, Survey 77/3B, area 0.084 hectares.
+Joint owners: Kavitha Raman and Arun Raman, each with a one-half share.
+Sale deed: deed number SYN-2026-7781, shown as registered in this fictitious note.
+
+Document review:
+- Submitted: sale deed copy, patta copy, EC, applicant identity proof.
+- Missing: signed field measurement sketch.
+- Verification note: the sketch must show north arrow, scale, boundary measurements, adjoining survey references, surveyor signature, and date.
+
+Workflow reference:
+1. SIS records inspection observations and verifies boundary information.
+2. Senior Draughtsman reviews the proposed sub-division sketch.
+3. ZDT or HQDT takes the final approval or rejection action.
+Open statuses are pending or in_progress; a completed order is approved or rejected.
+
+NISD / service code 0153 is Not Involving Sub-Division: it is a whole-survey patta transfer and normally has no new sub-division or field visit. MERGE / service code 0155 combines sub-divisions and follows the ISD-style review chain.
+
+Bilingual reminder:
+விண்ணப்பம் சோதனை தரவு மட்டுமே. நில அளவை குறிப்புகள் மற்றும் ஆவணங்கள் அனைத்தும் கற்பனையானவை.
+ISD விண்ணப்பத்திற்கு கள ஆய்வு மற்றும் துணைப்பிரிவு வரைபடம் தேவைப்படலாம்.
+
+Field visit note for TEST-2026-ISD-001:
+Visit scheduled for 18 October 2026 at 10:30 AM. Bring measuring tape, field book, owner notice acknowledgement, and previous sketch. Do not infer a real address from this test file.

@@ -23,9 +23,9 @@
     <link rel="stylesheet" href="css/global.css">
     <link rel="stylesheet" href="css/animations.css">
     <link rel="stylesheet" href="css/components.css">
-    <link rel="stylesheet" href="css/chatbot.css?v=20260825_003">
-    <link rel="stylesheet" href="css/responsive.css">
-    <link rel="stylesheet" href="css/table_styles.css">
+    <link rel="stylesheet" href="css/chatbot.css?v=20260916_001">
+    <link rel="stylesheet" href="css/responsive.css?v=20260916_001">
+    <link rel="stylesheet" href="css/table_styles.css?v=20260915_001">
 </head>
 <body class="chatbot-page">
     <div class="chat-main-container-new">
@@ -56,6 +56,10 @@
             </div>
 
             <div class="header-right-new">
+                <button class="icon-btn-new" id="newChatBtn" aria-label="Start a new conversation" title="Start a new conversation">
+                    <i data-lucide="plus" class="icon-new"></i>
+                    <span>New Chat</span>
+                </button>
                 <button class="icon-btn-new logout-btn-new" id="logoutBtn" aria-label="Logout">
                     <i data-lucide="log-out" class="icon-new"></i>
                     <span>Logout</span>
@@ -105,10 +109,16 @@
     <div class="toast-container" id="toastContainer"></div>
     
     <!-- JavaScript -->
-    <script src="js/chatStorage.js?v=20260819_010"></script>
-    <script src="js/dataTable.js?v=20260825_001"></script>
-    <script src="js/table_renderer.js?v=20260825_001"></script>
-    <script src="js/chat.js?v=20260827_003"></script>
+    <script src="js/chatStorage.js?v=20260909_001"></script>
+    <!-- js/dataTable.js is NOT loaded on purpose. It defines the same twelve
+         functions as table_renderer.js -- renderDataTable, createTableHTML,
+         prepareApplicationsTable and the rest -- and loaded first, every one of
+         them was immediately overwritten by table_renderer.js below. So it
+         rendered nothing, while looking exactly like the file that did: an edit
+         made there (its district column, its cell classes) changed the screen
+         not at all. The file is still on disk; nothing loads it. -->
+    <script src="js/table_renderer.js?v=20260916_001"></script>
+    <script src="js/chat.js?v=20260916_001"></script>
     <script>
         lucide.createIcons();
     </script>

@@ -1,15 +1,19 @@
 """
 Verify sis_chatbot_db after seeding.
 
-Three things are checked:
+Four things are checked:
   1. structure  -- every table's columns match its source CSV header exactly
   2. references -- no row points at an application or patta that doesn't exist
-  2b. populated -- no column is entirely NULL, and the DSC columns hold real
-                   PKCS#7 that parses back
-  3. no leakage -- no identity-bearing value (names, usernames, CAN/Aadhaar/
-                   mobile/document numbers, addresses) is reused verbatim from
-                   the CSVs in backend/sample_table/, and no person name (or
-                   word of one) is reused from them either
+  3. fidelity   -- the load is faithful to the CSVs: a column that carries
+                   values in the extract must carry them in the table, and no
+                   identity-bearing value exists in the database that is not in
+                   the extract (nothing is invented)
+  4. signatures -- the DSC blobs are genuine base64 PKCS#7 that parses back
+
+The extracts are the source of record and are loaded verbatim, so "this value
+also appears in the CSV" is the expected state, not a leak. The one column that
+must NOT come from the extracts is aadhaar_number: it arrives stripped and is
+replaced with a synthetic, checksum-valid number, which check 3 enforces.
 
 Run:  python backend/sample_db/verify_sample_db.py
 Exits non-zero if any check fails.
@@ -29,12 +33,12 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import psycopg2
 
+from dbconn import conn_params
 from schema_builder import SAMPLE_TABLE_DIR, TABLE_NAMES, read_header, table_specs
 
 csv.field_size_limit(10 ** 8)  # the DSC extracts carry very long fields
 
 DB_NAME = "sis_chatbot_db"
-CONN = dict(host="127.0.0.1", port=5432, user="postgres", password="Mayur@2005")
 
 # Columns whose values identify a person, an officer or a document.
 IDENTITY_COLUMNS = {
@@ -57,10 +61,12 @@ PERSON_NAME_COLUMNS = {
 }
 
 
+# application_workflow_action is deliberately NOT here: the extract is a
+# district-wide dump (288087 rows) and most of it belongs to settlement service
+# codes that urban_application_log does not carry. Orphans there are expected;
+# what must hold is the other direction, checked separately below -- every
+# logged application has at least one workflow row.
 REFERENCE_CHECKS = [
-    ("application_workflow_action -> urban_application_log",
-     "application_workflow_action w", "urban_application_log l",
-     "l.application_id = w.application_id"),
     ("nisd_transfer_application_info -> urban_application_log",
      "nisd_transfer_application_info w", "urban_application_log l",
      "l.application_id = w.application_id"),
@@ -138,6 +144,25 @@ def check_references(cur) -> list[str]:
         print(f"  {'ok ' if n == 0 else 'FAIL'} {label:52s} orphans={n}")
         if n:
             failures.append(f"{label}: {n} orphans")
+    # the direction that must hold for the workflow dump
+    cur.execute("""SELECT count(*) FROM urban_application_log l
+                   WHERE NOT EXISTS (SELECT 1 FROM application_workflow_action w
+                                     WHERE w.application_id = l.application_id)""")
+    n = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM application_workflow_action")
+    total = cur.fetchone()[0]
+    cur.execute("""SELECT count(*) FROM application_workflow_action w
+                   WHERE EXISTS (SELECT 1 FROM urban_application_log l
+                                 WHERE l.application_id = w.application_id)""")
+    matched = cur.fetchone()[0]
+    print(f"  {'ok ' if n == 0 else 'FAIL'} "
+          f"{'every logged application has a workflow row':52s} without={n}")
+    print(f"  note {total - matched} of {total} workflow rows belong to applications "
+          f"outside the log (district-wide extract)")
+    if n:
+        failures.append(f"{n} applications in urban_application_log have no "
+                        f"workflow row")
+
     for table, service in SERVICE_CHECKS:
         cur.execute(f"SELECT count(*) FROM {table} t "
                     f"JOIN urban_application_log l USING (application_id) "
@@ -167,24 +192,46 @@ def _csv_identity_values() -> set[str]:
 
 
 def check_populated(cur) -> list[str]:
-    """No column may be entirely NULL -- every field carries sample data."""
+    """The load is faithful: a column with values in the CSV has them in the table.
+
+    A column that is empty in the extract is empty here too -- the extracts are
+    sparse and that is the data, not a defect. What would be a defect is the
+    loader dropping values the CSV does carry, so the comparison is against the
+    CSV rather than against zero.
+    """
     failures = []
-    for table, cols in table_specs().items():
+    for csv_name, table in TABLE_NAMES.items():
+        cols = [c for c, _ in table_specs()[table]]
         empty = []
-        for col, _ in cols:
-            cur.execute(f"SELECT count(*) FROM {table} WHERE {col} IS NOT NULL")
+        for col in cols:
+            cur.execute(f"SELECT count({col}) FROM {table}")
             if cur.fetchone()[0] == 0:
                 empty.append(col)
-        print(f"  {'ok ' if not empty else 'FAIL'} {table:34s} "
-              f"{len(cols) - len(empty)}/{len(cols)} columns populated")
+        lost = []
         if empty:
-            failures.append(f"{table}: all-NULL columns {empty}")
+            path = SAMPLE_TABLE_DIR / csv_name
+            with path.open(encoding="utf-8", errors="replace", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    for col in empty:
+                        v = (row.get(col) or "").strip()
+                        if v and v not in _NOT_IDENTITY and col not in lost:
+                            lost.append(col)
+        print(f"  {'ok ' if not lost else 'FAIL'} {table:34s} "
+              f"{len(cols) - len(empty)}/{len(cols)} columns carry data"
+              + (f" ({len(empty)} empty in the extract too)" if empty else ""))
+        if lost:
+            failures.append(f"{table}: columns lost in the load {lost}")
     return failures
 
 
-# (table, hash column, signature column)
+# (table, PKCS#7 column, signed-payload column, username column).
+# The column names in the extracts are the wrong way round and must be read as
+# they are, not as they are named: `document_hash` holds the base64 PKCS#7
+# SignedData blob (wrapped at 76 chars), while `digital_signature_content` /
+# `signature_content` hold the JSON payload that was signed.
 SIGNATURE_TABLES = [
-    ("urban_parcel_signature", "document_hash", "digital_signature_content", "username"),
+    ("urban_parcel_signature", "document_hash", "digital_signature_content",
+     "username"),
     ("urban_natham_chitta_signature", "document_hash", "signature_content",
      "signed_by_username"),
 ]
@@ -193,59 +240,67 @@ SIGNATURE_TABLES = [
 def check_signatures(cur) -> list[str]:
     """The DSC blobs must be genuine base64 PKCS#7, wrapped like the extracts."""
     import base64
+    import warnings
     from cryptography import x509
     from cryptography.hazmat.primitives.serialization import pkcs7
 
     failures = []
-    for table, hash_col, sig_col, user_col in SIGNATURE_TABLES:
-        cur.execute(f"SELECT {hash_col}, {sig_col}, {user_col} FROM {table} LIMIT 25")
+    for table, sig_col, payload_col, user_col in SIGNATURE_TABLES:
+        # every row, not a sample: the two signature tables are small enough
+        # (1036 + 439) that a corrupt blob outside a 25-row window would
+        # otherwise go unseen
+        cur.execute(f"SELECT {sig_col}, {payload_col}, {user_col} FROM {table} "
+                    f"WHERE {sig_col} IS NOT NULL")
         rows = cur.fetchall()
         bad = 0
-        mismatched = 0
+        no_payload = 0
         widths = set()
-        for digest, blob, username in rows:
+        # one login must always present the same certificate subject
+        cn_of: dict[str, str] = {}
+        inconsistent = 0
+        for blob, payload, username in rows:
             lines = blob.splitlines()
             widths.update(len(line) for line in lines[:-1])
+            if not (payload or "").strip().startswith(("{", "[")):
+                no_payload += 1
             try:
                 der = base64.b64decode("".join(lines), validate=True)
-                certs = pkcs7.load_der_pkcs7_certificates(der)
-                if not certs or len(digest) != 64:
+                with warnings.catch_warnings():
+                    # the extracts' blobs are BER, not strict DER
+                    warnings.simplefilter("ignore")
+                    certs = pkcs7.load_der_pkcs7_certificates(der)
+                if not certs:
                     bad += 1
                     continue
-                # the certificate must name the officer the row credits
+                # the CN is the officer's name on the certificate, not their
+                # login (`tut_ssundari` signs as `SIVAGAMASUNDARI S`), so the
+                # check is consistency, not equality
                 cn = certs[0].subject.get_attributes_for_oid(
                     x509.oid.NameOID.COMMON_NAME)[0].value
-                if cn.upper() != username.upper():
-                    mismatched += 1
+                if cn_of.setdefault(username, cn) != cn:
+                    inconsistent += 1
             except Exception:
                 bad += 1
-        ok = bad == 0 and mismatched == 0 and widths <= {76}
+        ok = bad == 0 and inconsistent == 0 and no_payload == 0 and widths <= {76}
         print(f"  {'ok ' if ok else 'FAIL'} {table:34s} "
               f"{len(rows) - bad}/{len(rows)} parse as PKCS#7, "
-              f"signer mismatches={mismatched}, line widths={sorted(widths)}")
+              f"{len(rows) - no_payload}/{len(rows)} carry a signed payload, "
+              f"{len(cn_of)} signers, line widths={sorted(widths)}")
         if bad:
             failures.append(f"{table}: {bad} unparseable signature blobs")
-        if mismatched:
-            failures.append(f"{table}: {mismatched} rows whose cert CN "
-                            f"differs from {user_col}")
+        if no_payload:
+            failures.append(f"{table}: {no_payload} rows with no signed payload "
+                            f"in {payload_col}")
+        if inconsistent:
+            failures.append(f"{table}: {inconsistent} rows where one {user_col} "
+                            f"presents more than one certificate subject")
         if not widths <= {76}:
             failures.append(f"{table}: base64 not wrapped at 76 chars")
     return failures
 
 
-def _words(value: str) -> set[str]:
-    return {p.lower() for p in re.split(r"[\s.,\-_/()]+", value.strip()) if len(p) >= 3}
-
-
-def check_person_names(cur) -> list[str]:
-    """No person name may be reused from the CSVs.
-
-    Exact reuse only: the whole name, or any single word of it. A name that
-    merely shares a substring with a CSV name (Ramesh / Ram) is fine -- these
-    are ordinary Indian names and such overlap is unavoidable.
-    """
-    csv_names: set[str] = set()
-    csv_words: set[str] = set()
+def _csv_person_names() -> set[str]:
+    names: set[str] = set()
     for csv_name in TABLE_NAMES:
         path = SAMPLE_TABLE_DIR / csv_name
         with path.open(encoding="utf-8", errors="replace", newline="") as fh:
@@ -257,8 +312,44 @@ def check_person_names(cur) -> list[str]:
                 for col in cols:
                     v = (row.get(col) or "").strip()
                     if v and v not in _NOT_IDENTITY:
-                        csv_names.add(v.lower())
-                        csv_words |= _words(v)
+                        names.add(v.lower())
+    return names
+
+
+def check_nothing_invented(cur) -> list[str]:
+    """Every identity value in the database comes from the extracts.
+
+    The extracts are the source of record and are loaded verbatim, so overlap
+    with the CSVs is the expected state. The defect this catches is the
+    opposite one: a name, login, CAN or document number that appears in the
+    database but in no extract -- a value the pipeline invented, which would
+    make the database say something the source does not.
+
+    `aadhaar_number` is excluded here and checked in the other direction by
+    check_aadhaar_is_synthetic(): it arrives stripped and must NOT be a CSV
+    value.
+    """
+    csv_values = _csv_identity_values()
+    csv_names = _csv_person_names()
+    failures = []
+
+    invented = set()
+    for table, cols in table_specs().items():
+        for col, _ in cols:
+            if col not in IDENTITY_COLUMNS or col == "aadhaar_number":
+                continue
+            cur.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL")
+            for (v,) in cur.fetchall():
+                v = str(v).strip()
+                if len(v) > 3 and v not in _NOT_IDENTITY and v not in csv_values:
+                    invented.add(v)
+    print(f"  csv identity values={len(csv_values)}  "
+          f"not found in any extract={len(invented)}")
+    for v in sorted(invented)[:15]:
+        print(f"    ! not in any extract: {v!r}")
+    if invented:
+        failures.append(f"{len(invented)} identity values are in the database "
+                        f"but in no extract")
 
     db_names: set[str] = set()
     for table, cols in table_specs().items():
@@ -267,61 +358,79 @@ def check_person_names(cur) -> list[str]:
                 continue
             cur.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL")
             db_names |= {str(v).strip() for (v,) in cur.fetchall() if str(v).strip()}
-
-    reused_whole = sorted(n for n in db_names if n.lower() in csv_names)
-    reused_word = sorted({w for n in db_names for w in _words(n)} & csv_words)
-
-    print(f"  csv person names={len(csv_names)} words={len(csv_words)}  "
-          f"db person names={len(db_names)}")
-    print(f"  {'ok ' if not reused_whole else 'FAIL'} whole names reused: {len(reused_whole)}")
-    for n in reused_whole[:15]:
-        print(f"    ! {n}")
-    print(f"  {'ok ' if not reused_word else 'FAIL'} name words reused: {len(reused_word)}")
-    for w in reused_word[:15]:
-        print(f"    ! {w}")
-
-    failures = []
-    if reused_whole:
-        failures.append(f"{len(reused_whole)} person names reused from the CSVs")
-    if reused_word:
-        failures.append(f"{len(reused_word)} person-name words reused from the CSVs")
+    unknown = sorted(n for n in db_names if n.lower() not in csv_names
+                     and n not in _NOT_IDENTITY)
+    print(f"  db person names={len(db_names)}  not found in any extract={len(unknown)}")
+    for n in unknown[:15]:
+        print(f"    ! not in any extract: {n}")
+    if unknown:
+        failures.append(f"{len(unknown)} person names are in the database but "
+                        f"in no extract")
     return failures
 
 
-def check_no_leakage(cur) -> list[str]:
-    csv_values = _csv_identity_values()
-    db_values = set()
-    for table, cols in table_specs().items():
-        for col, _ in cols:
-            if col not in IDENTITY_COLUMNS:
+def check_aadhaar_is_synthetic(cur) -> list[str]:
+    """aadhaar_number must be generated, never carried over from an extract.
+
+    The extracts arrive with the column stripped; identifiers.py fills it with a
+    deterministic, checksum-valid synthetic number. If a real one ever appeared
+    in an extract, this is what would catch it reaching the database.
+    """
+    from identifiers import aadhaar_valid
+
+    csv_aadhaar: set[str] = set()
+    for csv_name in TABLE_NAMES:
+        path = SAMPLE_TABLE_DIR / csv_name
+        with path.open(encoding="utf-8", errors="replace", newline="") as fh:
+            reader = csv.DictReader(fh)
+            if "aadhaar_number" not in (reader.fieldnames or []):
                 continue
-            cur.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL")
-            db_values |= {str(v).strip() for (v,) in cur.fetchall()
-                          if len(str(v).strip()) > 3}
-    overlap = sorted(csv_values & db_values)
-    print(f"  csv identity values={len(csv_values)}  "
-          f"db identity values={len(db_values)}  verbatim overlap={len(overlap)}")
-    for v in overlap[:20]:
-        print(f"    ! reused verbatim: {v!r}")
-    return [f"{len(overlap)} identity values reused verbatim"] if overlap else []
+            for row in reader:
+                v = (row.get("aadhaar_number") or "").strip()
+                if v and v not in _NOT_IDENTITY:
+                    csv_aadhaar.add(v)
+
+    failures = []
+    total = malformed = carried = 0
+    for table, cols in table_specs().items():
+        if "aadhaar_number" not in [c for c, _ in cols]:
+            continue
+        cur.execute(f"SELECT aadhaar_number FROM {table} "
+                    f"WHERE aadhaar_number IS NOT NULL")
+        for (v,) in cur.fetchall():
+            total += 1
+            if not aadhaar_valid(v):
+                malformed += 1
+            if v in csv_aadhaar:
+                carried += 1
+    ok = malformed == 0 and carried == 0
+    print(f"  {'ok ' if ok else 'FAIL'} {total} aadhaar numbers, "
+          f"{malformed} malformed, {carried} carried over from an extract "
+          f"({len(csv_aadhaar)} present in the extracts)")
+    if malformed:
+        failures.append(f"{malformed} aadhaar numbers fail the format/checksum")
+    if carried:
+        failures.append(f"{carried} aadhaar numbers were carried over from an "
+                        f"extract instead of being generated")
+    return failures
 
 
 def main() -> int:
-    conn = psycopg2.connect(dbname=DB_NAME, **CONN)
+    conn = psycopg2.connect(**conn_params(DB_NAME))
     failures: list[str] = []
     with conn.cursor() as cur:
         print("\n[1/6] structure follows the CSV headers")
         failures += check_structure(cur)
         print("\n[2/6] referential coherence")
         failures += check_references(cur)
-        print("\n[3/6] every column populated")
+        print("\n[3/6] the load is faithful to the CSVs")
         failures += check_populated(cur)
         print("\n[4/6] DSC columns hold parseable PKCS#7")
         failures += check_signatures(cur)
-        print("\n[5/6] no identity value reused from the CSVs")
-        failures += check_no_leakage(cur)
-        print("\n[6/6] no person name reused from the CSVs")
-        failures += check_person_names(cur)
+        print("\n[5/6] nothing in the database was invented")
+        failures += check_nothing_invented(cur)
+        print("\n[6/6] aadhaar is synthetic, never carried over")
+        failures += check_aadhaar_is_synthetic(cur)
 
         print("\nrow counts")
         for table in table_specs():

@@ -145,7 +145,7 @@ function loadSessionId() {
 /**
  * Get chat history formatted for API context (last N messages)
  */
-function getChatHistoryForAPI(limit = 10) {
+function getChatHistoryForAPI(limit = 20) {
     const history = loadChatHistoryFromStorage();
     // Only role/content/language/timestamp are meaningful to the backend —
     // drop the (potentially large) rendered table payload.
