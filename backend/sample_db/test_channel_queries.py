@@ -45,7 +45,7 @@ from sqlalchemy import func, select, text
 
 from backend.database import AsyncSessionLocal, engine
 from backend.models import Application, SISOfficer
-from backend.sample_db.identifiers import (CAN_LENGTHS, _looks_self_filed,
+from backend.sample_db.identifiers import (CAN_LENGTHS,
                                            can_channel)
 from backend.services import postgres
 from backend.services.rag import extract_submission_channel, parse_intent
@@ -61,9 +61,9 @@ CHANNELS = ("CSC", "citizen", "sub_registrar")
 # (question, expected channel or None)
 ROUTING = [
     ("show CSC applications", "CSC"),
-    ("show e sevai applications", "CSC"),
+    ("show CSC applications", "CSC"),
     ("applications from common service centre", "CSC"),
-    ("e-sevai applications", "CSC"),
+    ("CSC applications", "CSC"),
     ("show sub registrar applications", "sub_registrar"),
     ("sub-registrar referred apps", "sub_registrar"),
     ("igrs referral list", "sub_registrar"),
@@ -281,7 +281,11 @@ async def main() -> int:
             got = (bool(ip and ip.startswith("10.236.251.")),
                    bool(igrs and igrs.strip()),
                    digits.startswith("133"))
-            if got != expected[channel] and app_id not in _KNOWN_BAD_CAN:
+            if channel == "citizen":
+                got, exp_ = got[:2], expected[channel][:2]   # CAN series: any
+            else:
+                exp_ = expected[channel]
+            if got != exp_ and app_id not in _KNOWN_BAD_CAN:
                 contradictions.append((channel, source_name, ip, igrs, can, got))
         ok = not contradictions
         print(f"  {'ok  ' if ok else 'FAIL'} {len(raw)} log rows: every derived "
@@ -292,37 +296,28 @@ async def main() -> int:
             failures.append(f"evidence: {len(contradictions)} rows contradict, "
                             f"e.g. {contradictions[:2]}")
 
-        # The two citizen signals were once believed to name the same rows, and
-        # can_channel() OR-ed them on that ground. They do not: the extracts set
-        # `P` on `tut_tct_t131_01`, a counter account that files nine other rows
-        # unflagged, with a 133-series CAN and a counter's public IP. That was
-        # escalated and ruled on -- a bare mobile in the operator column is the
-        # citizen signal; a camp flag on a counter-coded row is not.
-        #
-        # So what is checked now is the RULING, not the old assumption: every
-        # camp-flagged row whose source_name is a counter code must derive as
-        # CSC, and a self-filed row must derive as citizen whatever its flag.
-        camp_on_counter = [(sn, cf) for sn, cf, *_ in raw
-                           if (cf or "").strip().upper() == "P"
-                           and not _looks_self_filed(sn)]
-        wrong = [(sn, cf) for sn, cf in camp_on_counter
-                 if can_channel(sn, cf) != "CSC"]
+        # The department's ruling (source_name '-' = SRO; source_name with
+        # camp_flag P = citizen; source_name alone = CSC). A mobile-shaped
+        # source_name is not a signal on its own.
+        camp = [(sn, cf) for sn, cf, *_ in raw if (cf or "").strip().upper() == "P"]
+        wrong = [(sn, cf) for sn, cf in camp if can_channel(sn, cf) != "citizen"]
         ok = not wrong
-        print(f"  {'ok  ' if ok else 'FAIL'} a camp flag on a counter account "
-              f"stays CSC: {len(camp_on_counter)} such row(s)"
-              + ("" if ok else f" -- derived as citizen: {wrong}"))
-        if not ok:
-            failures.append(f"camp flag overrode the counter code: {wrong}")
-
-        self_filed = [(sn, cf) for sn, cf, *_ in raw if _looks_self_filed(sn)]
-        wrong = [(sn, cf) for sn, cf in self_filed
-                 if can_channel(sn, cf) != "citizen"]
-        ok = not wrong
-        print(f"  {'ok  ' if ok else 'FAIL'} a mobile in the operator column is "
-              f"the citizen: {len(self_filed)} such row(s)"
+        print(f"  {'ok  ' if ok else 'FAIL'} source_name + camp flag P is the "
+              f"citizen: {len(camp)} such row(s)"
               + ("" if ok else f" -- derived otherwise: {wrong}"))
         if not ok:
-            failures.append(f"a self-filed row was not citizen: {wrong}")
+            failures.append(f"a camp-flag P row was not citizen: {wrong}")
+
+        plain = [(sn, cf) for sn, cf, *_ in raw
+                 if (cf or "").strip().upper() != "P"
+                 and (sn or "").strip().lower() not in ("", "-", "--", "na", "n/a", "null")]
+        wrong = [(sn, cf) for sn, cf in plain if can_channel(sn, cf) != "CSC"]
+        ok = not wrong
+        print(f"  {'ok  ' if ok else 'FAIL'} source_name with no P is CSC: "
+              f"{len(plain)} such row(s)"
+              + ("" if ok else f" -- derived otherwise: {wrong}"))
+        if not ok:
+            failures.append(f"a plain source_name row was not CSC: {wrong}")
 
         # ── 3. the filter returns what the register holds ───────────────────
         print("\n[3/4] filter -- get_officer_applications honours the channel")

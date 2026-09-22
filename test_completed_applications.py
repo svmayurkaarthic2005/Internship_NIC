@@ -141,7 +141,7 @@ ROUTING_CASES = [
 INVALID_NUMBER_CASES = [
     ("show application from csc", None),
     ("show applications from citizen", None),
-    ("show application from e-sevai", None),
+    ("show application from CSC", None),
     ("show application from ward 102", None),
     ("show my approved applications", None),
     # a real attempt at a number is still caught

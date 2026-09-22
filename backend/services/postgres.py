@@ -7,14 +7,20 @@ from sqlalchemy import select, func, and_, or_, desc, TIMESTAMP
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import date, datetime, timedelta
-from uuid import UUID
+from datetime import date, datetime, timedelta, timezone
+
+# India has no DST, so a fixed UTC+5:30 offset is the whole rule, permanently --
+# not a simplification. Every timestamp column is stored as UTC (CLAUDE.md's own
+# convention); this is the only place with a time-of-day in its display, so it is
+# the only place a UTC value read straight off the row silently showed the wrong
+# wall-clock time to an officer (5h30m early) instead of failing loudly.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from backend.models import (
     Application, SISOfficer, SurveyNumber, SubDivision,
     Owner, SurveyOwnership, FieldVisit, WorkflowHistory,
     ApplicationSubDivision, Block, Ward, Town, Taluk, District,
-    OfficerJurisdiction, PattaTransfer
+    OfficerJurisdiction, PattaTransfer, Applicant
 )
 from backend.schemas import OfficerContext
 from backend.utils.logger import get_logger
@@ -176,26 +182,39 @@ def application_subdivision_list(app) -> List[str]:
     made NISD 2022/0153/28/000984 list all 93 sub-divisions of survey 1355 when
     the application concerns 1355/2B alone.
 
-    Returns the tail of each number ("2B"), which the caller re-joins to the
-    base survey number for display.
+    Returns the tail of each number ("2B") when it names no survey of its own,
+    so the caller re-joins it to the application's base survey number for
+    display -- and the WHOLE "survey/tail" string when it already carries one,
+    because 14 of 209 applications span more than one survey number (an
+    application spans several parcels -- CLAUDE.md), and a sub-division there
+    can belong to a different survey than the application's own. Stripping it
+    down to a bare tail and re-prefixing with the wrong survey invented a
+    sub-division number ("1355/0") that exists nowhere in the register, for
+    the second parcel of 2026/0154/28/001167 -- 1363/0.
     """
     subdiv_list: List[str] = []
 
-    def _add(value):
+    def _add(value, keep_survey=False):
         if not value:
             return
         tail = str(value).strip()
-        if '/' in tail:
+        if not keep_survey and '/' in tail:
             tail = tail.split('/')[-1]
         if tail and tail not in subdiv_list:
             subdiv_list.append(tail)
 
     for assoc in (getattr(app, "application_sub_divisions", None) or []):
-        _add(assoc.proposed_sub_division_no
-             or (assoc.sub_division.sub_division_no if assoc.sub_division else None))
+        # proposed/temporary_sub_division_no are bare (or "{tail}/T{seq}",
+        # never a survey number) -- but the sub_divisions fallback is the same
+        # fully-qualified "survey/tail" string patta_transfers uses below.
+        if assoc.proposed_sub_division_no:
+            _add(assoc.proposed_sub_division_no)
+        elif assoc.sub_division:
+            _add(assoc.sub_division.sub_division_no, keep_survey=True)
     if not subdiv_list:
         for transfer in (getattr(app, "patta_transfers", None) or []):
-            _add(transfer.sub_division.sub_division_no if transfer.sub_division else None)
+            _add(transfer.sub_division.sub_division_no if transfer.sub_division else None,
+                 keep_survey=True)
     return subdiv_list
 
 
@@ -283,6 +302,10 @@ async def get_officer_applications(
         is_historical = (
             (isinstance(status, list) and any(s in ["approved", "rejected", "closed"] for s in status))
             or (isinstance(status, str) and status in ["approved", "rejected", "closed"])
+            # "show in progress applications" names a status that has usually left the SIS desk
+            # (the file sits with the Tahsildar): a register question, unlike the default queue
+            or (bool(status) and set([status] if isinstance(status, str) else status) != set(ACTIVE_STATUSES)
+                and any(s in ("in_progress", "escalated") for s in ([status] if isinstance(status, str) else status)))
         )
         # A question that names a period -- "applications in June 2025",
         # "between X and Y", "last month" -- asks what the register holds for
@@ -304,9 +327,12 @@ async def get_officer_applications(
         has_scope_filter = has_date_filter or bool(submission_channel) or bool(application_type)
         if not is_historical and not has_scope_filter:
             where_clauses.append(Application.current_stage == officer_stage)
-        elif has_scope_filter and not is_historical and not status:
+        elif has_scope_filter and not is_historical and not status and not application_type:
             # Looking across every stage, so the standing rule applies: rejected
             # applications stay out of lists unless they were asked for.
+            # An explicit type ("show ISD applications") is the exception: the
+            # officer wants the type's whole record, so its count must agree
+            # with "total applications".
             where_clauses.append(Application.current_status != "rejected")
 
         query = select(Application).options(
@@ -314,7 +340,11 @@ async def get_officer_applications(
             selectinload(Application.survey_number).selectinload(SurveyNumber.sub_divisions),
             selectinload(Application.application_sub_divisions).selectinload(ApplicationSubDivision.sub_division),
             selectinload(Application.patta_transfers).selectinload(PattaTransfer.sub_division),
-            selectinload(Application.applicant)
+            selectinload(Application.applicant),
+            # for "when were they last updated" over a list -- same rule as the
+            # single-application card: the most recent workflow hop, not the
+            # build-time updated_at column (see get_application_detail).
+            selectinload(Application.workflow_history),
         ).where(and_(True, *where_clauses))
 
         if is_overdue is not None:
@@ -398,14 +428,31 @@ async def get_officer_applications(
                        Application.application_number.asc()]
             query = query.order_by(*_order)
         else:
+            # Ward / block / survey / applicant live on joined tables; correlated
+            # scalar subqueries order by them without disturbing the filter above.
+            _survey_of = SurveyNumber.id == Application.survey_number_id
             _sort_columns = {
                 "submission_date": Application.submission_date,
                 "application_number": Application.application_number,
                 "status": Application.current_status,
                 "application_type": Application.application_type,
+                "fee_amount": Application.fee_amount,
+                "ward_number": select(Ward.ward_number)
+                    .join(Block, Block.ward_id == Ward.id)
+                    .join(SurveyNumber, SurveyNumber.block_id == Block.id)
+                    .where(_survey_of).scalar_subquery(),
+                "block_number": select(Block.block_number)
+                    .join(SurveyNumber, SurveyNumber.block_id == Block.id)
+                    .where(_survey_of).scalar_subquery(),
+                "survey_no": select(SurveyNumber.survey_no).where(_survey_of).scalar_subquery(),
+                "applicant_name": select(func.lower(Applicant.name))
+                    .where(Applicant.id == Application.applicant_id).scalar_subquery(),
             }
             _sort_col = _sort_columns.get(sort_by or "submission_date",
                                           Application.submission_date)
+            if sort_by == "survey_no":
+                # 9 before 10: shorter numbers first, then lexical ("35" < "35A").
+                _sort_col = func.lpad(_sort_col, 8, "0")
             if _descending:
                 query = query.order_by(_sort_col.desc(),
                                        Application.application_number.desc())
@@ -423,7 +470,13 @@ async def get_officer_applications(
             ward = block.ward if block else None
             town = ward.town if ward else None
             applicant = app.applicant if app else None
-            
+            # "when were they last updated" over this list -- same rule as the
+            # single-application card (get_application_detail): the most recent
+            # workflow hop, converted from the stored UTC to IST for display.
+            _hops = [w.performed_at for w in (app.workflow_history or []) if w.performed_at]
+            _lu = (max(_hops) if _hops else app.updated_at)
+            last_updated_date = _lu.astimezone(IST).strftime("%Y-%m-%d %H:%M") if _lu else None
+
             # VALIDATION: Log missing relationships for debugging
             if not sn:
                 logger.warning(f"Application {app.application_number} missing survey_number relationship")
@@ -468,6 +521,7 @@ async def get_officer_applications(
                     "status": app.current_status,
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                    "last_updated_date": last_updated_date,
                     "is_overdue": app.is_overdue,
                     "submission_channel": app.submission_channel,
                     # Carried so a listing that shows a CAN or IGRS column has
@@ -500,6 +554,7 @@ async def get_officer_applications(
                     "status": app.current_status,
                     "stage": app.current_stage,
                     "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                    "last_updated_date": last_updated_date,
                     "is_overdue": app.is_overdue,
                     "submission_channel": app.submission_channel,
                     # Carried so a listing that shows a CAN or IGRS column has
@@ -543,6 +598,29 @@ async def get_officer_applications(
                              if c is not None and "current_status" not in str(c)
                              and "current_stage" not in str(c)]),
                 Application.current_status == "rejected")
+            # The same period the empty list was scoped to: without it the note
+            # counted rejected files from every year ("14 matching ... rejected"
+            # under a question about 1900).
+            if date_ranges:
+                _segs = or_(*[and_(Application.submission_date >= _s, Application.submission_date <= _e)
+                              for _s, _e in date_ranges])
+                rejected_query = rejected_query.where(~_segs if exclude_date_range else _segs)
+            elif start_date and end_date:
+                _in_range = and_(Application.submission_date >= start_date,
+                                 Application.submission_date <= end_date)
+                rejected_query = rejected_query.where(~_in_range if exclude_date_range else _in_range)
+            elif start_date:
+                rejected_query = rejected_query.where(Application.submission_date >= start_date)
+            elif end_date:
+                rejected_query = rejected_query.where(Application.submission_date <= end_date)
+            else:
+                from sqlalchemy import extract as _extract
+                if submission_year:
+                    rejected_query = rejected_query.where(
+                        _extract('year', Application.submission_date) == submission_year)
+                if submission_month:
+                    rejected_query = rejected_query.where(
+                        _extract('month', Application.submission_date) == submission_month)
             if submission_channel:
                 rejected_query = rejected_query.where(
                     Application.submission_channel.in_(
@@ -578,7 +656,7 @@ async def get_officer_applications(
                                         and "current_stage" not in str(c)]),
                            Application.current_status != "rejected")
                     .group_by(Application.submission_channel))).all()
-                _labels = {"CSC": "a CSC / e-Sevai counter",
+                _labels = {"CSC": "a CSC counter",
                            "citizen": "the citizen portal",
                            "sub_registrar": "the Sub-Registrar"}
                 _held = [(c, n) for c, n in _mix_rows if c and c not in _asked and n]
@@ -619,6 +697,15 @@ async def get_comparison(db: AsyncSession, officer: OfficerContext,
 
     kind = spec.get("kind")
     base = [Application.assigned_officer_id == officer.officer_id]
+    scope = spec.get("scope") or {}       # "ISD vs NISD but not rejected" / "... approved only"
+    if scope.get("status_in"):
+        base.append(Application.current_status.in_(scope["status_in"]))
+    if scope.get("status_out"):
+        base.append(Application.current_status.notin_(scope["status_out"]))
+    if scope.get("channel_out"):
+        base.append(Application.submission_channel.notin_(scope["channel_out"]))
+    if scope.get("type_out"):
+        base.append(Application.application_type.notin_(scope["type_out"]))
 
     async def _count(**filters) -> int:
         q = select(func.count()).select_from(Application).where(and_(*base))
@@ -1394,7 +1481,7 @@ async def get_can_details(
 
     The channel is read off `submission_channel` rather than re-derived here.
     The CAN's length names the counter that issued it, not the channel: 15
-    digits is an e-Sevai counter, 12 is the TN portal. A Sub-Registrar referral
+    digits is an CSC counter, 12 is the TN portal. A Sub-Registrar referral
     carries a 12-digit CAN and an IGRS Form 6 number equal to it (see
     backend/sample_db/identifiers.py).
     """
@@ -1417,7 +1504,7 @@ async def get_can_details(
                     "can_number": can_number}
         can = app.can_number or ""
         channel = {
-            "CSC": "Common Service Centre (e-Sevai)",
+            "CSC": "Common Service Centre",
             "citizen": "Citizen portal (filed by the citizen)",
             "sub_registrar": "Sub-Registrar referral (IGRS Form 6)",
         }.get(app.submission_channel, app.submission_channel or "unknown")
@@ -1684,7 +1771,10 @@ async def get_application_detail(
             )
         )
         _lu = last_updated or app.updated_at
-        last_updated_iso = _lu.strftime("%Y-%m-%d %H:%M") if _lu else None
+        # Stored (and read back by asyncpg) as UTC; converted to IST before display
+        # -- an officer asking "when was this last updated" means Tamil Nadu wall-clock
+        # time, and a bare .strftime() here showed the UTC value 5h30m early.
+        last_updated_iso = _lu.astimezone(IST).strftime("%Y-%m-%d %H:%M") if _lu else None
 
         # When the file was decided -- approved or rejected. This is the
         # `performed_at` of the hop that closed the chain, which is the only
@@ -1742,6 +1832,7 @@ async def get_application_detail(
             # what the channel was derived from, so the answer can show
             # its working when the officer asks "how do you know?"
             "submission_source_name": app.submission_source_name,
+            "submission_ip": app.submission_ip,
             "submission_camp_flag": app.submission_camp_flag,
             "is_overdue": app.is_overdue,
             "priority_flag": app.priority_flag,
@@ -1750,6 +1841,11 @@ async def get_application_detail(
             "town_name":     jur_dict["town"],
             "ward_number":   ward.ward_number if ward else "N/A",
             "block_number":  block.block_number if block else "N/A",
+            # Flat, parallel to district_name/taluk_name above -- so a "what
+            # ward is it in" follow-up can prefer the name the same way, instead
+            # of reading ward_number (the code, "002") straight off the row.
+            "ward_name":     jur_dict["ward"],
+            "block_name":    jur_dict["block"],
             "jurisdiction": jur_dict,
             # Applicant
             "applicant_name": app.applicant.name if app.applicant else None,
@@ -1878,8 +1974,8 @@ async def get_application_detail(
             "application_date": app.submission_date.isoformat(),
             "application_status": app.current_status,
             "workflow_state": app.current_stage,
-            # Revenue Department -- the only department SIS urban mutation work
-            # runs under (extract department_code is "01" for every projected row).
+            # Constant across the extract -- every projected row's
+            # department_code is "01".
             "department_code": "01",
             "last_updated_datetime": last_updated_iso,
             # The date the application was approved or rejected. None while the
@@ -2351,6 +2447,18 @@ async def get_field_visits(
         result = await db.execute(query)
         visits = result.scalars().unique().all()
         
+        # ward / town / taluk / district of each visit's block, for "along with district"
+        _block_ids = {v.application.survey_number.block_id for v in visits
+                      if v.application and v.application.survey_number}
+        _geo = {}
+        if _block_ids:
+            for bid, wno, tname, kname, dname in (await db.execute(
+                    select(Block.id, Ward.ward_number, Town.name, Taluk.name, District.name)
+                    .join(Ward, Block.ward_id == Ward.id).join(Town, Ward.town_id == Town.id)
+                    .join(Taluk, Town.taluk_id == Taluk.id).join(District, Taluk.district_id == District.id)
+                    .where(Block.id.in_(_block_ids)))).all():
+                _geo[bid] = {"ward_number": wno, "town": tname, "taluk": kname, "district": dname}
+
         field_visits = []
         to_be_visited_count = 0
         completed_count = 0
@@ -2388,6 +2496,7 @@ async def get_field_visits(
                 "subdivisions": subdivisions_str,
                 "sub_division_no": subdivisions_str,
                 "block_number": block.block_number if block else None,
+                **_geo.get(survey.block_id if survey else None, {}),
                 "application_type": app.application_type if app else "N/A",
                 "status": visit.status,
                 "field_visit_date": visit.scheduled_date.isoformat() if visit.scheduled_date else None,
@@ -3301,6 +3410,71 @@ async def get_fee_summary(
                 "query_type": "Fee Collection Summary"}
 
 
+async def get_recent_fees(
+    db: AsyncSession,
+    officer: OfficerContext,
+    application_type: Optional[str] = None,
+    channel: Optional[str] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    """The fee actually recorded on the newest applications of a type / channel.
+
+    Fees are revised, so "what is the fee for ISD" is answered from the newest
+    files that carry a fee record, never from a fixed schedule. Rejected files
+    are kept (the fee is paid at submission). `newer_without_fee` counts files
+    filed after the newest fee-bearing one, so an empty recent record is said
+    rather than silently skipped.
+    """
+    try:
+        jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+        result = {"application_type": application_type.upper() if application_type else None,
+                  "channel": channel, "latest": [], "total_with_fee": 0,
+                  "newer_without_fee": 0, "total_applications": 0}
+        if not jurisdiction_filters:
+            return {"fee_lookup": result, "query_type": "Recorded Fee"}
+
+        conditions = [Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters))]
+        if application_type:
+            conditions.append(Application.application_type == application_type.upper())
+        if channel:
+            conditions.append(Application.submission_channel == channel)
+
+        result["total_applications"] = (await db.execute(
+            select(func.count(Application.id)).where(and_(*conditions)))).scalar() or 0
+        with_fee = and_(*conditions, Application.fee_amount.is_not(None))
+        result["total_with_fee"] = (await db.execute(
+            select(func.count(Application.id)).where(with_fee))).scalar() or 0
+
+        rows = (await db.execute(
+            select(Application.application_number, Application.application_type,
+                   Application.submission_channel, Application.submission_date,
+                   Application.fee_amount, Application.payment_mode)
+            .where(with_fee)
+            .order_by(desc(Application.submission_date), desc(Application.application_number))
+            .limit(limit)
+        )).all()
+        result["latest"] = [
+            {"application_number": r[0], "application_type": r[1], "channel": r[2],
+             "submission_date": str(r[3])[:10] if r[3] else None,
+             "fee_amount": float(r[4]), "payment_mode": r[5]}
+            for r in rows
+        ]
+        if rows and rows[0][3] is not None:
+            result["newer_without_fee"] = (await db.execute(
+                select(func.count(Application.id)).where(
+                    and_(*conditions, Application.fee_amount.is_(None),
+                         Application.submission_date > rows[0][3]))
+            )).scalar() or 0
+        elif not rows:
+            result["newer_without_fee"] = result["total_applications"]
+        return {"fee_lookup": result, "query_type": "Recorded Fee"}
+    except Exception as e:
+        logger.error(f"Error getting recent fees: {e}")
+        return {"fee_lookup": {"latest": [], "total_with_fee": 0, "total_applications": 0,
+                               "newer_without_fee": 0}, "error": str(e),
+                "query_type": "Recorded Fee"}
+
+
 async def get_ward_directory(
     db: AsyncSession,
     officer: OfficerContext,
@@ -3440,6 +3614,9 @@ async def get_applications_by_numbers(
     application_numbers: List[str],
     status: Optional[str] = None,
     application_type: Optional[str] = None,
+    include_rejected: bool = False,
+    sort_by: Optional[str] = None,
+    sort_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Re-read an explicit set of applications the officer was just shown.
 
@@ -3459,7 +3636,14 @@ async def get_applications_by_numbers(
     the NISD ones".
 
     Rejected applications stay out unless `status` asks for them, the same
-    standing rule the other listings follow.
+    standing rule the other listings follow -- UNLESS `include_rejected` is
+    set, for the one case that rule doesn't fit: the carried list came from
+    an unscoped "show all applications" that legitimately included rejected
+    rows in the first place. A field-projection follow-up ("show along
+    district") re-reading that same set with the default rule silently
+    dropped every rejected row that had been on screen -- 70 became 54 for
+    no reason the officer asked for. The caller decides this from whether
+    the ORIGINAL context carried a status filter of its own.
     """
     numbers = [str(n).strip().upper() for n in (application_numbers or []) if str(n).strip()]
     if not officer or not officer.officer_id:
@@ -3498,7 +3682,7 @@ async def get_applications_by_numbers(
         )
         if status:
             query = query.where(Application.current_status == status)
-        elif True:
+        elif not include_rejected:
             # The standing rule: a rejected file is not part of an operational
             # list unless it was asked for by name.
             query = query.where(Application.current_status != "rejected")
@@ -3524,6 +3708,31 @@ async def get_applications_by_numbers(
                 .group_by(WorkflowHistory.application_id))
             _decided = {aid: ts for aid, ts in _dec.all()}
 
+        # "when were they last updated" over this carried list -- same rule
+        # as the single-application card and get_officer_applications(): the
+        # most recent hop of ANY kind (not just a closing one), converted from
+        # the stored UTC to IST for display.
+        _last_updated: Dict[Any, Any] = {}
+        if rows:
+            _lu_q = await db.execute(
+                select(WorkflowHistory.application_id, func.max(WorkflowHistory.performed_at))
+                .where(WorkflowHistory.application_id.in_(_ids))
+                .group_by(WorkflowHistory.application_id))
+            _last_updated = {aid: ts for aid, ts in _lu_q.all()}
+
+        # The field-visit state of each file, from the visits themselves -- not the
+        # Application.field_visit_scheduled flag -- so "which one is not scheduled?"
+        # is answered from the same rows the unscheduled-visit list is.
+        _fv_state: Dict[Any, str] = {}
+        if rows:
+            for _aid, _st in (await db.execute(
+                    select(FieldVisit.application_id, FieldVisit.status)
+                    .where(FieldVisit.application_id.in_([a.id for a in rows])))).all():
+                _prev = _fv_state.get(_aid)
+                _rank = {"scheduled": 3, "unscheduled": 2, "completed": 1}
+                if _prev is None or _rank.get(_st, 0) > _rank.get(_prev, 0):
+                    _fv_state[_aid] = _st
+
         # Preserve the order the officer saw, so "the second one" still means
         # the second row of the answer above.
         position = {n: i for i, n in enumerate(numbers)}
@@ -3546,8 +3755,12 @@ async def get_applications_by_numbers(
                 "status": app.current_status,
                 "stage": app.current_stage,
                 "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                "last_updated_date": (
+                    (_last_updated.get(app.id) or app.updated_at).astimezone(IST).strftime("%Y-%m-%d %H:%M")
+                    if (_last_updated.get(app.id) or app.updated_at) else None),
                 "is_overdue": app.is_overdue,
                 "priority_flag": app.priority_flag,
+                "field_visit_status": _fv_state.get(app.id),
                 "submission_channel": app.submission_channel,
                 "can_number": app.can_number,
                 "igrs_form6_number": app.igrs_form6_number,
@@ -3574,6 +3787,24 @@ async def get_applications_by_numbers(
                 (_dec_ts.date() - app.submission_date).days
                 if _dec_ts and app.submission_date else None)
 
+        if sort_by:
+            _key = {"application_number": "application_number", "status": "status",
+                    "application_type": "type", "ward_number": "ward_number",
+                    "block_number": "block_number", "survey_no": "survey_no",
+                    "fee_amount": "fee_amount", "applicant_name": "applicant_name",
+                    }.get(sort_by, "submission_date")
+            _desc = (sort_dir or "asc").lower() == "desc"
+            if sort_by == "priority":
+                app_rows.sort(key=lambda r: (bool(r.get("priority_flag")), bool(r.get("is_overdue"))), reverse=_desc)
+            else:
+                def _sk(r):
+                    v = r.get(_key)
+                    if isinstance(v, (int, float)):
+                        return (0, v, "", r["application_number"])
+                    v = str(v or "")
+                    return (1, 0, (v.zfill(8) if _key == "survey_no" else v.lower()), r["application_number"])
+                app_rows.sort(key=_sk, reverse=_desc)
+
         # A carried list is re-queried here with whatever status mix it already
         # had -- often mostly "approved" once a file has left the officer's
         # desk. The table renderer falls back to "Pending Applications" when
@@ -3596,6 +3827,8 @@ async def get_applications_by_numbers(
             "dropped": len(numbers) - len(app_rows),
             "jurisdiction_type": officer.jurisdiction_type,
             "query_type": _query_type,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
         }
     except Exception as e:
         logger.error(f"Error reading applications by number: {e}")
@@ -3744,7 +3977,6 @@ async def get_visit_plan(
         return {"scheduled": [], "overdue": [], "awaiting": [], "error": "Invalid officer context"}
 
     try:
-        from sqlalchemy.orm import joinedload
         today = date.today()
 
         geography = (
@@ -3876,3 +4108,118 @@ async def get_visit_plan(
     except Exception as e:
         logger.error(f"Error building visit plan: {e}")
         return {"scheduled": [], "overdue": [], "awaiting": [], "error": str(e)}
+
+
+async def get_ip_comparison(
+    db: AsyncSession,
+    officer: OfficerContext,
+    application_numbers: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Which applications were submitted from the same IP address.
+
+    With `application_numbers` the named files are compared (rejected ones too --
+    they were asked for by name); without, every non-rejected application in the
+    officer's jurisdiction is grouped. Numbers outside the jurisdiction are
+    counted in `dropped`, never returned. Returns `groups` (IPs carried by two or
+    more files, largest first) and `singles` (file -> IP for the rest).
+    """
+    numbers = [str(n).strip().upper() for n in (application_numbers or []) if str(n).strip()]
+    filters = await get_jurisdiction_filter(db, officer)
+    if not filters:
+        return {"error": "No jurisdiction assigned", "groups": [], "singles": {}, "count": 0,
+                "dropped": len(numbers), "no_ip": []}
+    q = (select(Application.application_number, Application.submission_ip)
+         .where(Application.id.in_(_application_jurisdiction_subquery(filters))))
+    if numbers:
+        q = q.where(Application.application_number.in_(numbers))
+    else:
+        q = q.where(Application.current_status != "rejected")
+    rows = (await db.execute(q.order_by(Application.application_number))).all()
+    by_ip: Dict[str, List[str]] = {}
+    no_ip: List[str] = []
+    for num, ip in rows:
+        if ip and ip.strip():
+            by_ip.setdefault(ip.strip(), []).append(num)
+        else:
+            no_ip.append(num)
+    groups = sorted(((ip, a) for ip, a in by_ip.items() if len(a) > 1), key=lambda g: (-len(g[1]), g[0]))
+    singles = {a[0]: ip for ip, a in by_ip.items() if len(a) == 1}
+    found = {n for n, _ in rows}
+    return {"count": len(rows), "groups": groups, "singles": singles, "no_ip": no_ip,
+            "dropped": len([n for n in numbers if n not in found]), "requested": len(numbers)}
+
+
+_NO_REMARK = {"", "-", "--", "---", "na", "n/a", "nil", "none", "null"}
+
+
+def _real_remark(text) -> Optional[str]:
+    t = (text or "").strip()
+    return None if t.lower() in _NO_REMARK else t
+
+
+async def get_workflow_remarks(
+    db: AsyncSession,
+    officer: OfficerContext,
+    application_numbers: List[str],
+) -> Dict[str, Any]:
+    """The remarks written on each application's workflow steps, and the reason a rejected file gives.
+
+    Only applications inside the officer's jurisdiction are returned; the rest are counted in `dropped`,
+    never described. A placeholder ("-", blank) is not a remark. `apps` keeps the order asked in.
+    """
+    numbers = [str(n).strip().upper() for n in (application_numbers or []) if str(n).strip()]
+    if not officer or not officer.officer_id or not numbers:
+        return {"apps": [], "requested": len(numbers), "dropped": len(numbers)}
+    filters = await get_jurisdiction_filter(db, officer)
+    if not filters:
+        return {"apps": [], "requested": len(numbers), "dropped": len(numbers)}
+    rows = (await db.execute(
+        select(Application.application_number, Application.current_status, Application.application_type,
+               WorkflowHistory.from_stage, WorkflowHistory.to_stage, WorkflowHistory.remarks,
+               WorkflowHistory.rejection_reason, WorkflowHistory.performed_at)
+        .select_from(Application)
+        .outerjoin(WorkflowHistory, WorkflowHistory.application_id == Application.id)
+        .where(Application.application_number.in_(numbers))
+        .where(Application.id.in_(_application_jurisdiction_subquery(filters)))
+        .order_by(Application.application_number, WorkflowHistory.performed_at)
+    )).all()
+    by: Dict[str, Dict[str, Any]] = {}
+    for num, status, atype, frm, to, rem, rej, at in rows:
+        rec = by.setdefault(num, {"application_number": num, "status": status, "type": atype,
+                                  "hops": [], "reason": None})
+        remark, reason = _real_remark(rem), _real_remark(rej)
+        if frm or to:
+            rec["hops"].append({"desk": frm or to, "to": to, "remark": remark,
+                                "date": at.date().isoformat() if at else None})
+        if reason:
+            rec["reason"] = reason
+        elif status == "rejected" and to == "REJECTED" and remark:
+            rec["reason"] = remark          # the closing hop's own words
+    ordered = [by[n] for n in numbers if n in by]
+    return {"apps": ordered, "requested": len(numbers), "dropped": len(numbers) - len(ordered)}
+
+
+async def get_analytics_rows(db: AsyncSession, officer: OfficerContext) -> List[Dict[str, Any]]:
+    """One lean row per application in the officer's jurisdiction, every status: the columns the
+    year / month / fee / percentage / turnaround questions are computed from. Read-only."""
+    jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+    if not jurisdiction_filters:
+        return []
+    decided = (
+        select(WorkflowHistory.application_id.label("app_id"),
+               func.max(WorkflowHistory.performed_at).label("decided_at"))
+        .where(WorkflowHistory.to_stage.in_(("COMPLETED", "REJECTED")))
+        .group_by(WorkflowHistory.application_id).subquery()
+    )
+    q = (select(Application.application_number, Application.application_type, Application.current_status,
+                Application.submission_channel, Application.submission_date, Application.fee_amount,
+                decided.c.decided_at)
+         .outerjoin(decided, decided.c.app_id == Application.id)
+         .where(Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters))))
+    out = []
+    for num, typ, status, channel, sub, fee, decided_at in (await db.execute(q)).all():
+        days = (decided_at.date() - sub).days if (decided_at and sub) else None
+        out.append({"application_number": num, "type": typ, "status": status, "submission_channel": channel,
+                    "submission_date": sub, "fee": float(fee) if fee is not None else None,
+                    "decided_on": decided_at.date() if decided_at else None, "days_to_decide": days})
+    return out

@@ -2,7 +2,7 @@
 Authentication service - password hashing, JWT token generation, jurisdiction resolution
 """
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from uuid import UUID
 from jose import jwt, JWTError
 
@@ -29,7 +29,7 @@ from sqlalchemy import select
 
 from backend.config import settings
 from backend.models import (
-    SISOfficer, OfficerJurisdiction, District, Taluk, Town, Ward, Block
+    OfficerJurisdiction, Taluk, Town, Ward, Block
 )
 
 

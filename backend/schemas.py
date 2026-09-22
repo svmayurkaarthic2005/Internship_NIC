@@ -2,7 +2,7 @@
 Pydantic schemas for request/response validation
 """
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any
 from datetime import date, datetime
 from uuid import UUID
 

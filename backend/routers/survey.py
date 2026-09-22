@@ -8,7 +8,7 @@ from typing import Optional
 from uuid import UUID
 
 from backend.database import get_db
-from backend.schemas import SurveyNumberResponse, StandardResponse
+from backend.schemas import StandardResponse
 from backend.dependencies import get_current_officer
 
 router = APIRouter(prefix="/api/v1/survey", tags=["Survey"])

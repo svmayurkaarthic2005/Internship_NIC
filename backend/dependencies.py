@@ -1,14 +1,12 @@
 """
 FastAPI Dependencies
 """
-from typing import AsyncGenerator
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from backend.database import get_db
-from backend.config import settings
 from backend.models import SISOfficer
 from backend.schemas import OfficerContext
 from backend.services.auth_service import decode_token, get_officer_jurisdiction_ids

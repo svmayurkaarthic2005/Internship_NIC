@@ -21,9 +21,7 @@ Exits non-zero if any check fails.
 from __future__ import annotations
 
 import csv
-import re
 import sys
-from pathlib import Path
 
 # Names in the extracts are Tamil, and a Windows console defaults to cp1252,
 # which cannot encode them. Same guard as backend/main.py.

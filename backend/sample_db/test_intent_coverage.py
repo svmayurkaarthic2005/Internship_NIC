@@ -101,7 +101,20 @@ CASES: list[tuple[str, str]] = [
     (f"Has {APP} been forwarded by SD?", "sd_forward_check"),
     (f"What are the SD remarks on {APP}?", "sd_remarks"),
     (f"Is the sketch ready for {APP}?", "application_status"),  # sketch state is not modelled
-    ("Which applications are escalated?", "escalation_check"),
+    # A STATUS question ("which ones currently ARE escalated"), not the
+    # threshold/deadline-proximity feature escalation_check actually is --
+    # see rag.py's own comment on the narrowed "escalat" trigger. Used to
+    # route through general_query, whose agent layer called
+    # count_applications(status="escalated") and correctly answered "There
+    # are no escalated applications". A bare status word ("approved
+    # applications", "escalated applications", ...) with no verb now routes
+    # straight to pending_applications instead -- the same fix that made
+    # "not approved applications" / "neither approved nor rejected
+    # applications" answer deterministically instead of reaching the LLM at
+    # all. The answer is the same fact ("No applications found" -- the
+    # escalated status is not one any seeded application has, see
+    # CLAUDE.md), reached without an LLM call.
+    ("Which applications are escalated?", "pending_applications"),
 
     # ── area summaries ───────────────────────────────────────────────────
     ("Show pending applications in my town", "pending_applications"),  # ward officer is refused town scope
@@ -111,8 +124,8 @@ CASES: list[tuple[str, str]] = [
 
     # ── reference / knowledge ────────────────────────────────────────────
     ("What is service code 0154?", "service_code_lookup"),  # names the code asked about
-    ("What is the service charge for an ISD application?", "service_code_guide"),
-    ("What is the CSC service charge?", "service_code_guide"),
+    ("What is the service charge for an ISD application?", "fee_lookup"),
+    ("What is the CSC service charge?", "fee_lookup"),
     ("What is the total fee collected from my applications?", "fee_summary"),
     ("Fee collection breakdown by payment mode", "fee_summary"),
     ("Show me the service code guide", "service_code_guide"),
@@ -120,7 +133,7 @@ CASES: list[tuple[str, str]] = [
     ("What documents are required for an ISD application?", "general_query"),
     ("What is the 15 working day rule?", "general_query"),
     ("What is the escalation process?", "general_query"),
-    ("How long does an ISD application take?", "general_query"),
+    ("How long does an ISD application take?", "service_code_lookup"),
     ("What happens if an application is rejected?", "general_query"),
     ("Hello", "greeting"),
 ]

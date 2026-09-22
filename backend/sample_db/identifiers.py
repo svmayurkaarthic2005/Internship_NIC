@@ -14,7 +14,7 @@ Both layers of the database go through here, so the rules live in one place:
 
   | digits | issued by | shape in the extracts |
   |--------|-----------|-----------------------|
-  | 15 | a Common Service Centre / e-Sevai counter | `133280122203291` |
+  | 15 | a Common Service Centre / CSC counter | `133280122203291` |
   | 12 | the citizen on the TN portal              | `202329380999`    |
 
   The length does **not** decide the submission channel. That comes from two
@@ -23,8 +23,8 @@ Both layers of the database go through here, so the rules live in one place:
   | channel       | `source_name`          | `camp_flag`   |
   |---------------|------------------------|---------------|
   | sub_registrar | `-` (nobody keyed it)  | --            |
-  | citizen       | a bare mobile number   | `P` (camp)    |
-  | CSC           | an operator / VLE code | anything else |
+  | citizen       | present (not `-`)      | `P`           |
+  | CSC           | present (not `-`)      | anything else |
 
   A placeholder `source_name` means no operator account touched the file: it
   came in unattended from the Sub-Registrar, where IGRS raised the mutation off
@@ -32,9 +32,9 @@ Both layers of the database go through here, so the rules live in one place:
   revenue camp, where the file is keyed in for the citizen present, so the
   submission is the citizen's own; every other attended row is a CSC counter.
 
-  The citizen route rests on two signals that agree everywhere: the `P` flag,
-  and a `source_name` holding ten bare digits (the citizen's mobile) instead of
-  a counter code. Either is enough -- see `_looks_self_filed`.
+  Ruling (domain owner): `-` is the SRO; a `source_name` WITH camp flag `P` is
+  a citizen; a `source_name` alone is CSC. A mobile-shaped `source_name` is not
+  a signal by itself.
 
   `CAN_LENGTHS` then bounds what each channel may carry -- `CSC` 15,
   `sub_registrar` 12, `citizen` either, because a camp file can carry the
@@ -95,7 +95,7 @@ def aadhaar_for(identity: str) -> str:
 
 # What lengths a CAN may have on each channel. The length identifies the
 # counter that issued the number, not the channel that filed the application:
-# an e-Sevai counter issues 15 digits (the `133` series), the TN portal issues
+# an CSC counter issues 15 digits (the `133` series), the TN portal issues
 # 12. A camp file is keyed in by an operator on the citizen's behalf, so it can
 # carry either.
 CAN_LENGTHS = {"CSC": (15,), "citizen": (12, 15), "sub_registrar": (12,)}
@@ -159,25 +159,17 @@ def can_channel(source_name: str | None, camp_flag: str | None = None) -> str:
       desk is still run by a counter, and the flag appears on counter-coded
       rows.
 
-    Anything else keyed in by an operator is a CSC / e-Sevai submission.
+    Anything else keyed in by an operator is a CSC submission.
 
-    `camp_flag` is deliberately still a parameter. Dropping it would silently
-    change every call site's meaning; keeping it documents that the column was
-    considered and is not the deciding signal.
+    The department's rule, as stated by the domain owner:
+      * `source_name` is `-`                     -> sub_registrar (SRO)
+      * `source_name` present and `camp_flag` P  -> citizen
+      * `source_name` present, no `P`            -> CSC
+    A mobile-shaped `source_name` is NOT a signal by itself.
     """
     if (source_name or "").strip().lower() in _NO_OPERATOR:
         return "sub_registrar"
-    # The shape of source_name is the whole rule. It used to be OR-ed with
-    # camp_flag == 'P', on the stated ground that the two signals named the
-    # same rows; in the current extracts they do not, and where they disagree
-    # the camp flag is the one contradicted by everything else on the row (see
-    # _CAMP_FLAGS). A bare mobile in the operator column cannot be anything but
-    # the citizen's own identifier, so that is what is trusted.
-    #
-    # This is the reading the built database already holds: re-deriving every
-    # row under this rule reproduces `applications.submission_channel` exactly,
-    # while the OR rule disagreed with the stored value on 2022/0153/28/001405.
-    if _looks_self_filed(source_name):
+    if (camp_flag or "").strip().upper() in _CAMP_FLAGS:
         return "citizen"
     return "CSC"
 

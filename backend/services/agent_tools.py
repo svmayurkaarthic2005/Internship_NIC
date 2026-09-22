@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.models import Block, OfficerJurisdiction, Ward
+from backend.models import Block, OfficerJurisdiction
 from backend.schemas import OfficerContext
 from backend.services import postgres as pg
 from backend.utils.logger import get_logger
@@ -163,7 +163,6 @@ def _obj(properties: Dict[str, Any], required: Optional[List[str]] = None) -> Di
 
 
 _STATUS_ENUM = ["pending", "in_progress", "escalated", "approved", "rejected"]
-_TYPE_ENUM = ["ISD", "NISD", "MERGE"]
 _CHANNEL_ENUM = ["CSC", "citizen", "sub_registrar"]
 
 _WARD_PROP = {"type": "string",
@@ -450,6 +449,13 @@ async def _h_jurisdiction(ctx: ToolContext, **args) -> Dict[str, Any]:
     }
 
 
+def _squeeze(text: str) -> str:
+    """Passage text without layout padding -- runs of spaces and blank lines cost
+    prompt tokens (and CPU seconds) and carry no meaning."""
+    import re as _re
+    return _re.sub(r"\n\s*\n+", "\n", _re.sub(r"[ \t]{2,}", " ", text)).strip()
+
+
 async def _h_search_documents(ctx: ToolContext, **args) -> Dict[str, Any]:
     """Reference knowledge -- rules, workflow, service codes, fee schedule.
 
@@ -471,7 +477,7 @@ async def _h_search_documents(ctx: ToolContext, **args) -> Dict[str, Any]:
         "passages": [
             {
                 "source": (h.get("metadata") or {}).get("document_name"),
-                "content": (h.get("content") or "")[:1200],
+                "content": _squeeze(h.get("content") or "")[:2200],
             }
             for h in hits
         ],
@@ -494,7 +500,7 @@ TOOLS: List[ToolSpec] = [
             "whole, always pass a status, type, channel or period."),
         parameters=_obj({
             "status": {"type": "string", "enum": _STATUS_ENUM},
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
             "submission_channel": {"type": "string", "enum": _CHANNEL_ENUM},
             "submission_year": {"type": "integer", "minimum": 2000, "maximum": 2100},
             "submission_month": {"type": "integer", "minimum": 1, "maximum": 12},
@@ -515,7 +521,7 @@ TOOLS: List[ToolSpec] = [
             "get_officer_workload for the workload summary."),
         parameters=_obj({
             "status": {"type": "string", "enum": _STATUS_ENUM},
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
             "submission_channel": {"type": "string", "enum": _CHANNEL_ENUM},
             "submission_year": {"type": "integer", "minimum": 2000, "maximum": 2100},
             "submission_month": {"type": "integer", "minimum": 1, "maximum": 12},
@@ -532,7 +538,7 @@ TOOLS: List[ToolSpec] = [
             "progress, escalated) at their desk. Use for 'what is pending', 'my "
             "queue', 'what do I have to do'."),
         parameters=_obj({
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
             "submission_channel": {"type": "string", "enum": _CHANNEL_ENUM},
             "ward_number": _WARD_PROP,
             "block_number": _BLOCK_PROP,
@@ -545,7 +551,7 @@ TOOLS: List[ToolSpec] = [
             "Applications past their service-level deadline in the officer's "
             "jurisdiction. Use for 'overdue', 'delayed', 'late', 'breaching SLA'."),
         parameters=_obj({
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
             "min_days_overdue": {"type": "integer", "minimum": 0, "maximum": 3650},
             "ward_number": _WARD_PROP,
             "block_number": _BLOCK_PROP,
@@ -636,7 +642,7 @@ TOOLS: List[ToolSpec] = [
             "approved application'."),
         parameters=_obj({
             "status": {"type": "string", "enum": _STATUS_ENUM},
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
             "ward_number": _WARD_PROP,
             "block_number": _BLOCK_PROP,
         }),
@@ -649,7 +655,7 @@ TOOLS: List[ToolSpec] = [
             "applications: total, mean, payment modes, and how many carry no fee "
             "record."),
         parameters=_obj({
-            "application_type": {"type": "string", "enum": _TYPE_ENUM},
+            "application_type": {"type": "string"},
         }),
         handler=_h_fee_summary,
     ),

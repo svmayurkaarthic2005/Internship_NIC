@@ -57,3 +57,9 @@ alembic/versions/*.pyc
 
 # Office temp/lock files
 ~$*
+
+# Trained model checkpoints (>100MB, exceed GitHub's limit; kept on Google Drive instead)
+sis-qlora-adapter/checkpoint-*/
+sis-qlora-adapter/*.safetensors
+*.safetensors
+*.pt

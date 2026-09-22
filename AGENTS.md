@@ -161,7 +161,7 @@ the ORM projection:
   every extract and across both layers.
 - **CAN** (Citizen Access Number) — the length identifies the **counter that
   issued it**, not the channel: 15 digits from a Common Service Centre /
-  e-Sevai counter, 12 digits from the TN portal. The channel itself is derived
+  CSC counter, 12 digits from the TN portal. The channel itself is derived
   by `can_channel()` from `urban_application_log.source_name` + `camp_flag`:
   `-` (no operator account) = `sub_registrar`, a bare mobile number with
   `camp_flag='P'` = `citizen`, everything else attended = `CSC`. See
@@ -210,7 +210,7 @@ assumed — the applications whose wording says "Send to SIS" are sitting at rol
 
 | role | who | stage |
 |---|---|---|
-| `1` | the CSC / e-Sevai operator or citizen who submits | not a desk (no `from_stage`) |
+| `1` | the CSC operator or citizen who submits | not a desk (no `from_stage`) |
 | `44`, `42`, `41` | the surveyor's office | `SIS` |
 | `8` | Senior Draughtsman | `SD` |
 | `12` | Deputy Inspector Surveyor (DIS) | `DIS` |

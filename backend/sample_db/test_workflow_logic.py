@@ -223,15 +223,14 @@ async def check_answer_consistency(db) -> list[str]:
                    JOIN blocks b ON b.id = s.block_id
                    JOIN officer_jurisdictions j ON j.officer_id = :o
                    WHERE b.ward_id = j.ward_id
-                     AND a.current_status <> 'rejected'
-                     {stage} {extra}"""
+                     {rej} {stage} {extra}"""
         _AT_DESK = "AND a.current_stage = 'SIS'"
         # An unscoped queue is what is at the officer's own desk, so its expected
         # count carries the stage pin get_officer_applications applies.
         #
         # An application-type scope does NOT: "show my ISD applications" asks the
         # officer's whole ISD history, not the ISD files still sitting at SIS --
-        # has_scope_filter drops the pin for an explicit type, so the expected
+        # has_scope_filter drops the pin (and the rejected exclusion) for an explicit type, so the expected
         # count must drop it too. Pinned, this check asserted the very behaviour
         # that answered 2 to an officer holding 9 ISD files.
         listings = [
@@ -248,7 +247,7 @@ async def check_answer_consistency(db) -> list[str]:
         ]
         for label, kwargs, stage, extra in listings:
             got = (await postgres.get_officer_applications(db, ctx, **kwargs)).get("count", 0)
-            want = (await db.execute(text(queue.format(stage=stage, extra=extra)),
+            want = (await db.execute(text(queue.format(rej=('' if 'application_type' in extra else "AND a.current_status <> 'rejected'"), stage=stage, extra=extra)),
                                      {"o": officer.id})).scalar()
             checks.append((f"{label} == database", got == want, f"{got} vs {want}"))
 

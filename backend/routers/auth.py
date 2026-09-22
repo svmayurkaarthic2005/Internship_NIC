@@ -3,7 +3,7 @@ Authentication Router
 Endpoints for login, token refresh, logout, and user profile
 """
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

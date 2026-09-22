@@ -40,13 +40,13 @@ ROUTING_CASES = [
     ("What is the payment mode for 2024/0154/28/002252?",           "application_status"),
     ("2025/0154/28/000286 kku evvalavu fee?",                       "application_status"),
     ("விண்ணப்பம் 2025/0154/28/000286 கட்டணம் எவ்வளவு?",              "application_status"),
-    # the fee schedule
-    ("What is the service charge for an ISD application?",          "service_code_guide"),
-    ("How much does a NISD application cost?",                      "service_code_guide"),
-    ("What is the CSC service charge?",                             "service_code_guide"),
-    ("What is the government fee for a MERGE application?",         "service_code_guide"),
-    ("Is there any fee difference between ISD and NISD?",           "service_code_guide"),
-    ("ISD ku enna fee?",                                            "service_code_guide"),
+    # a fee question is answered from the register, never from a fixed schedule
+    ("What is the service charge for an ISD application?",          "fee_lookup"),
+    ("How much does a NISD application cost?",                      "fee_lookup"),
+    ("What is the CSC service charge?",                             "fee_lookup"),
+    ("What is the government fee for a MERGE application?",         "fee_lookup"),
+    ("Is there any fee difference between ISD and NISD?",           "fee_lookup"),
+    ("ISD ku enna fee?",                                            "fee_lookup"),
     # aggregates over the officer's own files
     ("What is the total fee collected from my applications?",       "fee_summary"),
     ("How much money was collected in my jurisdiction?",            "fee_summary"),

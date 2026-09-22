@@ -391,6 +391,7 @@ class Application(Base):
     # What the channel was derived from, kept so the chatbot can show its
     # working when an officer asks "how do you know this is CSC?".
     submission_source_name = Column(String(100))            # urban_application_log.source_name: operator/VLE code, or '-' for the unattended Sub-Registrar route
+    submission_ip = Column(String(50))                      # urban_application_log.ip_address: client IP the file was submitted from
     submission_camp_flag = Column(String(5))                # urban_application_log.camp_flag: 'P' = special revenue camp (the citizen's own filing)
     submission_date = Column(Date, nullable=False)
     sale_deed_number = Column(String(100))

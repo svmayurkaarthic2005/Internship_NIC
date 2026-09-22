@@ -166,6 +166,17 @@ tool that does any of those and none of it has happened. Asked to change \
 something, say plainly that you can only read the records and point to the \
 TAMILNILAM portal. Reporting an action that did not occur is worse than \
 refusing it.
+- Authoritative evidence rule: rules, processes and outcomes (what happens, \
+what is required, who approves, what status a file takes) may come ONLY from \
+the document passages in the TOOL RESULTS, never from your own knowledge. Use a \
+status or outcome exactly as the passage words it (for example "On Hold - \
+Litigation"); never replace it with escalation, approval, rejection or any \
+other outcome you expect. If the passages do not state the answer, say the \
+documents do not cover it.
+- Be brief: at most about 120 words, listing only what was asked.
+- Speak to the officer as "you". Never refer to "the officer", "the tool", \
+"the tool results" or the system in the third person; if the records or \
+documents do not contain the answer, say plainly that it is not on record.
 - Answer only what was asked, in a few sentences. No preamble, no invented \
 next steps, no markdown tables.
 - {language_rule}"""
@@ -238,6 +249,12 @@ async def gather_evidence(
     except Exception as exc:  # pragma: no cover - depends on langchain version
         raise AgentUnavailable(f"tool binding unsupported: {exc}") from exc
 
+    # `options` replaces ChatOllama's defaults wholesale, so restate them all.
+    followup = bound.bind(options={
+        "num_ctx": settings.LLM_NUM_CTX,
+        "temperature": rag.llm.temperature,
+        "num_predict": settings.AGENT_FOLLOWUP_MAX_TOKENS,
+    })
     ctx = await ToolContext.create(db, officer)
     evidence = AgentEvidence()
 
@@ -257,7 +274,7 @@ async def gather_evidence(
     for round_no in range(1, rounds_allowed + 1):
         evidence.rounds = round_no
         try:
-            reply = await bound.ainvoke(messages)
+            reply = await (bound if round_no == 1 else followup).ainvoke(messages)
         except Exception as exc:
             if round_no == 1:
                 raise AgentUnavailable(f"LLM tool call failed: {exc}") from exc
@@ -304,6 +321,11 @@ async def gather_evidence(
                 content=dumped,
                 tool_call_id=call.get("id") or name,
             ))
+        # Passages are complete evidence: nothing in them feeds another tool.
+        # A further round here only made the model write a draft answer that the
+        # answer pass replaces (13-47 s per question at ~4 tokens/s).
+        if all(c.get("name") == "search_documents" for c in tool_calls):
+            break
     else:
         logger.info(f"agent: hit the {rounds_allowed}-round cap; answering from tool results")
 

@@ -324,7 +324,7 @@ TOPIC: channel  (5)
    [land_rules.txt] from source_name + camp_flag only: '-' = sub_registrar; operator code + camp_flag 'P' = citizen; operator code + other = CSC
 81. Does the CAN number length tell me the submission channel?
    CAN எண் நீளம் சமர்ப்பிப்பு சேனலைச் சொல்லுமா?
-   [land_rules.txt] no - length names the issuing counter (15 = e-Sevai/133 series, 12 = TN portal), not the channel
+   [land_rules.txt] no - length names the issuing counter (15 = CSC/133 series, 12 = TN portal), not the channel
 82. Should source_code be used to answer a channel question?
    சேனல் கேள்விக்கு பதிலளிக்க source_code பயன்படுத்த வேண்டுமா?
    [land_rules.txt] no - source_code (0/00/1/2/3) carries no channel meaning
@@ -344,7 +344,7 @@ TOPIC: igrs  (5)
    [land_rules.txt] Sub-Registrar Office - where a sale deed is registered
 86. What does an absent IGRS Form 6 number mean?
    IGRS படிவம் 6 எண் இல்லாதது என்ன அர்த்தம்?
-   [land_rules.txt] the file did not come from the SRO; it was CSC/e-Sevai or a revenue camp - not a gap in the record
+   [land_rules.txt] the file did not come from the SRO; it was CSC or a revenue camp - not a gap in the record
 87. What is a CAN number?
    CAN எண் என்றால் என்ன?
    [land_rules.txt] Citizen Access Number - the citizen's unique identity number quoted on an application

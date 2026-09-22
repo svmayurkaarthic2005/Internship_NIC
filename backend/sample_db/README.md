@@ -249,7 +249,7 @@ says "Send to SIS" sit at role 44 or role 41, and role 42 shares its actors with
 
 | role | who | stage |
 | --- | --- | --- |
-| `1` | the CSC / e-Sevai operator who submits | not a desk — the opening hop has no `from_stage` |
+| `1` | the CSC operator who submits | not a desk — the opening hop has no `from_stage` |
 | `44`, `42`, `41` | the surveyor's office | `SIS` |
 | `8` | Senior Draughtsman | `SD` |
 | `16` | ZDT / HQDT — approves and generates the order | `TAHSILDAR` |
@@ -309,7 +309,7 @@ The numbers belong to no one. `applicants.aadhaar_last4` and
 `owners.aadhaar_last4` hold the last four digits -- all the ORM model stores.
 
 **CAN** (Citizen Access Number) comes from the extracts. Its length says which
-counter issued it -- 15 digits (the `133` series) for an e-Sevai counter, 12
+counter issued it -- 15 digits (the `133` series) for an CSC counter, 12
 for the TN portal -- but the length is not what decides the channel.
 
 **The submission channel** is derived from two columns of
@@ -319,7 +319,7 @@ for the TN portal -- but the length is not what decides the channel.
 | --- | --- | --- | --- | --- |
 | `sub_registrar` | `-` | -- | nobody keyed it in; IGRS raised the mutation off the registered deed | 93 |
 | `citizen` | an operator / VLE code | `P` | a special revenue camp -- the operator keys the file in for the citizen present, so the submission is the citizen's own | 1 |
-| `CSC` | an operator / VLE code | anything else | keyed in at a Common Service Centre / e-Sevai counter | 115 |
+| `CSC` | an operator / VLE code | anything else | keyed in at a Common Service Centre / CSC counter | 115 |
 
 All 93 unattended applications carry an `igrs_form6_number` equal to their CAN
 -- the registered deed the application is built on. No CSC application has one.

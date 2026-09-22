@@ -234,10 +234,14 @@ function prepareApplicationDetailTable(data) {
         { 'Field': 'Applicant Name', 'Details': data.applicant_name || 'N/A' },
         { 'Field': 'Applicant Mobile', 'Details': data.applicant_mobile || 'N/A' },
         { 'Field': 'Applicant Address', 'Details': data.applicant_address || 'N/A' },
-        { 'Field': 'District Code', 'Details': data.district_code },
-        { 'Field': 'Taluk Code', 'Details': data.taluk_code },
-        { 'Field': 'Ward Code', 'Details': data.ward_code },
-        { 'Field': 'Block Code', 'Details': data.block_code },
+        // Names, not codes -- the backend already resolves these (district_name/
+        // taluk_name/jurisdiction.ward/jurisdiction.block); a code is what a
+        // listing table shows for the "in this ward" back-reference to parse,
+        // but a single-application card is meant to show the human name.
+        { 'Field': 'District', 'Details': data.district_name || data.district_code },
+        { 'Field': 'Taluk', 'Details': data.taluk_name || data.taluk_code },
+        { 'Field': 'Ward', 'Details': (data.jurisdiction && data.jurisdiction.ward) || data.ward_code },
+        { 'Field': 'Block', 'Details': (data.jurisdiction && data.jurisdiction.block) || data.block_code },
         { 'Field': 'Urban Unit Code', 'Details': data.urban_unit_code },
         { 'Field': 'Field Visit Scheduled', 'Details': data.field_visit_scheduled ? `Yes (${formatDateVal(data.field_visit_date)})` : 'No' },
         { 'Field': 'Overdue', 'Details': data.is_overdue ? 'Yes' : 'No' },

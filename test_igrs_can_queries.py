@@ -3,8 +3,7 @@
 Two identifiers that are easy to answer confidently and wrongly:
 
 * **CAN** (Citizen Access Number) — its LENGTH names the counter that issued
-  it, not the channel that filed the application: 15 digits from a CSC /
-  e-Sevai counter (`133` series), 12 from the TN portal. `CAN_LENGTHS` in
+  it, not the channel that filed the application: 15 digits from a CSC counter (`133` series), 12 from the TN portal. `CAN_LENGTHS` in
   `identifiers.py` bounds what each channel may carry.
 * **IGRS Form 6** — carried by Sub-Registrar referrals and by nothing else,
   and always equal to that application's CAN. An empty IGRS field on a CSC or
@@ -111,10 +110,11 @@ async def test_invariants(db) -> dict:
           "every CAN length is one CAN_LENGTHS allows for its channel",
           "; ".join(bad_len[:3]))
 
-    csc_133 = [a for a in by_channel.get("CSC", []) if (a.can_number or "").startswith("133")]
-    check(len(csc_133) == len(by_channel.get("CSC", [])),
-          f"every CSC CAN is in the 133 series ({len(csc_133)}/"
-          f"{len(by_channel.get('CSC', []))})")
+    # a CSC file whose CAN was only a placeholder carries none (the projection drops it)
+    csc_with_can = [a for a in by_channel.get("CSC", []) if a.can_number]
+    csc_133 = [a for a in csc_with_can if a.can_number.startswith("133")]
+    check(len(csc_133) == len(csc_with_can),
+          f"every CSC CAN that exists is in the 133 series ({len(csc_133)}/{len(csc_with_can)})")
 
     section("2. An IGRS question is a Sub-Registrar question")
     for message, expected in [
@@ -276,19 +276,19 @@ RULE_CASES = [
     # the same failure this section already records for the IGRS rule. The
     # channel words scoped a listing because no rule topic claimed the turn.
     ("on what based u r deciding applications from sro or csc or citizen",
-     "channel_basis", ("source_name", "camp_flag"), ()),
+     "channel_basis", ("reached the office", "revenue camp"), ()),
     ("on what basis do you decide sro or csc", "channel_basis",
-     ("source_name",), ()),
+     ("reached the office",), ()),
     ("how do you decide if an application is from csc or sro", "channel_basis",
      ("sub-registrar",), ()),
-    ("how do you know it is CSC", "channel_basis", ("camp_flag",), ()),
+    ("how do you know it is CSC", "channel_basis:CSC", ("common service centre",), ("source_name",)),
     ("what determines the submission channel", "channel_basis",
-     ("source_name",), ()),
+     ("reached the office",), ("source_name", "camp_flag")),
     # The CAN's length is not the basis, and the rule answer has to say so --
     # it is the reading CLAUDE.md warns against, and the one an officer is
     # most likely to assume.
     ("how is the channel determined", "channel_basis",
-     ("length plays no part",), ()),
+     ("plays no part",), ()),
 
     # "what is sro n csc" asked about TWO channels and was answered about one.
     # `sro_what` explained the Sub-Registrar and never mentioned CSC, so half
@@ -300,7 +300,7 @@ RULE_CASES = [
     ("what is sro and csc", "channel_defn:sub_registrar,CSC",
      ("sub-registrar office", "common service centre"), ()),
     ("what is csc", "channel_defn:CSC",
-     ("common service centre", "e-sevai"), ()),
+     ("common service centre",), ()),
     ("what does CSC stand for", "channel_defn:CSC",
      ("common service centre",), ()),
     ("what is CSC and citizen", "channel_defn:CSC,citizen",

@@ -77,7 +77,7 @@ ROUTING_CASES = [
      "compare_applications", "superlative"),
     # These belong to other handlers and must keep them.
     ("Which application has been pending the longest?", "pending_longest", None),
-    ("Is there any fee difference between ISD and NISD?", "service_code_guide", None),
+    ("Is there any fee difference between ISD and NISD?", "fee_lookup", None),
     ("show my approved applications", "pending_applications", None),
     (f"what is the status of {_A}", "application_status", None),
     ("how many isd applications do i have", "isd_applications", None),
@@ -145,7 +145,7 @@ ROUTING_CASES = [
 
     # ── must keep their own handlers ──
     ("show pending applications", "pending_applications", None),
-    ("what is the fee for isd", "service_code_guide", None),
+    ("what is the fee for isd", "fee_lookup", None),
     # ── two periods ──
     ("compare this month and last month", "compare_applications", "period"),
     ("this year vs last year", "compare_applications", "period"),
@@ -370,7 +370,8 @@ async def run_answers(db, officer) -> int:
              ["isd", "nisd", "days", "longer"]),
             ("is csc faster than sub registrar",
              ["csc", "sub-registrar", "days"]),
-            ("compare ward 102 and ward 103", ["ward 102", "ward 103"]),
+            # a ward the officer does not hold is refused, not reported as a count of zero
+            ("compare ward 102 and ward 103", ["ward 103", "outside your assigned jurisdiction"]),
             ("which month had the most applications",
              ["busiest month", "applications"]),
             ("average time to approve",

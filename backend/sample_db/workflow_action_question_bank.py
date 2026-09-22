@@ -26,7 +26,7 @@ Columns covered (application_workflow_action):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import product
 
 # ── Sample identifiers that exist in the seeded sis_chatbot_db ────────────────

@@ -4,12 +4,12 @@ SIS CHATBOT TESTING FAQ - REFERENCE FOR UPLOADS
 
 Q: What is a CAN number, and what does its length indicate?
 A: CAN stands for Citizen Access Number. Every application carries one. The length of the CAN number indicates the counter that ISSUED the number, NOT the submission channel of the application:
-- 15 digits (starting with 133, e.g., 133280122203291) indicates it was issued by a CSC / e-Sevai counter.
+- 15 digits (starting with 133, e.g., 133280122203291) indicates it was issued by a CSC counter.
 - 12 digits (e.g., 202329380999) indicates it was issued by the TN citizen portal.
 A Sub-Registrar referral carries a 12-digit portal-issued CAN because it is generated automatically, so a 12-digit CAN does not automatically mean a citizen submission.
 
 Q: This application has no IGRS Form 6 number. What does that mean?
-A: An application without an IGRS Form 6 number indicates it was filed via a CSC/e-Sevai counter or directly by a citizen at a revenue camp. Only Sub-Registrar (SRO) referrals carry an IGRS Form 6 number, which is raised automatically off the registered deed. For CSC and citizen channels, an empty IGRS field is the standard rule, not a missing record or data gap.
+A: An application without an IGRS Form 6 number indicates it was filed via a CSC counter or directly by a citizen at a revenue camp. Only Sub-Registrar (SRO) referrals carry an IGRS Form 6 number, which is raised automatically off the registered deed. For CSC and citizen channels, an empty IGRS field is the standard rule, not a missing record or data gap.
 
 === SUBMISSION CHANNELS ===
 

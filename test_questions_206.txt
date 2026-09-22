@@ -258,7 +258,7 @@ CATEGORY 3: SERVICE & DEPARTMENT CODES (Questions 57 - 76)
 78. Show applications with source_code CSC
     [source_code] [EN]
 
-79. இ-சேவை மையம் (CSC) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
+79. CSC மையம் மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு
     [source_code] [TA]
 
 80. What is the source_name of application 2026/0154/02/000001?
@@ -572,7 +572,7 @@ CATEGORY 7: FINANCIAL & FEE DETAILS (Questions 159 - 174)
 176. What are the CSC charges for TSLR extract services?
      [csc_service_charge] [EN]
 
-177. TSLR சான்றிதழுக்கான இ-சேவை கட்டணம் என்ன?
+177. TSLR சான்றிதழுக்கான CSC கட்டணம் என்ன?
      [csc_service_charge] [TA]
 
 178. Show total service charges collected for July 2026

@@ -8,7 +8,7 @@ from typing import Optional
 from uuid import UUID
 
 from backend.database import get_db
-from backend.schemas import ApplicationResponse, ApplicationListResponse, StandardResponse
+from backend.schemas import StandardResponse
 from backend.dependencies import get_current_officer
 
 router = APIRouter(prefix="/api/v1/applications", tags=["Applications"])

@@ -7,6 +7,7 @@ from fastapi import (
     UploadFile, File, Form,
 )
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
@@ -27,7 +28,7 @@ from backend.services.chatbot import (
     get_session_history,
     get_officer_sessions
 )
-from backend.models import AuditLog
+from backend.models import AuditLog, ChatSession
 from backend.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
@@ -423,8 +424,14 @@ async def get_chat_session_history(
                 detail="Invalid session_id format"
             )
         
-        # Get history
-        history = await get_session_history(db, session_id, limit)
+        # A session id is a lookup key, never a grant: another officer's
+        # session is indistinguishable from one that does not exist.
+        owner = (await db.execute(
+            select(ChatSession.officer_id).where(ChatSession.id == session_id))).scalar()
+        if owner is None or str(owner) != str(current_officer.officer_id):
+            history = []
+        else:
+            history = await get_session_history(db, session_id, limit)
         
         return StandardResponse.success_response(
             data={"messages": history, "count": len(history), "session_id": session_id},

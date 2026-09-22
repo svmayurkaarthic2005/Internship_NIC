@@ -213,7 +213,7 @@ def test_classification() -> None:
         # matching" over the whole carried set.
         ("how many of them are from CSC?", None, None, "CSC"),
         ("how many are from the sub registrar?", None, None, "sub_registrar"),
-        ("show only the e-sevai ones", None, None, "CSC"),
+        ("show only the CSC ones", None, None, "CSC"),
         ("which came through the SRO?", None, None, "sub_registrar"),
         ("how many of them are approved?", "approved", None, None),
     ]:
@@ -267,20 +267,27 @@ def test_context_record() -> None:
           "no context at all -> stand aside, let the existing handler ask",
           str(res.kind))
 
+    # "what is the applicant name?" against several rows used to ask which
+    # one was meant; per `_scoped_list_answer`'s own documented change (see
+    # CLAUDE.md and its docstring in chatbot.py), a field question that
+    # lands on several rows is now answered for every one of them instead --
+    # the field is on record for each row, so covering all of them guesses
+    # nothing. These four cases predate that change and asserted the old
+    # "ask, never pick one" behaviour; updated to the current, intentional
+    # one rather than reverted.
     many = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION_LIST,
                                 application_numbers=["A/1", "B/2", "C/3"])
     res = fctx.resolve("what is the applicant name?", many, "en")
-    check(res.ambiguous and "3 applications" in (res.clarification or ""),
-          "a singular question against 3 rows -> ask, never pick one",
-          res.clarification)
+    check(res.resolved and res.per_row_field == "applicant_name"
+          and res.application_numbers == ["A/1", "B/2", "C/3"],
+          "a singular question against 3 rows -> answer every row's field",
+          str((res.kind, res.per_row_field, res.application_numbers)))
 
     for lang in ("ta", "tanglish"):
         res = fctx.resolve("what is the applicant name?", many, lang)
-        check(res.ambiguous and any("஀" <= ch <= "௿" for ch in res.clarification or ""),
-              f"the clarification is Tamil for a {lang} turn", res.clarification)
-    res = fctx.resolve("what is the applicant name?", many, "en")
-    check(res.ambiguous and not any("஀" <= ch <= "௿" for ch in res.clarification or ""),
-          "...and English for an English turn", res.clarification)
+        check(res.resolved and res.per_row_field == "applicant_name",
+              f"a {lang} turn against 3 rows also answers every row's field",
+              str((res.kind, res.per_row_field)))
 
     one = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION_LIST,
                                application_numbers=["A/1"])

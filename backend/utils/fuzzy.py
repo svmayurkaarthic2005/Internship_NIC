@@ -278,6 +278,40 @@ def is_token_typo_match(
     return _typo_distance_norm(token_norm, target_norm, budget, min_ratio) is not None
 
 
+# QWERTY row-neighbours for each lowercase letter, used only by
+# `is_qwerty_first_letter_typo` below.
+_QWERTY_ADJACENT = {
+    "q": "wa", "w": "qeas", "e": "wrsd", "r": "etdf", "t": "ryfg",
+    "y": "tugh", "u": "yihj", "i": "uojk", "o": "ipkl", "p": "ol",
+    "a": "qwsz", "s": "awedzx", "d": "serfxc", "f": "drtgcv",
+    "g": "ftyhvb", "h": "gyujbn", "j": "huiknm", "k": "jiolm", "l": "kop",
+    "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
+    "n": "bhjm", "m": "njk",
+}
+
+
+def is_qwerty_first_letter_typo(token: Any, target: Any) -> bool:
+    """True when `token` is `target` with only its first letter fat-fingered
+    to a physically adjacent QWERTY key ("aevai" for "sevai", "xitizen" for
+    "citizen").
+
+    `_typo_distance_norm`'s own first-character guard blocks this on purpose
+    -- it is what stops "isd"->"nisd" and "late"->"date" -- so this is a
+    separate, narrower check for call sites that specifically want to accept
+    it: same length, same word from the second letter on, first letters
+    genuinely adjacent on a QWERTY keyboard (not just any substitution).
+    Deliberately not folded into `is_token_typo_match` itself, which many
+    call sites across the app rely on keeping that guard strict.
+    """
+    token_norm, target_norm = normalize_text(token), normalize_text(target)
+    if len(token_norm) != len(target_norm) or len(token_norm) < 4:
+        return False
+    if token_norm[1:] != target_norm[1:]:
+        return False
+    a, b = token_norm[0], target_norm[0]
+    return a != b and b in _QWERTY_ADJACENT.get(a, "")
+
+
 def resolve_unique_entry(
     token: Any,
     candidate_map: Dict[str, Any],
@@ -538,6 +572,11 @@ _REL_DATE_PERIODS = (
     "day", "days", "week", "weeks", "fortnight", "month", "months",
     "quarter", "quarters", "year", "years",
 )
+# "yr"/"yrs" are too short an edit distance away from "year"/"years" to fuzzy-
+# match ("year" minus "yr" is 2 deletions, past the 1-edit budget a 4-letter
+# word gets) but officers type the abbreviation constantly -- "last yr",
+# "between 2022 and 2023 yr". Resolved as an explicit alias, not a typo.
+_REL_DATE_PERIOD_ALIASES = {"yr": "year", "yrs": "years"}
 # Standalone day words carry their own meaning and need no neighbour.
 _REL_DATE_STANDALONE = (
     "today", "tonight", "yesterday", "tomorrow", "onwards",
@@ -561,6 +600,8 @@ def _canonical_rel_token(token: str, vocabulary: Sequence[str]) -> Optional[str]
     """Canonical spelling for `token` within `vocabulary`, or None."""
     if token in vocabulary:
         return token
+    if vocabulary is _REL_DATE_PERIODS and token in _REL_DATE_PERIOD_ALIASES:
+        return _REL_DATE_PERIOD_ALIASES[token]
     if token in _REL_DATE_PROTECTED:
         return None
     return resolve_unique_match(

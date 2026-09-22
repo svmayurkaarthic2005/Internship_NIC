@@ -3,7 +3,7 @@ pgvector_store.py — Vector Store backed by PostgreSQL + pgvector
 ================================================================
 Vector database for semantic search and RAG.
 
-Tamil Nadu Revenue Department — Sub Inspector Surveyor AI Assistant
+Tamil Nadu Survey Department — Sub Inspector Surveyor AI Assistant
 
 All vector operations run inside the existing PostgreSQL ``sis_chatbot_db``
 database using the ``pgvector`` extension.
@@ -22,7 +22,6 @@ Public API
 """
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List, Optional
 
 import psycopg2

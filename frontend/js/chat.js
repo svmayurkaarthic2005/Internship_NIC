@@ -77,6 +77,14 @@ async function initChat() {
         if (window.chatStorage) {
             messageHistory = window.chatStorage.load();
             console.log(`✓ Loaded ${messageHistory.length} messages from storage`);
+
+            // The browser copy can be gone (cleared site data, another tab's
+            // officer id, a different browser) while the conversation is still
+            // on the server -- restore it from there rather than showing an
+            // empty chat.
+            if (messageHistory.length === 0 && currentSessionId) {
+                messageHistory = await restoreHistoryFromServer(currentSessionId);
+            }
             
             // Render previous messages if they exist
             if (messageHistory.length > 0) {
@@ -278,6 +286,23 @@ async function loadOrCreateSession() {
     // Save new session ID
     if (window.chatStorage && currentSessionId) {
         window.chatStorage.saveSessionId(currentSessionId);
+    }
+}
+
+/** Fetch this session's saved messages and put them back in local storage. */
+async function restoreHistoryFromServer(sessionId) {
+    try {
+        const r = await fetch(`${API_BASE_URL}/api/v1/chat/sessions/${sessionId}/history?limit=100`,
+                              { credentials: 'include',
+                                headers: officerData && officerData.access_token
+                                    ? { 'Authorization': `Bearer ${officerData.access_token}` } : {} });
+        if (!r.ok) return [];
+        const msgs = ((await r.json()).data || {}).messages || [];
+        if (msgs.length) window.chatStorage.save(msgs);
+        return msgs;
+    } catch (e) {
+        console.log('Could not restore history from server:', e.message);
+        return [];
     }
 }
 
@@ -1511,6 +1536,8 @@ function messageNeedsPriorContext(text) {
  */
 function maybeShowLongConversationNotice(text) {
     if (longConversationNoticeShown) return;
+    // "clear" / "new chat" ends the conversation -- warning that it is long, then wiping it, is noise.
+    if (/^\s*(?:please\s+)?(?:clear|cls|reset|wipe|erase|delete|remove|flush|clean|new\s+chat|start\s+(?:a\s+)?new)\b|\b(?:clear|wipe|erase)\b.*\b(?:chat|conversation|history)\b|^\s*அழி/i.test(text || '')) return;
 
     const stored = (window.chatStorage ? window.chatStorage.load() : messageHistory) || [];
     // stored already includes the message just sent.

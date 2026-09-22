@@ -2,7 +2,6 @@
 Document ingestion script for pgvector (PostgreSQL)
 Run this script to load knowledge documents into the vector store.
 """
-import os
 import sys
 # Force UTF-8 output on Windows to prevent UnicodeEncodeError on emoji/symbols
 if sys.platform == "win32":
@@ -14,7 +13,6 @@ if sys.platform == "win32":
 from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import re
-import uuid
 import csv
 import unicodedata
 

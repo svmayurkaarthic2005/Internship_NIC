@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # explicitly rather than left to the server default. 2048 leaves room for
     # a full workflow explanation or a multi-row listing without the answer
     # stopping mid-sentence.
-    LLM_NUM_PREDICT: int = 2048
+    LLM_NUM_PREDICT: int = 512
     # Context window (input + output tokens) the model can see at once. The
     # prompt is large -- ~1.8k tokens of system rules + up to 10 history turns
     # + retrieved document chunks (n_results x 2000 chars) + the structured
@@ -76,7 +76,9 @@ class Settings(BaseSettings):
     # on CPU can otherwise outrun the client / reverse-proxy timeout and hang
     # the request with nothing to show; on timeout the caller gets a readable
     # message instead.
-    LLM_TIMEOUT_SECONDS: float = 120.0
+    LLM_TIMEOUT_SECONDS: float = 90.0
+    # How long Ollama keeps the chat model in memory after the last request.
+    LLM_KEEP_ALIVE: str = "30m"
 
     # ── Agent (LLM tool-calling) layer ───────────────────────────────────
     # The ~60 deterministic handlers stay the primary path. The agent runs
@@ -88,10 +90,15 @@ class Settings(BaseSettings):
     # has. Each round is one llama3.1:8b call, so this bounds worst-case
     # latency; 3 is enough for a two-part question plus a correction.
     AGENT_MAX_ITERATIONS: int = 3
+    # Output cap for tool rounds after the first. A further tool call is ~30
+    # tokens; anything longer is a draft answer that the separate answer pass
+    # replaces, and at ~4 tokens/s (the 8B model is mostly on CPU) that draft
+    # cost 13-47 s per question.
+    AGENT_FOLLOWUP_MAX_TOKENS: int = 64
     # Seconds for the whole tool-selection loop. On timeout the caller falls
     # back to the existing non-agent prompt rather than leaving the officer
     # waiting.
-    AGENT_TIMEOUT_SECONDS: float = 90.0
+    AGENT_TIMEOUT_SECONDS: float = 60.0
 
     # Chat file uploads. A big document floods the model's context and
     # llama3.1:8b starts to hallucinate, so a PDF or Word file over this many
@@ -134,6 +141,11 @@ class Settings(BaseSettings):
     # startup and on upload), so a restart never silently loses a live
     # attachment -- it is in PostgreSQL, not in process memory.
     UPLOAD_RETENTION_HOURS: int = 72
+
+    # A follow-up ("the 2nd one", "how many of them") only refers to what was shown
+    # this recently. Older than this, the list is gone from the officer's mind and
+    # the question is treated as having nothing to refer to.
+    FOLLOWUP_CONTEXT_TTL_MINUTES: int = 120
     # Embed attachment chunks so retrieval can use pgvector as well as the
     # lexical score. Retrieval degrades to lexical-only when Ollama is down,
     # which is why upload never fails on an embedding error.

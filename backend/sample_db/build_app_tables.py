@@ -47,9 +47,10 @@ from backend.models import (  # noqa: F401 -- imported so create_all sees them
 from backend.models import app_owned_tables, missing_master_tables
 from backend.sample_db.identifiers import (CAN_LENGTHS, aadhaar_for, can_channel,
                                            normalize_can)
+from backend.sample_db.dbconn import database_url
 from backend.services.auth_service import get_password_hash
 
-DB_URL = "postgresql+psycopg2://postgres:Mayur%402005@127.0.0.1:5432/sis_chatbot_db"
+DB_URL = database_url().replace("+asyncpg", "+psycopg2")
 
 DEFAULT_PASSWORD = "Test@1234"
 
@@ -88,7 +89,7 @@ LAND_TYPE_MAP = {"2": "residential", "3": "commercial", "5": "agricultural"}
 
 # workflow role id -> stage name used by the model / chatbot.
 #
-# Read off the extracts rather than guessed. Role 1 is the CSC / e-Sevai
+# Read off the extracts rather than guessed. Role 1 is the CSC
 # operator who submits (its actors are the source_name codes, not officers), so
 # it is not a desk and the opening hop legitimately has no from_stage. The
 # applications whose wording says "Send to SIS" are sitting at role 44 or role
@@ -129,22 +130,38 @@ REQUIRED_DOCS = {
 }
 
 # The ORM tables this script owns -- rebuilt from scratch on every run.
-# sis_officers is included because officer UUIDs are regenerated each run, so
-# chat_sessions / notifications / audit_logs that reference them are cleared by
-# the CASCADE too. knowledge_embeddings is NOT touched: the document embeddings
-# are expensive to rebuild and do not depend on any of this.
+# `sis_officers` is deliberately NOT here (see `_OFFICER_NS` below): its rows
+# are upserted in place, at a deterministic id, instead of being dropped and
+# reinserted. That is what keeps a logged-in officer's JWT (which names their
+# `sis_officers.id`) and `chat_sessions` row valid across a rebuild -- a
+# `TRUNCATE sis_officers CASCADE` used to take chat_sessions / chat_messages /
+# audit_logs / chat_attachments down with it every single time, which is what
+# forced a re-login on every edit once rebuilds started firing automatically
+# (see `watch_rebuild.py`). `notifications` still needs truncating: besides
+# `officer_id` it also carries `application_id`, and `applications` itself has
+# no stable identity across a rebuild, so its rows would dangle otherwise.
+# `officer_jurisdictions` is still fully rebuilt too -- nothing references it,
+# so doing so costs nothing and its ward assignments are meant to be
+# recomputed. knowledge_embeddings is NOT touched: the document embeddings are
+# expensive to rebuild and do not depend on any of this.
 OWNED_TABLES = [
     "patta_transfers", "field_visits", "workflow_history",
     "application_sub_division_owners",
     "application_documents", "application_sub_divisions", "applications",
     "applicants", "survey_ownership", "owners", "sub_divisions",
-    "survey_numbers", "officer_jurisdictions", "sis_officers",
-    "notifications", "audit_logs", "chat_messages", "chat_sessions",
+    "survey_numbers", "officer_jurisdictions",
+    "notifications",
     # districts and taluks are NOT here: they are now the TAMILNILAM master
     # tables (district_unicode / taluk), which this script reads and must
     # never truncate. See backend/sample_db/adopt_master_district_taluk.py.
     "blocks", "wards", "towns",
 ]
+
+# A deterministic officer id (uuid5 of the workflow username, same trick as
+# `district_unicode.app_uid` / `taluk.app_uid`) so a JWT issued before a
+# rebuild still resolves after one -- `sis_officers` is upserted, never
+# truncated, specifically so that identity survives.
+_OFFICER_NS = uuid.UUID("6c1f9b2a-0000-4000-8000-000000000001")
 
 
 def _utcnow():
@@ -273,6 +290,7 @@ def main():
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS igrs_form6_number VARCHAR(30)",
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS submission_source_name VARCHAR(100)",
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS submission_camp_flag VARCHAR(5)",
+            "ALTER TABLE applications ADD COLUMN IF NOT EXISTS submission_ip VARCHAR(50)",
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS merged_application_id VARCHAR(30)",
             "ALTER TABLE patta_transfers ADD COLUMN IF NOT EXISTS new_patta_number VARCHAR(50)",
             "ALTER TABLE patta_transfers ADD COLUMN IF NOT EXISTS signed_by VARCHAR(50)",
@@ -521,13 +539,23 @@ def main():
         officer_id = {}
         officer_for_ward = {}
         for n, user in enumerate(sis_users):
-            oid = uuid.uuid4()
+            oid = uuid.uuid5(_OFFICER_NS, user)             # stable across reruns -- see _OFFICER_NS
             officer_id[user] = oid
             name = humanise(user)
+            # Upsert, not insert: the row must keep existing across a rebuild for
+            # a live JWT / chat_sessions row to keep resolving. password_hash is
+            # deliberately left out of the UPDATE clause -- the seeded password
+            # never changes, and overwriting it on conflict would just be a
+            # same-value rehash for no reason.
             cx.execute(text("""INSERT INTO sis_officers
                 (id,employee_id,name,name_tamil,email,password_hash,mobile,
                  designation,is_active,created_at,updated_at)
-                VALUES (:i,:e,:n,:nt,:m,:p,:mo,:d,:a,:t,:t)"""),
+                VALUES (:i,:e,:n,:nt,:m,:p,:mo,:d,:a,:t,:t)
+                ON CONFLICT (id) DO UPDATE SET
+                    employee_id=EXCLUDED.employee_id, name=EXCLUDED.name,
+                    name_tamil=EXCLUDED.name_tamil, email=EXCLUDED.email,
+                    designation=EXCLUDED.designation, is_active=EXCLUDED.is_active,
+                    updated_at=EXCLUDED.updated_at"""),
                 dict(i=oid, e=f"SIS-{n+1:03d}", n=name, nt=None,
                      m=f"{user.replace('tut_', '')}@sis.tn.gov.in",
                      p=get_password_hash(DEFAULT_PASSWORD), mo=None,
@@ -611,7 +639,7 @@ def main():
                        application_id, service_code, ward_code, survey_number,
                        application_date, application_status, can_number,
                        source_code, source_name, igrs_form6_number,
-                       igrs_auto_mutation_flag, camp_flag
+                       igrs_auto_mutation_flag, camp_flag, ip_address
                 FROM urban_application_log
                 WHERE service_code IN ('0153','0154','0155')
                 ORDER BY application_id,
@@ -645,7 +673,7 @@ def main():
 
         can_repaired = can_dropped = 0
         for (app_id, svc, wd, sno, sub_date, status, can,
-             _src, src_name, form6, _auto_mut, camp_flag) in apps:
+             _src, src_name, form6, _auto_mut, camp_flag, ip_addr) in apps:
             key = (wd, sno)
             if key not in survey_id:
                 skipped_no_survey += 1
@@ -730,7 +758,7 @@ def main():
             # counter. On an attended row camp_flag = 'P' marks a special camp,
             # where the operator keys the file in for the citizen present, so it
             # counts as the citizen's own submission; everything else attended is
-            # CSC / e-Sevai. The channel then fixes the lengths a CAN may have,
+            # CSC. The channel then fixes the lengths a CAN may have,
             # and a value that cannot be brought to one is not a CAN and is
             # dropped.
             channel = can_channel(src_name, camp_flag)
@@ -751,6 +779,7 @@ def main():
                 # through so the answer can cite them. Kept verbatim, not
                 # through _clean_info: '-' is the signal here, not a blank.
                 src=(str(src_name).strip() if src_name is not None else None),
+                ip=(str(ip_addr).strip() or None) if ip_addr is not None else None,
                 camp=(str(camp_flag).strip() if camp_flag is not None else None),
                 sd=deed_no, sr=deed_no is not None, dr=reason,
                 can=can_no, st=stage, cs=cur_status,
@@ -778,12 +807,12 @@ def main():
         cx.execute(text("""INSERT INTO applications
             (id,application_number,application_type,applicant_id,survey_number_id,
              assigned_officer_id,submission_channel,submission_source_name,
-             submission_camp_flag,submission_date,sale_deed_number,
+             submission_ip,submission_camp_flag,submission_date,sale_deed_number,
              sale_deed_registered,declared_reason,can_number,current_stage,
              current_status,field_visit_date,field_visit_scheduled,is_overdue,
              priority_flag,notes,fee_amount,challan_number,payment_mode,
              igrs_form6_number,merged_application_id,created_at,updated_at)
-            VALUES (:i,:num,:ty,:ap,:s,:o,:ch,:src,:camp,:d,:sd,:sr,:dr,:can,:st,:cs,:fv,:fs,
+            VALUES (:i,:num,:ty,:ap,:s,:o,:ch,:src,:ip,:camp,:d,:sd,:sr,:dr,:can,:st,:cs,:fv,:fs,
                     :ov,:pr,:no,:fee,:chn,:pm,:f6,:mrg,:t,:t)"""), app_rows)
         cx.execute(text("""INSERT INTO application_documents
             (id,application_id,document_type,document_name,is_uploaded,is_verified,

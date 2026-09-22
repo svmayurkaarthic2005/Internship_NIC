@@ -102,6 +102,10 @@ CLASSIFICATION = [
     ("newchat", "clear"),
     ("new conversation", "clear"),
     ("start a new chat", "clear"),
+    ("wipe the conversation", "clear"),
+    ("clear pannu", "clear"),
+    ("chat clear pannu", "clear"),
+    ("Wipe the conversation!", "clear"),
     ("start new conversation", "clear"),
     ("begin a new chat", "clear"),
     ("open a new chat", "clear"),
@@ -197,10 +201,10 @@ CLASSIFICATION = [
     ("logout", "session_command"),
     ("log out", "session_command"),
     ("quit", "session_command"),
-    # yes / no can answer a disambiguation the assistant itself asked, so they
-    # must stay ordinary messages.
-    ("yes", None),
-    ("no", None),
+    # The assistant asks "which one?", never a yes/no question, so a bare yes / no
+    # asks nothing (it used to reach the LLM, or be answered with a greeting).
+    ("yes", "ack"),
+    ("no", "ack"),
 ]
 
 

@@ -30,12 +30,12 @@ import hashlib
 import os
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import delete, func, select, text as sql_text
+from sqlalchemy import delete, select, text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -839,3 +839,42 @@ async def retrieve_evidence(
     kept = [e for e in scored if e.lexical >= floor]
     kept.sort(key=lambda e: (-e.score, e.filename, e.chunk_index))
     return kept[:k]
+
+
+_HEADING_RES = (
+    re.compile(r"^\s*={2,}\s*(.+?)\s*={2,}\s*$"),
+    re.compile(r"^\s*#{1,4}\s+(.+?)\s*$"),
+    re.compile(r"^\s*(?:\d{1,2}[.)]|[A-Z][.)])\s+([A-Z][^.]{3,80})\s*$"),
+    re.compile(r"^([A-Z][A-Z0-9 &/,'()\-]{6,80})\s*$"),
+)
+
+
+async def document_outline(db, officer_id, session_id, document_ids, max_headings: int = 60):
+    """{document_id: [heading, ...]} in document order, read from the stored chunks
+    (section banners such as "=== X ===", markdown headings, numbered or ALL-CAPS
+    lines). Empty for a document with no recognisable headings."""
+    oid, sid = _as_uuid(officer_id), _as_uuid(session_id)
+    dids = [d for d in (_as_uuid(x) for x in document_ids) if d is not None]
+    out = {}
+    if oid is None or sid is None or not dids:
+        return out
+    for did in dids:
+        rows = (await db.execute(
+            select(AttachmentChunk.content)
+            .where(AttachmentChunk.document_id == did,
+                   AttachmentChunk.officer_id == oid,
+                   AttachmentChunk.session_id == sid)
+            .order_by(AttachmentChunk.chunk_index))).all()
+        heads, seen = [], set()
+        for (content,) in rows:
+            for line in (content or "").splitlines():
+                for rx in _HEADING_RES:
+                    m = rx.match(line)
+                    if m:
+                        h = re.sub(r"\s+", " ", m.group(1)).strip(" =#:-")
+                        if h and h.lower() not in seen:
+                            seen.add(h.lower())
+                            heads.append(h)
+                        break
+        out[str(did)] = heads[:max_headings]
+    return out

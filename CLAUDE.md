@@ -6,7 +6,7 @@
 
 - **Backend**: FastAPI + SQLAlchemy (async) + PostgreSQL + pgvector
 - **Database**: `sis_chatbot_db` on `127.0.0.1:5432` — the single database for everything (CSV-shaped source tables, ORM tables, and the `knowledge_embeddings` vector store). ChromaDB is gone; there is no separate vector DB and no `vectorstore/` directory.
-- **LLM**: Ollama (`llama3.1:8b`) running locally
+- **LLM**: Llama 3.1 8B Tamil (`mervinpraison/Llama-3.1-8B-Instruct-Tamil`) with the SIS QLoRA adapter merged, served as Q4_K_M GGUF through Ollama. Stock `llama3.1:8b` is the `.env` default and the fallback; the agent-behaviour notes below were observed on it.
 - **Embeddings**: `nomic-embed-text` via Ollama
 - **Frontend**: Vanilla HTML/CSS/JS (no framework)
 - **Auth**: JWT (python-jose + passlib/bcrypt)
@@ -80,14 +80,16 @@ nic_internship/
 │   ├── dependencies.py       # get_current_officer() JWT dependency
 │   ├── ingest.py             # Document ingestion into pgvector (knowledge_embeddings)
 │   ├── schema.sql            # Raw SQL schema reference for the ORM tables
+│   ├── test_200_suite.py     # 200-question backend suite (+ test_200_results.json)
 │   ├── routers/
 │   │   ├── auth.py           # POST /auth/login
-│   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
+│   │   ├── chat.py           # POST /api/v1/chat/stream, /chat/upload, GET /chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
 │   ├── services/
 │   │   ├── chatbot.py        # Main orchestrator (~16000 lines) — entry point for all chat logic
 │   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
+│   │   ├── semantic_intent.py # Embedding-similarity detection of greetings / thanks / small talk
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
 │   │   ├── agent.py          # LLM tool-calling loop (the general_query fallback)
 │   │   ├── followup_context.py # Reference context for implicit follow-ups
@@ -102,35 +104,107 @@ nic_internship/
 │   │   └── auth_service.py   # Login, JWT creation/verification
 │   ├── sample_db/            # sis_chatbot_db build pipeline — see backend/sample_db/README.md
 │   │   ├── schema_builder.py      # Reads CSV headers, infers PG types, emits DDL
-│   │   ├── identifiers.py         # Aadhaar + CAN rules, shared by seed and projection
 │   │   ├── schema_sis_chatbot_db.sql  # Generated DDL (regenerate, don't hand-edit)
+│   │   ├── dbconn.py              # Shared connection helper for the scripts
+│   │   ├── identifiers.py         # Aadhaar + CAN rules, shared by seed and projection
 │   │   ├── dsc.py                 # X.509 certs + PKCS#7 signatures for the DSC columns
 │   │   ├── seed_sample_db.py      # Creates the DB, applies DDL, generates + inserts rows
-│   │   ├── verify_sample_db.py    # Structure/refs/population/signature/non-leakage checks
+│   │   ├── load_master_dumps.py / adopt_master_district_taluk.py  # Layer 0 masters
 │   │   ├── build_app_tables.py    # Projects sample tables → the app's ORM tables
-│   │   ├── verify_identifiers.py  # Checks every Aadhaar / CAN against identifiers.py
+│   │   ├── verify_sample_db.py / verify_identifiers.py  # Integrity checks
 │   │   ├── check_app_wiring.py    # Smoke test: app queries + chatbot answer from this DB
-│   │   ├── question_bank.py       # Shared question set for the suites
-│   │   ├── test_intent_coverage.py / test_workflow_logic.py / test_questions.py
-│   │   ├── test_date_queries.py   # date-scoped questions: parsing + answers
-│   │   ├── test_channel_queries.py # submission channel: routing, derivation, answers
+│   │   ├── question_bank.py, appinfo_/workflow_action_/workflow_doc_question_bank.py  # Shared question sets
+│   │   ├── test_intent_coverage.py, test_workflow_logic.py, test_questions.py,
+│   │   │   test_question_bank.py, test_date_queries.py, test_channel_queries.py
+│   │   ├── generate_user_test_fixtures.py  # Builds backend/test_fixtures/user_tests
+│   │   ├── build_lora_dataset*.py # QLoRA training-set builders (see "Fine-tuning" below)
+│   │   ├── clean_ / redact_ / validate_lora_dataset.py, strip_bad_*.py,
+│   │   │   reinforce_glossary_facts.py   # dataset hygiene passes
+│   │   ├── run_eval_baseline.py + eval_set.jsonl  # held-out eval, never trained on
+│   │   ├── SIS_QLoRA_Training.ipynb   # Colab training notebook
 │   │   └── README.md              # Source of truth for the DB layout
-│   ├── sample_table/         # TAMILNILAM urban CSV extracts (gitignored; empty in a fresh clone)
-│   ├── documents/            # RAG corpus: workflow_guide.txt, faq_*.txt, survey_manual.txt, ...
+│   ├── sample_table/         # TAMILNILAM urban CSV + master pg_dumps (gitignored; empty in a fresh clone)
+│   ├── documents/            # RAG corpus: workflow_guide.txt, faq_english/tamil.txt, land_rules.txt,
+│   │                         #   survey_manual.txt, district_codes.txt, sis_upload_checklist.txt,
+│   │                         #   database_structure_reference.txt, tamilnilam_urban_services_and_districts.txt
+│   ├── test_fixtures/        # Upload-test files (PDF/DOCX/CSV/TXT), incl. user_tests/
 │   └── utils/
 │       ├── fuzzy.py          # Fuzzy month/token matching for typo tolerance
-│       ├── helpers.py        # Misc helpers
+│       ├── helpers.py        # Misc helpers + SIS_URBAN_SERVICES service-code table
+│       ├── translit.py       # Deterministic Tamil <-> Latin name transliteration
 │       └── logger.py         # structlog-based logger (get_logger)
 ├── frontend/
-│   ├── login.html
-│   ├── chatbot.html
+│   ├── login.html / chatbot.html / channel_report.html
 │   ├── css/
-│   └── js/
+│   └── js/                   # auth.js, chat.js, chatStorage.js, dataTable.js,
+│                             #   table_renderer.js, lucide-fallback.js
+├── var/attachments/          # Uploaded-file bytes (gitignored, outside anything served)
+├── tools/                    # create_chatbot_test_fixtures.js
+├── test_*.py / test_questions_*.txt   # Top-level suites and question sets (see Testing)
+├── check_*.py, debug_*.py, trace_intent.py, query_channels.py   # One-off DB / routing probes
+├── train_qlora.py, colab_merge_and_gguf.py, kaggle_merge_and_gguf.py   # Fine-tune / GGUF export
+├── train*.jsonl, validation*.jsonl, lora_dataset*.jsonl, eval_*_results.jsonl   # Datasets + eval output
+├── sis-qlora-adapter/        # Trained LoRA adapter (also on Google Drive)
+├── serve_frontend.py, start_backend.ps1, quick_setup.py
+├── *.md reports              # AGENTS.md, README.md, *_FINDINGS.md, *_SUMMARY.md, DISTRICT_HANDLING.md ...
 ├── .env                      # Secrets (not committed)
 ├── .env.example              # Template
 ├── requirements.txt
 └── CLAUDE.md                 # This file
 ```
+
+Scratch and backup files in the repo root (`_*.py`, `*.log`, `*.bak`, `*.pre_*.bak`,
+`b64_part_*.txt`, `kaggle_*_stage/`, `adapter_chunks/`) are working artefacts of the
+fine-tuning and debugging passes, not part of the application.
+
+---
+
+## Fine-tuning (QLoRA) and the local model
+
+The chatbot still answers deterministic questions from PostgreSQL; the fine-tune only
+improves the LLM fallback and the Tamil / Tanglish phrasing of its answers.
+
+```
+build_lora_dataset*.py → clean / redact / validate / strip_* → finalize_train_data.py
+   → train_augmented.jsonl + validation.jsonl   (messages-only; meta stripped for training)
+   → train_qlora.py or SIS_QLoRA_Training.ipynb (Colab L4) → sis-qlora-adapter/
+   → merge into an fp16 base → convert to GGUF → Q4_K_M → Ollama
+```
+
+- **Base model**: `mervinpraison/Llama-3.1-8B-Instruct-Tamil` (apache-2.0; per its model card an Unsloth/TRL SFT of `unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit`, i.e. Llama 3.1 8B Instruct; the card tags it English and makes no Tamil claim, so the name is not evidence of Tamil ability). Its own `config.json` is
+  wrong (`vocab_size=32000`, `num_key_value_heads=32`); load it with the config from
+  `NousResearch/Meta-Llama-3.1-8B-Instruct` (128256 vocab, 8 KV heads).
+- **Loss on assistant turns only**: pass the raw `messages` column with
+  `completion_only_loss=True`. Flattening to a `text` field trains on the system
+  prompt and the question too.
+- **Never put live records in the data** — the set teaches behaviour, not application
+  or CAN numbers.
+- **`meta` is audit-only.** Mixed-type `meta.filters` breaks `datasets` schema
+  inference, so strip it (`{"messages": ...}` only) before loading.
+- **Two silent no-learning traps** (each cost a full run): LoRA params reloaded with
+  `requires_grad=False` after `resume_from_checkpoint`, and `Trainer.create_optimizer()`
+  returning a stale, empty optimizer because it only builds `if self.optimizer is None`.
+  Check `[len(g["params"]) for g in trainer.optimizer.param_groups]` and a nonzero
+  `lora_B` grad before trusting a run.
+- **Export**: merge the adapter into an **fp16** base (not the 4-bit one), then
+  `convert_hf_to_gguf.py` → `llama-quantize … Q4_K_M` (~4.6 GB). `llama-cli -p` runs raw
+  completion, so judge answer quality through Ollama with the Llama-3 chat template.
+- **Evaluation**: `backend/sample_db/eval_set.jsonl` is held out; `run_eval_baseline.py`
+  records the un-tuned pipeline, and `eval_*_results.jsonl` hold each later model.
+- The project's model is this Tamil-base fine-tune. Point `LLM_MODEL` at the Ollama
+  model created from the GGUF (Llama-3 chat template in the Modelfile); until then
+  `config.py` still defaults to stock `llama3.1:8b`.
+
+## Semantic routing and name transliteration
+
+- `services/semantic_intent.py` classifies short, SIS-vocabulary-free messages as
+  greeting / farewell / thanks / small talk by `nomic-embed-text` similarity to
+  prototype phrases. It never routes SIS questions and returns `None` on any failure,
+  so the deterministic parser carries on. `test_greeting_semantic.py`,
+  `test_semantic_router_eval.py`.
+- `utils/translit.py` adds a readable Tamil or Latin form beside an applicant name of
+  record, which is stored in whichever script the extract carried. It never replaces
+  the stored name.
 
 ---
 
@@ -376,7 +450,7 @@ the ORM projection:
   every extract and across both layers.
 - **CAN** (Citizen Access Number) — the length identifies the **counter that
   issued it**, not the channel that filed the application: **15 digits** from a
-  Common Service Centre / e-Sevai counter (`133` series), **12 digits** from the
+  Common Service Centre / CSC counter (`133` series), **12 digits** from the
   TN portal. `CAN_LENGTHS` bounds what each channel may carry (`CSC` 15,
   `sub_registrar` 12, `citizen` either) and is enforced when `applications` is
   projected; layer 1 keeps the extract's value verbatim. The channel itself
@@ -387,115 +461,38 @@ the ORM projection:
 ### Submission channels
 
 `applications.submission_channel` is derived by `can_channel()` in
-`identifiers.py` from two columns of `urban_application_log`:
+`identifiers.py` from two columns of `urban_application_log`. **The rule (set by
+the domain owner):**
 
-| channel | `source_name` | CAN | seeded apps |
+| channel | `source_name` | `camp_flag` | seeded apps |
 |---|---|---|---|
-| `sub_registrar` | `-` | 12 digits | 93 |
-| `citizen` | a bare mobile number (`7845852863`) | 12 or 15 digits | **1** (rejected) |
-| `CSC` | an operator / VLE code (`tut_tct_t131_02`, `TNEFATUT0540-01`) | 15 digits, `133` series | 115 |
+| `sub_registrar` | `-` | -- | 93 |
+| `citizen` | present | `P` | 2 (`2024/0154/28/001397` rejected, `2022/0153/28/001405` approved) |
+| `CSC` | present | anything else | 114 |
 
-1. `source_name` separates unattended from attended. A placeholder (`-`) means
-   no operator account touched the file: it came in from the Sub-Registrar,
-   where IGRS raised the mutation off the registered deed.
-2. A bare mobile number in that column is the **citizen** route: the operator
-   field holds the applicant's own identifier, not a counter's.
-3. Every other attended row is a CSC / e-Sevai counter.
+A mobile-shaped `source_name` is **not** a signal on its own. The CAN's length
+names the counter that issued it (15 digits CSC counter / 12 TN portal) and does
+not decide the channel; `CAN_LENGTHS` bounds what each channel may carry
+(`CSC` 15, `sub_registrar` 12, `citizen` either). `source_name` and `camp_flag`
+are carried into `applications` as `submission_source_name` /
+`submission_camp_flag`, and `_render_submission_channel_basis()` in `chatbot.py`
+shows the derivation.
 
-**`camp_flag` does not decide the channel** (it used to — see below). It is
-recorded as `submission_camp_flag` and nothing reads it.
+Only one of the two citizen files is approved, so the citizen list is short;
+"No applications found" for a channel is the data, and `empty_note` says so.
+A channel scopes the question like a period does: it suppresses the
+current-stage pin and the active-status default.
 
-**In practice the register has no citizen applications to show.** There is
-exactly one, `2024/0154/28/001397` in ward 103, and it is **rejected** — so it
-never appears in a list, because rejected files stay out unless asked for by
-status. "No applications found" for the citizen channel is the data, not a
-broken filter, and `empty_note` now says so.
+Every unattended row carries an `igrs_form6_number` equal to its CAN; no CSC or
+citizen row has one, so an empty IGRS field there is the rule, not a gap.
 
-`source_name` and `camp_flag` are carried into `applications` as
-`submission_source_name` / `submission_camp_flag` (verbatim -- `-` is the
-signal, not a blank), so the chatbot can show its working when an officer asks
-"how do you know this is CSC?". `_render_submission_channel_basis()` in
-`chatbot.py` renders that derivation; the plain one-line answer is unchanged.
+`test_channel_queries` step 2b checks the ruling and cross-checks the other
+evidence (internal `10.236.251.x` IP, IGRS number, `133`-series CAN) for the SRO
+and CSC rows; citizen rows are exempt from the CAN-series check, since a camp
+file carries whichever counter's number. Known artefact: `2023/0153/28/000327`
+has a placeholder CAN.
 
-**A channel scopes the question the way a period does.** "Show applications
-from CSC" asks what the register holds for that channel, not what is on the
-officer's desk today, so a channel filter suppresses both the current-stage pin
-in `get_officer_applications()` and the active-status default in
-`get_pending_applications()`; rejected files stay out unless asked for. Without
-that, an officer holding 30 CSC files was told "No applications found", because
-all but one had already left the SIS desk.
-
-The CAN's **length is not a channel signal** — it names the counter that issued
-the number (15 digits for e-Sevai, 12 for the TN portal). `CAN_LENGTHS` in
-`identifiers.py` only bounds what a channel may carry, and `citizen` admits
-both because a camp file can carry either. `igrs_auto_mutation_flag` no longer
-takes part in the derivation.
-
-All 93 unattended applications carry an `igrs_form6_number` equal to their CAN
-— the registered deed the application is built on. No CSC application has one,
-and neither does the single citizen one: the number exists only where the
-Sub-Registrar's IGRS raised the mutation off a registered deed. An empty IGRS
-field on those channels is therefore the rule, not a gap in the record, and
-`_missing_field_answer()` in `chatbot.py` says which it is rather than
-reporting "no information found".
-
-**How the rule is known to be right.** `can_channel()` reads one column;
-three others record the same fact and are never consulted, so they are
-independent evidence. Over the 279 log rows the chatbot's service codes cover,
-they agree on all but one damaged value:
-
-| derived channel | rows | internal `10.236.251.x` IP | `igrs_form6_number` | CAN in the `133` series |
-|---|---|---|---|---|
-| `sub_registrar` | 108 | 108 / 108 | 108 / 108 | 0 / 108 |
-| `CSC` | 170 | 0 / 170 | 0 / 170 | 170 / 170 |
-| `citizen` | 1 | 0 / 1 | 0 / 1 | 0 / 1 |
-
-One application, `2023/0153/28/000327`, carries a placeholder CAN
-(`123456789123`) instead of a counter number. Its channel is not in doubt —
-`tut_tct_t131_02` files 82 other rows — so that is a damaged value, and step 2b
-names it as a known artefact rather than loosening the rule around it. A new
-contradiction still fails.
-
-`test_channel_queries` step **2b** re-runs this cross-check. It has teeth:
-classifying everything as CSC contradicts the evidence on 109 rows and
-everything as `sub_registrar` on 171.
-
-**Why `camp_flag` was dropped from the rule.** `can_channel()` used to read
-`camp_flag = 'P'` **or** a mobile-shaped `source_name`, on the stated ground
-that the two named the same rows. They do not. `2022/0153/28/001405` carries
-`P` on `tut_tct_t131_01` — a counter account that files nine other rows with no
-flag at all, with a `133`-series CAN and the same public IP that
-`tut_tct_t131_02` (an unambiguous CSC counter, 82 rows) uses. Three signals say
-counter; one says camp. A camp desk is still run by a counter, so `P` marks
-*where* the file was taken, not *who* filed it.
-
-Step 2b's old check asserted the agreement and so fired as designed when it
-broke — and its comment said that was "a question for a human, not something
-`can_channel()` should quietly decide". The ruling: **a bare mobile in the
-operator column is the citizen signal; a camp flag on a counter-coded row is
-not.** What 2b checks now is that ruling, not the old assumption.
-
-This changed **no data**. The built database already held `CSC` for
-`2022/0153/28/001405`; it was the *code* that had drifted, so re-deriving every
-row under the OR rule disagreed with the stored value on exactly that one
-application. Under the rule as it now stands the drift is zero — but a rebuild
-with the OR rule would have silently turned that file into a second, wrong
-"citizen" application.
-
-Two further fingerprints separate attended from unattended, useful when
-sanity-checking new extracts but not used by the projection: the unattended
-rows come from **6 internal `10.236.251.x` addresses**, the CSC rows from
-42 distinct public ISP addresses; and `registration_place` is written in Tamil
-script on the unattended rows (`மேலூர்_தூத்துக்குடி`) but transliterated on the
-CSC ones (`Melur`, `Tuticorin Joint II`).
-
-Do **not** use `urban_application_log.source_code` for any of this. It is
-populated on all 1211 rows, takes values `0` / `00` / `1` / `2` / `3`, and
-splits both ways against every channel signal, so it carries none.
-`build_app_tables.py` reads it and discards it. `00` is overwhelmingly the bulk
-settlement load (`0167` / `0169`, 914 rows from the single `tut_prabakaranp`
-account), which never becomes an `applications` row. What `source_code`
-positively means is not documented anywhere.
+`urban_application_log.source_code` carries no channel signal; do not use it.
 
 ### Application Types
 - **ISD** (`0154`) — **Involving Sub-Division**: the parcel is split, so the file
@@ -609,7 +606,7 @@ assumed — the applications whose wording says "Send to SIS" are sitting at rol
 
 | role | who | stage |
 |---|---|---|
-| `1` | the CSC / e-Sevai operator or citizen who submits | not a desk (no `from_stage`) |
+| `1` | the CSC operator or citizen who submits | not a desk (no `from_stage`) |
 | `44`, `42`, `41` | the surveyor's office (SIS) | `SIS` |
 | `8` | Senior Draughtsman | `SD` |
 | `12` | Deputy Inspector Surveyor (DIS) | `DIS` |
@@ -668,6 +665,25 @@ above.** 168 NISD applications: 129 approved, 36 rejected, 2 in progress,
 Raw layer-1 for approved NISD `2022/0153/28/000254`:
 `1→44, 44→42, 42→16, 16→0` — surveyor's office straight to the Zonal Level
 Tahsildar (role 16), who signs and closes it.
+
+### Time limits — two different clocks
+
+`backend/utils/sla.py` holds both, taken from the documents; `python test_sla_rules.py`
+checks the code against `land_rules.txt` / `workflow_guide.txt` and every boundary.
+
+| clock | rule | source |
+|---|---|---|
+| **Field-visit deadline** | an open ISD or MERGE file whose visit is not completed more than **15 working days** after submission is *overdue* (`applications.is_overdue`); a completed visit stops the clock; NISD has none | `workflow_guide.txt` |
+| **Service SLA** | NISD 15-20, ISD 30-35, MERGE 15 working days from submission to completion | `land_rules.txt` |
+
+The SLA is a **range**, so a file is *within* it up to the lower figure, *in the SLA
+window* between the two, and *past* it only after the UPPER figure -- no single point is
+invented. Working days are Monday-Friday; the register has no holiday calendar and the
+answer says so. `is_overdue` is re-derived by `overdue_refresh.py` at start-up and every
+6 hours (it used to be frozen on the build day). The answer to "how long has X been
+pending" names both limits and never a universal "15-day SLA". `survey_manual.txt` gives
+a MERGE total of 25-30 working days against `land_rules.txt`'s 15; the code follows
+`land_rules.txt` (the per-service-code table) -- reconcile the two documents if that is wrong.
 
 ### Active applications per survey number
 
@@ -1691,7 +1707,7 @@ Tanglish, unions, and every combined scope. Eight did not, in two shapes:
 | shape | what happened |
 |---|---|
 | `csc aplications` | the channel was read correctly and the **noun** was misspelt, so the listing gate — plain substrings — did not fire, and the question fell to the LLM |
-| `citizn applications`, `sub registrer applications`, `e-sevi applications` | the **channel name** was misspelt, so no channel was named at all |
+| `citizn applications`, `sub registrer applications` | the **channel name** was misspelt, so no channel was named at all |
 | `show ctizen applications` | worse: it *did* reach a listing, with the misspelt word silently ignored — the officer's whole desk queue, presented as the answer |
 | bare `csc` / `sro` / `citizen` | no noun at all, so the gate never fired; the LLM answered instead — the one path that cannot look a channel up |
 
@@ -1722,11 +1738,11 @@ The first pass moved 4 of them; the finished change moves **0**. Re-run that
 diff for any edit to the channel vocabulary — a routing change is invisible in
 a suite that only asks the questions it already knew about.
 
-## "e-Sevai" is a word, not a list bullet
+## "CSC" is a word, not a list bullet
 
 The bullet stripper at the top of `parse_intent` in `rag.py`.
 
-`"e-sevai applications"` was answered **"There are 9 e-sevai applications"** and
+`"CSC applications"` was answered **"There are 9 CSC applications"** and
 given nine application numbers. The officer holds **31**; the nine were their
 ISD list, relabelled. Two rules met:
 
@@ -1734,17 +1750,17 @@ ISD list, relabelled. Two rules met:
 message = re.sub(r'^\s*[a-zA-Z][\.\)\-]\s*', '', message)   # strip "a." / "b)" / "a-"
 ```
 
-`"e-sevai applications"` starts `e-`, so the stripper took it for a list bullet
+`"CSC applications"` starts `e-`, so the stripper took it for a list bullet
 and left `"sevai applications"` — which matches none of the channel vocabulary
 (`e[\s-]?sevai` needs the `e`). The message then named no channel, no
 deterministic handler claimed it, and it fell through to the agent, which
-reached for the widest tool it had and called the result "e-sevai" — the
+reached for the widest tool it had and called the result "CSC" — the
 relabelling failure CLAUDE.md already documents for `get_officer_workload`.
 
 A hyphen is now a bullet only when a space follows it (`"a - show my files"`).
-`"a."` and `"b)"` are unchanged. This mattered because **e-Sevai is the
+`"a."` and `"b)"` are unchanged. This mattered because **CSC is the
 department's own name for the CSC counters** and is used throughout
-`backend/documents`; `esevai` and `e sevai` had always worked, so the failure
+`backend/documents`; `CSC` and `CSC` had always worked, so the failure
 was invisible unless the officer typed the hyphen — which is how it is written
 everywhere else.
 
@@ -1765,7 +1781,7 @@ applications come from?*
 | case | note |
 |---|---|
 | the matching files were rejected | "1 matching application was rejected … ask for rejected applications to see it" (unchanged; asking for them works) |
-| the officer holds none of that channel | "No application in your jurisdiction came in through the citizen portal. Your applications came from 30 through a CSC / e-Sevai counter, 24 through the Sub-Registrar." |
+| the officer holds none of that channel | "No application in your jurisdiction came in through the citizen portal. Your applications came from 30 through a CSC counter, 24 through the Sub-Registrar." |
 
 The mix is counted from the officer's own jurisdiction with the same clauses the
 listing used, so it is as scoped as the empty list it explains.
@@ -1856,6 +1872,42 @@ carry no noun for `extract_submission_channels()`'s context-word guard to find,
 and were read as no scope at all. `"citizen access number"` is still the CAN and
 still not a channel.
 
+## Negation over application lists
+
+`backend/services/neg_scope.py`; hooks in `chatbot.py` right after the follow-up context is
+loaded (both chat paths) and just before `_apply_result_limit`. `python test_negation_scope.py`
+(`--stream` too; ~40 chains, English / Tamil / Tanglish, no LLM).
+
+`parse_intent` reads ONE status / type / channel, so "I don't want NISD" was answered with the
+NISD list and a second exclusion ("... not rejected either", "except ISD and rejected", "neither
+approved nor rejected") was dropped. The exclusions (status, type, channel, ward, "without a
+[completed] field visit") are now taken out of the message, the rest is asked as an ordinary
+positive question ("all applications" when nothing positive is left), and the rows that come back
+are filtered -- every figure is the length of the filtered rows. The exclusions and the positive
+base are recorded in the follow-up context (`excluded`, `excluded_base`), so "and not ISD", "show
+them" (after a count) and "show the rest" (the rows that were left out) continue the same list.
+A bare `not` negates ONE item ("not A and B" keeps B; "not A or B" / "not A, not B" exclude both);
+`except` / `other than` / `neither` / `without` negate the whole list, and
+`followup_context.negation_normalise` expands "other than A and B" to "not A and not B" before
+anything else reads it. Cues are fenced: `no of` / `no.` (number of) is not a negation, and
+visit-table questions stay with the field-visit follow-up layer.
+
+## A list request with a word nothing can filter by
+
+`backend/services/qualifier_guard.py`, answered through `_special_scope_kind()` (`unknown_from`,
+`unknown_qualifier`) in both chat paths. `python test_date_table_followups.py` carries the chains.
+
+"display applications ftom sri", "show applications in xyz", "show urgent applications" were
+answered with the officer's default desk queue: `parse_intent` reads the words it knows and drops
+the rest, so the list read as the answer to the whole sentence. A short, list-shaped English or
+Tanglish request whose words are neither in the small allow-list, nor a word of the documents
+(6+ letters), nor a slip within edit budget of one, is answered by naming the word and the filters
+that exist (status, type, channel, ward / block, month / year, overdue). A one-word source
+("from sri") also offers the near miss (SRO). Tamil-script messages are left to the other rules.
+A/B over all 6665 questions in `test_questions*.txt` + `eval_set.jsonl` flags none of them --
+re-run that (`ab.py`-style: `unknown_words()` over the files) after touching the allow-list.
+`applications in survey N` is a scope, not noise: `neg_scope` keeps that survey's rows only.
+
 ## Testing
 
 ```powershell
@@ -1942,6 +1994,9 @@ python test_completed_applications.py --data     # routing + data, no answers
 # "Which application should I field visit next, and where?" (routing, plan, answers)
 python test_visit_plan_queries.py            # everything (no LLM needed)
 python test_visit_plan_queries.py --routing  # routing only, no database
+
+# Negation over lists -- not X / except X and Y / neither ... nor / without a field visit
+python test_negation_scope.py [--stream]
 
 # The typed "clear" command -- what counts as one, and what it does
 python test_clear_command.py            # classification + end-to-end (DB, no LLM)

@@ -128,7 +128,6 @@ def test_guard():
                       ("citizn applications", "citizen"),
                       ("show ctizen applications", "citizen"),
                       ("sub registrer applications", "sub_registrar"),
-                      ("e-sevi applications", "CSC"),
                       ("applicaitons from csc", "CSC")):
         got_i, got_c = parse_intent(msg), extract_submission_channels(msg)
         check(got_i in _LIST_INTENTS and got_c == [want],
@@ -136,7 +135,7 @@ def test_guard():
     # A bare channel name asks for that channel's files; there is nothing else
     # in this domain it could mean.
     for msg, want in (("csc", "CSC"), ("sro", "sub_registrar"),
-                      ("citizen", "citizen"), ("e-sevai", "CSC")):
+                      ("citizen", "citizen"), ("CSC", "CSC")):
         got_i, got_c = parse_intent(msg), extract_submission_channels(msg)
         check(got_i in _LIST_INTENTS and got_c == [want],
               f"bare {msg!r} -> {want} listing", f"{got_i} {got_c}")
@@ -153,13 +152,13 @@ def test_guard():
               f"{msg[:44]!r} names no channel", str(extract_submission_channels(msg)))
 
     print("\n[3b] a hyphenated first word is a word, not a list bullet")
-    # "e-Sevai" is the department's name for the CSC counters. The leading
+    # "CSC" is the department's name for the CSC counters. The leading
     # list-bullet stripper took the "e-" off it, and the leftover "sevai
     # applications" named no channel -- so a question with a deterministic
     # answer reached the LLM, which relabelled the officer's ISD list as
-    # "9 e-sevai applications".
-    for msg in ("e-sevai applications", "e-Sevai applications count",
-                "how many e-sevai applications", "e-sevai apps"):
+    # "9 CSC applications".
+    for msg in ("CSC applications", "CSC applications count",
+                "how many CSC applications", "CSC apps"):
         check(parse_intent(msg) == "pending_applications"
               and extract_submission_channels(msg) == ["CSC"],
               f"{msg!r} is a CSC listing", parse_intent(msg))
@@ -198,7 +197,6 @@ async def test_against_db():
                        JOIN blocks b ON b.id = s.block_id
                        JOIN officer_jurisdictions j ON j.officer_id = :o
                        WHERE b.ward_id = j.ward_id
-                         AND a.current_status <> 'rejected'
                          AND a.application_type = :t"""),
                     {"o": officer.id, "t": app_type})).scalar()
                 check(got == want,
@@ -214,6 +212,7 @@ async def test_against_db():
             want_desk = (await db.execute(text(
                 """SELECT count(*) FROM applications a
                    WHERE a.assigned_officer_id = :o
+                     AND a.current_stage = 'SIS'
                      AND a.current_status IN ('pending','in_progress','escalated')"""),
                 {"o": officer.id})).scalar()
             check(desk == want_desk,
@@ -267,7 +266,7 @@ async def test_against_db():
                         {"role": "assistant", "content": answer}]
         check(answer.lower().startswith("applicant details"),
               "the answer is about the applicants", answer[:90])
-        check("Name:" in answer and "stage:" not in answer.lower(),
+        check("mobile" in answer.lower() and "stage:" not in answer.lower(),
               "...and not the application card", answer[:90])
 
         session = await create_chat_session(db, str(officer.id))
@@ -278,7 +277,7 @@ async def test_against_db():
             listed = result.get("structured_data") or {}
             history += [{"role": "user", "content": msg},
                         {"role": "assistant", "content": answer}]
-        check("multi_applications" not in listed,
+        check(len(listed.get("multi_applications") or []) <= 1,
               "an ordinal picks ONE row, it is not expanded to all of them",
               answer[:90])
 

@@ -50,7 +50,7 @@ ROUTING = [
     ("what is my jurisdiction", "jurisdiction_summary"),
     (f"status of {_APP}", "application_status"),
     ("pending applications", "pending_applications"),
-    ("Is there any fee difference between ISD and NISD?", "service_code_guide"),
+    ("Is there any fee difference between ISD and NISD?", "fee_lookup"),
     # A number nobody labelled is not assumed to be a service code: 0015 is a
     # block number here, and could be a typo for anything.
     ("what is 0015", "unidentified_number"),
@@ -65,13 +65,13 @@ ROUTING = [
 ANSWERS = [
     # (question, substrings the answer must carry)
     ("what is 0153?", ["0153", "NISD", "Not Involving Subdivision",
-                       "no field visit", "₹100.00", "Tahsildar"]),
+                       "no field visit", "as recorded in the register", "Tahsildar"]),
     ("what is 0154?", ["0154", "ISD", "Involving Subdivision",
-                       "Senior Draughtsman", "₹400.00", "required"]),
+                       "Senior Draughtsman", "as recorded in the register", "required"]),
     ("what is 0155?", ["0155", "MERGE", "Merge Subdivisions"]),
     # A code outside the register is named, and said to be outside it.
     ("what does 0161 mean?", ["0161", "Street Master",
-                              "not one of the three codes"]),
+                              "not one of the three application types"]),
     ("what is 0169", ["0169", "Govt to Private", "no 0169 applications"]),
     # A prefix lists what it matches, and does not invent a count.
     ("how many service codes start with 016", ["0160", "0169", "9 service codes"]),

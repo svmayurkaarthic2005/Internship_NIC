@@ -204,7 +204,15 @@ function renderDataTable(container, data) {
         tableConfig = prepareOwnersTable(data, isTamil);
     } else if (data.workload) {
         tableConfig = prepareWorkloadTable(data, isTamil);
-    } else if (data.jurisdiction) {
+    } else if (data.jurisdiction && !data.application_number) {
+        // An application-detail card now carries `jurisdiction` too (the
+        // district/taluk/ward/block NAMES, so the card can show a human
+        // name instead of a raw code -- see prepareApplicationDetailTable).
+        // `data.jurisdiction` being truthy on its own used to also catch that
+        // card, ahead of the `application_number` check below, and render it
+        // as a jurisdiction SUMMARY instead -- the codes came from that wrong
+        // table, not from prepareApplicationDetailTable failing to look name
+        // fields up.
         tableConfig = prepareJurisdictionTable(data, isTamil);
     } else if (data.rejections) {
         tableConfig = prepareRejectionTable(data, isTamil);
@@ -603,13 +611,13 @@ function prepareApplicationDetailTable(data, isTamil = false) {
         appNo:          'விண்ணப்ப எண் (Application No)',
         userId:         'பயனர் ஐடி (User ID)',
         serviceCode:    'சேவை குறியீடு (Service Code)',
-        distCode:       'மாவட்ட குறியீடு (District Code)',
-        talukCode:      'தாலுகா குறியீடு (Taluk Code)',
+        distCode:       'மாவட்டம் (District)',
+        talukCode:      'தாலுகா (Taluk)',
         villageCode:    'கிராம குறியீடு (Village Code)',
         urbanUnitCode:  'நகர்ப்புற பிரிவு குறியீடு (Urban Unit)',
         appType:        'விண்ணப்ப வகை (Application Type)',
-        wardCode:       'வார்டு குறியீடு (Ward Code)',
-        blockCode:      'தொகுதி குறியீடு (Block Code)',
+        wardCode:       'வார்டு (Ward)',
+        blockCode:      'தொகுதி (Block)',
         appDate:        'விண்ணப்ப தேதி (Application Date)',
         status:         'விண்ணப்ப நிலை (Application Status)',
         surveyNo:       'சர்வே / கணக்கெண் (Survey No)',
@@ -635,13 +643,13 @@ function prepareApplicationDetailTable(data, isTamil = false) {
         appNo:          'Application Number',
         userId:         'User ID',
         serviceCode:    'Service Code',
-        distCode:       'District Code',
-        talukCode:      'Taluk Code',
+        distCode:       'District',
+        talukCode:      'Taluk',
         villageCode:    'Village Code',
         urbanUnitCode:  'Urban Unit Code',
         appType:        'Application Type',
-        wardCode:       'Ward Code',
-        blockCode:      'Block Code',
+        wardCode:       'Ward',
+        blockCode:      'Block',
         appDate:        'Application Date',
         status:         'Application Status',
         surveyNo:       'Survey Number',
@@ -705,10 +713,14 @@ function prepareApplicationDetailTable(data, isTamil = false) {
         { [fld.fieldCol]: fld.applicantName,[fld.detailCol]: data.applicant_name || 'N/A' },
         { [fld.fieldCol]: fld.mobile,       [fld.detailCol]: data.applicant_mobile || 'N/A' },
         { [fld.fieldCol]: fld.address,      [fld.detailCol]: data.applicant_address || 'N/A' },
-        { [fld.fieldCol]: fld.distCode,     [fld.detailCol]: data.district_code },
-        { [fld.fieldCol]: fld.talukCode,    [fld.detailCol]: data.taluk_code },
-        { [fld.fieldCol]: fld.wardCode,     [fld.detailCol]: data.ward_code },
-        { [fld.fieldCol]: fld.blockCode,    [fld.detailCol]: data.block_code },
+        // Names, not codes -- the backend already resolves these
+        // (district_name/taluk_name/jurisdiction.ward/jurisdiction.block). A code
+        // is what a listing table shows, for the "in this ward" back-reference to
+        // parse; a single-application card is meant to show the human name.
+        { [fld.fieldCol]: fld.distCode,     [fld.detailCol]: data.district_name || data.district_code },
+        { [fld.fieldCol]: fld.talukCode,    [fld.detailCol]: data.taluk_name || data.taluk_code },
+        { [fld.fieldCol]: fld.wardCode,     [fld.detailCol]: (data.jurisdiction && data.jurisdiction.ward) || data.ward_code },
+        { [fld.fieldCol]: fld.blockCode,    [fld.detailCol]: (data.jurisdiction && data.jurisdiction.block) || data.block_code },
         { [fld.fieldCol]: fld.urbanUnitCode,[fld.detailCol]: data.urban_unit_code },
         { [fld.fieldCol]: fld.fieldVisit,   [fld.detailCol]: data.field_visit_scheduled ? `${isTamil ? 'ஆம்' : 'Yes'} (${formatDateVal(data.field_visit_date)})` : (isTamil ? 'இல்லை' : 'No') },
         { [fld.fieldCol]: fld.overdue,      [fld.detailCol]: data.is_overdue ? (isTamil ? 'ஆம்' : 'Yes') : (isTamil ? 'இல்லை' : 'No') },

@@ -3,7 +3,7 @@ Helper utilities and official TamilNilam Urban Schema / Service Codes / District
 Streamlined specifically for Sub Inspector Surveyors (SIS) in Urban jurisdictions.
 """
 from datetime import datetime, date
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import re
 import uuid
 
@@ -202,6 +202,14 @@ def format_area(area_sqm: float, unit: str = "sqm") -> str:
 # explicit note that no application in the register uses it.
 SIS_SERVICE_CODE_DETAIL = {
     "0153": {
+        "meaning": 'NISD = Not Involving Sub-Division. The whole survey number changes hands (sale, gift, inheritance), so the land is not divided and the patta simply moves to the new owner',
+        "meaning_ta": 'NISD = உட்பிரிவு இல்லாதது. முழு சர்வே எண்ணும் புதிய உரிமையாளருக்கு மாறுகிறது (விற்பனை, தானம், வாரிசு); நிலம் பிரிக்கப்படுவதில்லை',
+        "example": 'Example: an owner sells the entire survey number 24 to one buyer — the patta for 24 is transferred as it is',
+        "example_ta": 'எ.கா.: ஒருவர் சர்வே எண் 24 முழுவதையும் ஒரு வாங்குபவருக்கு விற்கிறார் — 24-க்கான பட்டா அப்படியே மாற்றப்படும்',
+        "outcome": 'Outcome: a patta transfer order for the same survey number; no new sub-division numbers',
+        "outcome_ta": 'விளைவு: அதே சர்வே எண்ணுக்கு பட்டா மாறுதல் ஆணை; புதிய உட்பிரிவு எண்கள் இல்லை',
+        "versus": 'Difference from ISD: ISD splits the parcel (field visit + sketch); NISD does not',
+        "versus_ta": 'ISD-யிலிருந்து வேறுபாடு: ISD-யில் நிலம் பிரிக்கப்படும் (கள ஆய்வு + வரைபடம்); NISD-யில் இல்லை',
         "tamil_name": "உட்பிரிவு இல்லாத பட்டா மாறுதல்",
         "summary": "a straight patta transfer of the whole survey number — no new "
                    "sub-division is created, so no field visit and no SD sketch",
@@ -217,6 +225,14 @@ SIS_SERVICE_CODE_DETAIL = {
                        "வலய நிலை தாசில்தார் (DSC கையொப்பம், ஆணை உருவாக்கம்)",
     },
     "0154": {
+        "meaning": 'ISD = Involving Sub-Division. Only a part of a survey number is transferred, so the parcel is split and the new portion needs its own sub-division number',
+        "meaning_ta": 'ISD = உட்பிரிவு உள்ளது. சர்வே எண்ணின் ஒரு பகுதி மட்டுமே மாறுகிறது; நிலம் பிரிக்கப்பட்டு புதிய பகுதிக்கு தனி உட்பிரிவு எண் வழங்கப்படும்',
+        "example": 'Example: an owner sells one part of survey number 24 — it becomes 24/3 and 24/4, after the surveyor measures it on the ground',
+        "example_ta": 'எ.கா.: சர்வே எண் 24-இன் ஒரு பகுதி விற்கப்படுகிறது — நில அளவையர் நேரில் அளந்த பிறகு அது 24/3, 24/4 ஆகும்',
+        "outcome": 'Outcome: a patta transfer order plus new sub-division numbers (a temporary number such as 24/T1 while the file is open, the final number on approval)',
+        "outcome_ta": 'விளைவு: பட்டா மாறுதல் ஆணையுடன் புதிய உட்பிரிவு எண்கள் (கோப்பு திறந்திருக்கும்போது தற்காலிக எண், ஒப்புதலில் இறுதி எண்)',
+        "versus": 'Difference from NISD: NISD moves the whole survey number, with no field visit and no sketch',
+        "versus_ta": 'NISD-யிலிருந்து வேறுபாடு: NISD-யில் முழு சர்வே எண்ணும் மாறும்; கள ஆய்வும் வரைபடமும் இல்லை',
         "tamil_name": "உட்பிரிவு உள்ள பட்டா மாறுதல்",
         "summary": "a patta transfer in which the parcel is split, so a field "
                    "inspection and a sub-division sketch are required",
@@ -232,6 +248,14 @@ SIS_SERVICE_CODE_DETAIL = {
                        "மூத்த வரைவாளர் (SD வரைபடம்) → DIS → தாசில்தார் (DSC)",
     },
     "0155": {
+        "meaning": 'MERGE = combining sub-divisions. Several sub-divisions of one survey number are joined back into one',
+        "meaning_ta": 'MERGE = உட்பிரிவு இணைப்பு. ஒரு சர்வே எண்ணின் பல உட்பிரிவுகள் மீண்டும் ஒன்றாக இணைக்கப்படுகின்றன',
+        "example": 'Example: sub-divisions 24/3 and 24/4, now owned by one person, are merged into a single record',
+        "example_ta": 'எ.கா.: ஒருவருக்கே சொந்தமான 24/3, 24/4 உட்பிரிவுகள் ஒரே பதிவாக இணைக்கப்படுகின்றன',
+        "outcome": 'Outcome: one merged sub-division record and the patta updated to it',
+        "outcome_ta": 'விளைவு: ஒரு இணைந்த உட்பிரிவுப் பதிவு; பட்டா அதற்கு மாற்றப்படும்',
+        "versus": 'It follows the ISD chain (field visit, SD sketch, DIS, Tahsildar)',
+        "versus_ta": 'இது ISD வரிசையைப் பின்பற்றும் (கள ஆய்வு, SD வரைபடம், DIS, தாசில்தார்)',
         "tamil_name": "உட்பிரிவு இணைப்பு பட்டா மாறுதல்",
         "summary": "several sub-divisions of a survey number combined into one; "
                    "it follows the ISD chain",
@@ -241,10 +265,10 @@ SIS_SERVICE_CODE_DETAIL = {
         "csc_fee": "₹60.00",
         "sla_days": "15 working days",
         "sla_days_ta": "15 வேலை நாட்கள்",
-        "workflow": "Citizen / CSC → SIS (boundary and merged-area verification) "
-                    "→ Tahsildar (DSC)",
-        "workflow_ta": "குடிமகன் / CSC → SIS (எல்லை மற்றும் இணைந்த பரப்பு "
-                       "சரிபார்ப்பு) → தாசில்தார் (DSC)",
+        "workflow": "Citizen / CSC / Sub-Registrar → SIS (boundary and merged-area verification, field visit) "
+                    "→ Senior Draughtsman (SD sketch) → DIS → Tahsildar (DSC)",
+        "workflow_ta": "குடிமகன் / CSC / சார்-பதிவாளர் → SIS (எல்லை மற்றும் இணைந்த பரப்பு "
+                       "சரிபார்ப்பு, கள ஆய்வு) → மூத்த வரைவாளர் (SD வரைபடம்) → DIS → தாசில்தார் (DSC)",
     },
 }
 
@@ -263,14 +287,91 @@ def normalize_service_code(token: str) -> Optional[str]:
     return candidate if candidate in SIS_URBAN_SERVICES else None
 
 
+_SVC_NAME_STOPWORDS = frozenset({
+    "of", "to", "and", "for", "with", "the", "a", "an", "or", "in", "on",
+})
+
+
+def _svc_name_keywords(name: str) -> frozenset:
+    """The distinctive words in a service's official name -- lowercased,
+    punctuation split, common connectives dropped. "F-Line (Urban
+    Demarcation)" -> {"line", "urban", "demarcation"}; a bare "f" is noise."""
+    words = re.findall(r"[a-z]{2,}", name.lower())
+    return frozenset(w for w in words if w not in _SVC_NAME_STOPWORDS)
+
+
+_SVC_NAME_INDEX = {
+    code: _svc_name_keywords(info["name"])
+    for code, info in SIS_URBAN_SERVICES.items()
+}
+
+
+def find_service_code_by_name(text: str) -> Optional[str]:
+    """The one urban service unambiguously named by its official name rather
+    than its digit code -- "what is street master?", "show natham settlement
+    applications" -- typo-tolerant via the project's standard edit-distance
+    rule. A match needs either 2+ of a name's distinctive words, or its only
+    distinctive word when the name has just one ("Addition", "Deletion") --
+    so a bare "settlement" (one word shared by four names) or "patta" (one
+    word out of "Register Patta"'s two, and common domain vocabulary in its
+    own right) never wins on a single shared word, but "name correction" out
+    of "TSLR Owner Name Correction" does. Ranked by (hit count, coverage
+    ratio), so "govt to private" prefers 0169 "Govt to
+    Private" (2/2 words) over 0179 "Settlement Govt to Private" (2/3) even
+    though both match on raw word count. A tie on both is refused rather than
+    guessed, the same rule `followup_context._correct_typos` uses for an
+    ambiguous spelling fix.
+    """
+    from backend.utils.fuzzy import is_token_typo_match, is_qwerty_first_letter_typo
+    tokens = re.findall(r"[a-z]{2,}", str(text or "").lower())
+    if not tokens:
+        return None
+    scores: Dict[str, tuple] = {}
+    for code, keywords in _SVC_NAME_INDEX.items():
+        if not keywords:
+            continue
+        # A dropped LEADING letter ("treet" for "street", "atham" for
+        # "natham") is a real edit the typo matcher's own first-character
+        # guard refuses to cross on its own -- the same shape as "evai" for
+        # "sevai" in the channel matcher.
+        hits = sum(1 for kw in keywords
+                   if any(is_token_typo_match(tok, kw)
+                          or (len(tok) >= 4 and kw[1:] == tok)
+                          or is_qwerty_first_letter_typo(tok, kw)
+                          for tok in tokens))
+        ratio = hits / len(keywords)
+        # A single matched word is only enough when it IS the whole name
+        # ("Addition", "Deletion"). Otherwise one shared word out of two is
+        # too weak a signal on its own -- "what is patta" (patta is common
+        # domain vocabulary, not a request about 0187 "Register Patta"
+        # specifically) must not resolve to one code from a single word.
+        # Coverage still matters even at 2+ hits: "survey number 1355" hits
+        # "survey" and "number" in 0163 "Block/Revoke Town Survey Number"
+        # (2 of 5 words, 40%) and used to be misread as that service code --
+        # a plain survey-number question has nothing to do with it.
+        if (hits >= 2 and ratio >= 0.5) or (hits == 1 and len(keywords) == 1):
+            scores[code] = (hits, ratio)
+    if not scores:
+        return None
+    best = max(scores.values())
+    winners = [c for c, s in scores.items() if s == best]
+    return winners[0] if len(winners) == 1 else None
+
+
 def find_service_codes(text: str) -> List[str]:
-    """Every urban service code named in a message, in order, without duplicates."""
+    """Every urban service code named in a message, in order, without
+    duplicates. Falls back to a name match ("street master", "natham
+    settlement") when no digit code is present."""
     import re as _re
     found: List[str] = []
     for token in _re.findall(r'\b\d{3,4}\b', str(text or "")):
         code = normalize_service_code(token)
         if code and code not in found:
             found.append(code)
+    if not found:
+        by_name = find_service_code_by_name(text)
+        if by_name:
+            found.append(by_name)
     return found
 
 
@@ -294,19 +395,27 @@ def describe_service_code(code: str, is_tamil: bool = False) -> Optional[str]:
             # falls back for any future code detail entered without one.
             return (
                 f"சேவை குறியீடு {code} = {short} ({name} / {detail['tamil_name']}).\n"
+                f"  • {detail.get('meaning_ta', detail.get('summary_ta', detail['summary']))}\n"
+                f"  • {detail.get('example_ta', '')}\n"
+                f"  • {detail.get('outcome_ta', '')}\n"
                 f"  • {detail.get('summary_ta', detail['summary'])}\n"
                 f"  • பணிப்பாய்வு: {detail.get('workflow_ta', detail['workflow'])}\n"
-                f"  • கட்டணம்: அரசு {detail['govt_fee']} + CSC {detail['csc_fee']}\n"
+                f"  • கட்டணம்: பதிவேட்டில் பதிவான தொகை ('{short} கட்டணம் என்ன' எனக் கேளுங்கள்)\n"
                 f"  • கால அளவு: {detail.get('sla_days_ta', detail['sla_days'])}\n"
-                f"  • கள ஆய்வு: {'தேவை' if info['requires_field_visit'] else 'தேவையில்லை'}"
+                f"  • கள ஆய்வு: {'தேவை' if info['requires_field_visit'] else 'தேவையில்லை'}\n"
+                f"  • {detail.get('versus_ta', '')}"
             )
         return (
             f"Service code {code} = {short} ({name}).\n"
+            f"  • Meaning: {detail.get('meaning', detail['summary'])}.\n"
+            f"  • {detail.get('example', '')}.\n"
+            f"  • {detail.get('outcome', '')}.\n"
             f"  • What it is: {detail['summary']}.\n"
             f"  • Workflow: {detail['workflow']}.\n"
-            f"  • Fee: Government {detail['govt_fee']} + CSC charge {detail['csc_fee']}.\n"
+            f"  • Fee: as recorded in the register, since fees can be revised (ask \"what is the fee for {short}\").\n"
             f"  • SLA: {detail['sla_days']}.\n"
-            f"  • Field visit: {'required' if info['requires_field_visit'] else 'not required'}."
+            f"  • Field visit: {'required' if info['requires_field_visit'] else 'not required'}.\n"
+            f"  • {detail.get('versus', '')}."
         )
 
     visit_en = "requires a field visit" if info["requires_field_visit"] else "needs no field visit"
@@ -319,9 +428,10 @@ def describe_service_code(code: str, is_tamil: bool = False) -> Optional[str]:
         )
     return (
         f"Service code {code} = {name} ({short}) — a TAMILNILAM urban service that "
-        f"{visit_en}.\nIt is not one of the three codes this assistant's register "
-        f"carries (0153 NISD / 0154 ISD / 0155 MERGE), so there are no {code} "
-        f"applications in your workload."
+        f"{visit_en}.\nIt is not one of the three application types the schema even "
+        f"admits (0153 NISD / 0154 ISD / 0155 MERGE — the only types a row can ever "
+        f"be, whether or not any exist yet), so there are no {code} applications in "
+        f"your workload."
     )
 
 

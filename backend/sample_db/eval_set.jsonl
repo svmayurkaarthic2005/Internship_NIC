@@ -1,0 +1,104 @@
+{"question": "How busy am I right now?", "category": "normal_english"}
+{"question": "Show me my pending applications", "category": "normal_english"}
+{"question": "What is the status of my last application?", "category": "normal_english"}
+{"question": "How many applications do I have?", "category": "normal_english"}
+{"question": "Which area do I cover as an officer?", "category": "normal_english"}
+{"question": "Which applications need immediate action?", "category": "normal_english"}
+{"question": "List the applications that are overdue", "category": "normal_english"}
+{"question": "What percentage of my applications have I completed?", "category": "normal_english"}
+{"question": "Show applications submitted today", "category": "normal_english"}
+{"question": "What documents are missing in my applications?", "category": "normal_english"}
+{"question": "show applications||their survey numbers", "category": "followup"}
+{"question": "show applications||the 2nd one", "category": "followup"}
+{"question": "show applications||how many of these are pending", "category": "followup"}
+{"question": "show applications||which one is oldest", "category": "followup"}
+{"question": "show applications||show only NISD", "category": "followup"}
+{"question": "show applications||what is the total fee", "category": "followup"}
+{"question": "show applications||along ward", "category": "followup"}
+{"question": "show applications||remove the first one", "category": "followup"}
+{"question": "show applications||their can numbers", "category": "followup"}
+{"question": "show applications||is that all", "category": "followup"}
+{"question": "Show ISD applications", "category": "type"}
+{"question": "Show NISD applications", "category": "type"}
+{"question": "List all applications with the merge service code", "category": "type"}
+{"question": "Is 2026/0154/28/001167 NISD or ISD?", "category": "type"}
+{"question": "How many ISD applications do I have?", "category": "type"}
+{"question": "Show both ISD and NISD applications", "category": "type"}
+{"question": "What is the difference between ISD and NISD?", "category": "type"}
+{"question": "Compare ISD and NISD by count", "category": "type"}
+{"question": "How many applications are pending?", "category": "status"}
+{"question": "Show approved applications", "category": "status"}
+{"question": "Show rejected applications", "category": "status"}
+{"question": "Which applications are escalated?", "category": "status"}
+{"question": "Show applications in progress", "category": "status"}
+{"question": "How many applications are approved this month?", "category": "status"}
+{"question": "Which pending files are in block 0015?", "category": "ward_block"}
+{"question": "How many applications are in ward 002?", "category": "ward_block"}
+{"question": "Show applications in ward 102", "category": "ward_block"}
+{"question": "List the surveys in block 0015", "category": "ward_block"}
+{"question": "Which taluk has the most applications?", "category": "ward_block"}
+{"question": "Show applications outside ward 002", "category": "ward_block"}
+{"question": "What is my jurisdiction type?", "category": "jurisdiction"}
+{"question": "Am I assigned to ward 002?", "category": "jurisdiction"}
+{"question": "Which district do I belong to?", "category": "jurisdiction"}
+{"question": "Give me the taluk summary", "category": "jurisdiction"}
+{"question": "aplication status of 2026/0154/28/001167", "category": "typo"}
+{"question": "shhoow applications", "category": "typo"}
+{"question": "how mny pending applications", "category": "typo"}
+{"question": "show aproved applications", "category": "typo"}
+{"question": "not alng ward", "category": "typo"}
+{"question": "nisd applcations kami", "category": "typo"}
+{"question": "escalatd applications", "category": "typo"}
+{"question": "not rejcted applications", "category": "typo"}
+{"question": "விண்ணப்பங்களைக் காட்டு", "category": "tamil"}
+{"question": "என் பணிபாரம் இப்போது எவ்வளவு", "category": "tamil"}
+{"question": "எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன", "category": "tamil"}
+{"question": "வார்டு 002 இல் எத்தனை விண்ணப்பங்கள்", "category": "tamil"}
+{"question": "நான் யார்", "category": "tamil"}
+{"question": "இன்றைய தேதி என்ன", "category": "tamil"}
+{"question": "enaku pending ah evlo apps iruku", "category": "tanglish"}
+{"question": "workload ippo evlo iruku", "category": "tanglish"}
+{"question": "isd applications evlo iruku", "category": "tanglish"}
+{"question": "field visit eppo iruku", "category": "tanglish"}
+{"question": "naan yaaru", "category": "tanglish"}
+{"question": "indha maasam evlo approve aachu", "category": "tanglish"}
+{"question": "not approved applications", "category": "negation"}
+{"question": "not pending applications", "category": "negation"}
+{"question": "neither approved nor rejected applications", "category": "negation"}
+{"question": "applications without igrs number", "category": "negation"}
+{"question": "not isd applications", "category": "negation"}
+{"question": "show applications||not along status", "category": "negation"}
+{"question": "leave out the NISD ones", "category": "negation"}
+{"question": "skip the completed applications", "category": "negation"}
+{"question": "what is the weather today", "category": "out_of_scope"}
+{"question": "write me a poem", "category": "out_of_scope"}
+{"question": "what is the capital of tamil nadu", "category": "out_of_scope"}
+{"question": "who won the cricket match", "category": "out_of_scope"}
+{"question": "2+2 evlo", "category": "out_of_scope"}
+{"question": "delete all my applications", "category": "out_of_scope"}
+{"question": "clear the knowledge base", "category": "out_of_scope"}
+{"question": "what is 0015?", "category": "ambiguous"}
+{"question": "who is this", "category": "ambiguous"}
+{"question": "what is this", "category": "ambiguous"}
+{"question": "are you sis", "category": "ambiguous"}
+{"question": "show more applications", "category": "ambiguous"}
+{"question": "show application with can number", "category": "ambiguous"}
+{"question": "how many field visits do I have", "category": "workflow"}
+{"question": "what is the next step once SIS approves an ISD file", "category": "workflow"}
+{"question": "under what conditions can two surveys be merged", "category": "workflow"}
+{"question": "what does a temporary subdivision number mean", "category": "workflow"}
+{"question": "what happens if litigation is found on a survey", "category": "workflow"}
+{"question": "what is the CAN number format", "category": "workflow"}
+{"question": "Show my field visits", "category": "normal_english"}
+{"question": "What is my highest priority application?", "category": "normal_english"}
+{"question": "Show applications from CSC", "category": "channel"}
+{"question": "Show applications from the Sub-Registrar", "category": "channel"}
+{"question": "How many applications from citizen portal", "category": "channel"}
+{"question": "not along survey no", "category": "negation"}
+{"question": "applications neither from csc nor sub registrar", "category": "negation"}
+{"question": "field visits not on monday", "category": "negation"}
+{"question": "show applications||remove row 2", "category": "followup"}
+{"question": "show applications||show applications in even rows", "category": "followup"}
+{"question": "show applications||show 3rd row", "category": "followup"}
+{"question": "What is the service charge for an ISD application?", "category": "type"}
+{"question": "How long does an ISD application take?", "category": "workflow"}

@@ -88,6 +88,30 @@ _DB_ONLY_MARKERS = (
 )
 
 
+async def attachment_topic_active(db: AsyncSession, session_id: str) -> bool:
+    """True when the assistant's previous reply was itself about an uploaded file --
+    the conversation is about the document until something else is asked."""
+    from sqlalchemy import and_
+    from backend.models import ChatMessage
+    try:
+        row = (await db.execute(
+            select(ChatMessage.structured_data)
+            .where(and_(ChatMessage.session_id == session_id, ChatMessage.role == "assistant"))
+            .order_by(ChatMessage.created_at.desc()).limit(1))).scalar_one_or_none()
+    except Exception:  # pragma: no cover
+        return False
+    return bool(row and row.get("entity") == "attachment")
+
+
+def explicit_attachment_signal(message: str, docs: Sequence[ChatAttachment]) -> bool:
+    """The message itself says it is about the file: its name, a document word, or
+    an overview request ("what it contains", "summary")."""
+    low = (message or "").lower()
+    return bool(mentions_filename(message, docs)
+                or any(w in low for w in _DOC_WORDS)
+                or is_overview_request(message))
+
+
 async def _last_focused_document(db: AsyncSession, session_id: str) -> Optional[str]:
     """The single document the previous attachment answer was about, if any.
 
@@ -143,6 +167,52 @@ _BROAD_WORDS = (
     "contents of", "tell me about", "gist", "brief",
     "சுருக்க", "ஒப்பிட", "என்ன உள்ளது", "பற்றி",
 )
+
+
+_OVERVIEW_RE = re.compile(
+    r"\b(?:summar\w*|overview|gist|brief\w*|abstract|outline|synopsis|tldr)\b"
+    r"|\bwhat\s+(?:it|this|that|the\s+(?:file|document|doc|attachment|pdf|txt))\s+"
+    r"(?:contain\w*|has|have|include\w*|say\w*|cover\w*|is\s+about|about)\b"
+    r"|\bwhat(?:'s|s|\s+is|\s+all\s+is)\s+(?:in|inside)\s+(?:it|this|that|the\s+(?:file|document|doc))\b"
+    r"|\b(?:contents?|tell\s+short|in\s+short|explain\s+(?:the\s+)?(?:file|document|doc)|"
+    r"read\s+(?:the\s+)?(?:file|document|doc))\b"
+    r"|\bwhat\s+is\s+(?:this|the)\s+(?:file|document|doc)\b"
+    r"|\bwhat\s+(?:does|do)\s+(?:it|this|that)(?:\s+(?:file|document|doc|attachment|pdf|txt))?\s+"
+    r"(?:contain\w*|have|include\w*|say|cover\w*)\b"
+    r"|சுருக்க|உள்ளடக்க|என்ன\s+இருக்கு|என்ன\s+உள்ளது|என்ன\s+இருக்கிறது|இதில்\s+என்ன"
+    r"|\b(?:enna\s+irukku|ulla\s+enna|summary\s+sollu|ithula\s+enna|idhula\s+enna)\b",
+    re.IGNORECASE)
+_OVERVIEW_TYPO_TARGETS = ("contains", "contents", "summary", "summarize", "summarise", "overview")
+
+
+def is_overview_request(message: str) -> bool:
+    """"what it contains", "summarise", "tell short", "what is in this file" -- also
+    when misspelled ("wat it contians", "sumary", "overveiw")."""
+    text = message or ""
+    if _OVERVIEW_RE.search(text):
+        return True
+    from backend.utils.fuzzy import extract_tokens, is_token_typo_match
+    toks = extract_tokens(text.lower())
+    if any(is_token_typo_match(t, w) for t in toks for w in _OVERVIEW_TYPO_TARGETS if len(t) >= 5):
+        return True
+    # A question about "it"/"this" that carries no content word of its own.
+    return bool(re.search(r"\bwh?at\s+(?:it|this)\s+\w{4,10}\b", text.lower())
+                and any(t in ("short", "brief", "file", "document") for t in toks))
+
+
+def _outline_text(doc, headings: List[str], language: str) -> str:
+    ta = language in ("ta", "tanglish")
+    size = f"{doc.char_count or 0:,}"
+    pages = f", {doc.page_count} page(s)" if doc.page_count else ""
+    shown = headings[:15]
+    lines = "\n".join(f"{i}. {h}" for i, h in enumerate(shown, 1))
+    more = len(headings) - len(shown)
+    tail = (f"\n(+{more} more)" if more > 0 else "") if not ta else (f"\n(மேலும் {more})" if more > 0 else "")
+    if ta:
+        return (f"{doc.filename} ({size} எழுத்துகள்{pages}) — {len(headings)} பிரிவுகள்:\n{lines}{tail}\n"
+                f"எந்தப் பிரிவைப் பற்றியும் கேளுங்கள்.")
+    return (f"{doc.filename} ({size} characters{pages}) has {len(headings)} sections:\n{lines}{tail}\n"
+            f"Ask about any section for its details.")
 
 
 def is_broad_request(message: str) -> bool:
@@ -211,6 +281,10 @@ def targets_attachment(message: str, intent: str,
         return False
     if any(m in low for m in _DB_ONLY_MARKERS):
         return False
+    # "what it contains", "summary", "tell short": asked with a file attached, this is
+    # about the file whatever intent the words happened to parse as.
+    if is_overview_request(message):
+        return True
     # Nothing else claimed it: `general_query` is where the pipeline would
     # otherwise hand llama3.1:8b an ungrounded prompt, which is exactly the
     # turn an attachment should take.
@@ -594,6 +668,13 @@ async def plan_answer(
     if not targets_attachment(message, intent, docs):
         return None
 
+    # A claim made only because nothing else parsed the message ("weak") must not
+    # end in a refusal: "what do u think abt it" or "clear" is not a question about
+    # the file just because a file is attached. Explicit signals -- the file's name,
+    # a document word, an overview request, or a conversation already about the
+    # file -- keep the grounded refusal.
+    explicit = explicit_attachment_signal(message, docs) or await attachment_topic_active(db, session_id)
+
     named = mentions_filename(message, docs)
     typed = typed_filenames(message)
     if typed and not named:
@@ -628,13 +709,16 @@ async def plan_answer(
         focused = [d for d in docs if str(d.id) == focus_id] if focus_id else []
         if focused:
             selected = focused
+        elif not explicit:
+            return None
         else:
             return AttachmentPlan(kind=KIND_CLARIFY,
                                   text=_clarify_files(docs, language),
                                   sources=[d.filename for d in docs],
                                   document_ids=[str(d.id) for d in docs])
 
-    return await _answer_from_selected(db, officer_id, session_id, message, language, selected)
+    return await _answer_from_selected(db, officer_id, session_id, message, language, selected,
+                                       explicit=explicit)
 
 
 async def try_single_document_fallback(
@@ -667,6 +751,12 @@ async def try_single_document_fallback(
     officer_id = getattr(officer, "officer_id", None)
     if officer_id is None:
         return None
+    # Only when the conversation really is about the file. Otherwise "what do u
+    # think abt it" after an application card would be answered from the upload.
+    if not (await attachment_topic_active(db, session_id)
+            or any(w in (message or "").lower() for w in _DOC_WORDS)
+            or is_overview_request(message)):
+        return None
     if _APPLICATION_NO_RE.search(message or ""):
         return None
     try:
@@ -686,7 +776,8 @@ async def _answer_from_selected(
     message: str,
     language: str,
     selected: List[ChatAttachment],
-) -> AttachmentPlan:
+    explicit: bool = True,
+) -> Optional[AttachmentPlan]:
     # ── CSV: compute, never narrate arithmetic ──────────────────────────
     csv_docs = [d for d in selected if d.file_ext == ".csv"]
     if len(csv_docs) == 1:
@@ -706,6 +797,29 @@ async def _answer_from_selected(
                     kind=KIND_DETERMINISTIC, text=text,
                     sources=[doc.filename], document_ids=[str(doc.id)],
                     citations=cites)
+
+    # ── "what does it contain / summarise / tell short" ─────────────────────
+    # Answered from the file's own section headings: no search terms exist to
+    # retrieve on, and nothing here is written by the model.
+    if len(selected) == 1 and is_overview_request(message) and not location_reference(message):
+        doc = selected[0]
+        if doc.file_ext == ".csv":
+            headers, rows = await attachment_store.csv_data(db, doc)
+            if headers:
+                ta = language in ("ta", "tanglish")
+                cols = ", ".join(headers[:25])
+                text = (f"{doc.filename}: {len(rows)} வரிசைகள், {len(headers)} நெடுவரிசைகள் — {cols}."
+                        if ta else
+                        f"{doc.filename} has {len(rows)} rows and {len(headers)} columns: {cols}.")
+                return AttachmentPlan(kind=KIND_DETERMINISTIC, text=text,
+                                      sources=[doc.filename], document_ids=[str(doc.id)])
+        outline = await attachment_store.document_outline(
+            db, officer_id, session_id, [doc.id])
+        heads = outline.get(str(doc.id)) or []
+        if len(heads) >= 2:
+            return AttachmentPlan(
+                kind=KIND_DETERMINISTIC, text=_outline_text(doc, heads, language),
+                sources=[doc.filename], document_ids=[str(doc.id)])
 
     # ── A named page / line / paragraph / table: fetch it by position ────
     evidences: List[Evidence] = []
@@ -733,12 +847,16 @@ async def _answer_from_selected(
         evidences = await attachment_store.retrieve_evidence(
             db, officer_id, session_id, [d.id for d in selected], message)
 
-    if not evidences and is_broad_request(message):
+    if not evidences and (is_broad_request(message) or is_overview_request(message)):
         evidences = await attachment_store.leading_chunks(
             db, officer_id, session_id, [d.id for d in selected],
             per_document=max(1, settings.UPLOAD_RETRIEVAL_TOP_K // max(1, len(selected))))
 
     if not evidences:
+        # A weak claim with no evidence is not about the file: let the normal
+        # pipeline answer instead of refusing.
+        if not explicit:
+            return None
         # No supporting evidence — the LLM is not called at all.
         return AttachmentPlan(
             kind=KIND_REFUSAL,

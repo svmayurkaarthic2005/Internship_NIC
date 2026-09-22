@@ -3,7 +3,6 @@ Async SQLAlchemy database setup
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import URL
 from sqlalchemy.engine import make_url
 from typing import AsyncGenerator

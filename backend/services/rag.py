@@ -32,6 +32,7 @@ from backend.utils.logger import get_logger
 from backend.utils.fuzzy import (
     extract_month_from_text,
     extract_tokens,
+    is_qwerty_first_letter_typo,
     is_token_typo_match,
     match_phrase,
     normalize_relative_date_tokens,
@@ -57,6 +58,9 @@ _TA_NB, _TA_NA = r'(?<![஀-௿])', r'(?![஀-௿])'
 llm = ChatOllama(
     model=settings.LLM_MODEL,
     base_url=settings.OLLAMA_BASE_URL,
+    # Keep the model loaded between questions: an idle unload cost a 15 s reload
+    # on the next document question.
+    keep_alive=settings.LLM_KEEP_ALIVE,
     temperature=0.1,
     num_predict=settings.LLM_NUM_PREDICT,
     num_ctx=settings.LLM_NUM_CTX
@@ -115,11 +119,18 @@ def detect_language(text: str) -> str:
         "enna", "eppadi", "engay", "yenge", "yenga", "eppo", "vanakkam",
         "sollunga", "pannunga", "solla", "kaattu", "irukku", "irukkanga",
         "kudunga", "yaaru", "evvalavu", "edhu", "edhukku", "aama", "illai",
-        "varum", "seri", "romba", "nalla", "panno", "kuduthu"
+        "varum", "seri", "romba", "nalla", "panno", "kuduthu",
+        "venuma", "venduma", "thevaiya", "ennanu", "nandri", "nanri",
+        "kaatu", "kami", "kaami", "elam", "ellam", "ellaa", "ellaam", "sollu", "avatroda", "evlo", "yaru", "yaaru"
     }
     words = set(re.findall(r'\b[a-zA-Z]+\b', text.lower()))
     if words.intersection(tanglish_words):
         return "tanglish"
+    # A slipped letter in a Tanglish word ("ena", "edgu", "solu", "kaatuu") must not
+    # flip the reply to English.
+    for w in words:
+        if len(w) >= 4 and any(len(t) >= 4 and is_token_typo_match(w, t) for t in tanglish_words):
+            return "tanglish"
 
     return "en"
 
@@ -471,7 +482,7 @@ def _get_projected_application_columns(user_query: str):
     uq = re.sub(
         r'\b(?:submitted|received|filed|created|made|sent|came in)?\s*'
         r'(?:from|by|through|via|at)\s*'
-        r'(?:sro|csc|citizen|igrs|e-?sevai|online)\b',
+        r'(?:sro|csc|citizen|igrs|online)\b',
         ' ', uq)
     
     # Strip application type filters
@@ -543,7 +554,7 @@ def _get_projected_application_columns(user_query: str):
 
     cols = []
     has_app_no = _proj_has(r'app|apps|application|applications|application no|application number|app no|app number|no|number|விண்ணப்ப எண்', uq)
-    if has_app_no or not any(k in uq for k in ["name", "status", "type", "isd", "nisd", "merge", "stage", "date", "block"]):
+    if has_app_no or not any(k in uq for k in ["name", "status", "type", "stage", "date", "block"]) and not re.search(r'\b0\d{3}\b', uq):
         cols.append("application_no")
         
     if _proj_has(r'applicant name|applicant\'s name|applicant|applicants|பெயர்|peyar', uq) or (
@@ -744,6 +755,11 @@ _SORT_FIELDS = [
                          "filed", "received", "தேதி", "சமர்ப்பி"]),
     ("status", ["status", "நிலை"]),
     ("application_type", ["type", "வகை"]),
+    ("ward_number", ["ward", "வார்டு"]),
+    ("block_number", ["block", "பிளாக்"]),
+    ("survey_no", ["survey", "சர்வே"]),
+    ("fee_amount", ["fee", "amount", "கட்டணம்"]),
+    ("applicant_name", ["applicant", "name", "பெயர்"]),
 ]
 
 
@@ -886,6 +902,62 @@ def _ordinal_suffix(n: int) -> str:
     if 11 <= (n % 100) <= 13:
         return f"{n}th"
     return f"{n}{('th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th')[n % 10]}"
+
+
+_POS_ORD = rf"(?:{_ORDINAL_NUM_RE}|\d{{1,3}}(?:st|nd|rd|th))"
+_POS_TYPEWORDS = r"(?:nisd|isd|merge|pending|approved|rejected|completed|overdue|open|csc|citizen|sro|sub\s*registrar|my|the|of)"
+_POS_NOUN = r"(?:row|rows|entry|entries|record|records|application|applications|app|apps|file|files)"
+_POS_ONE_RE = re.compile(
+    rf"{_OLB}(?P<o>{_POS_ORD}){_ORB}\s+(?:{_POS_TYPEWORDS}\s+){{0,3}}{_POS_NOUN}\b", re.IGNORECASE)
+_POS_PAIR_RE = re.compile(
+    rf"{_OLB}(?P<a>{_POS_ORD}){_ORB}\s*(?:,|and|&)\s*(?:the\s+)?(?P<b>{_POS_ORD}){_ORB}"
+    rf"\s+(?:{_POS_TYPEWORDS}\s+){{0,3}}{_POS_NOUN}\b", re.IGNORECASE)
+_POS_ROWN_RE = re.compile(r"\brow\s+(?:no\.?\s*|number\s+|#)?(?P<n>\d{1,3})\b", re.IGNORECASE)
+_POS_RANGE_RE = re.compile(r"\brows?\s+(?P<a>\d{1,3})\s*(?:to|-|through)\s*(?P<b>\d{1,3})\b", re.IGNORECASE)
+_POS_PARITY_RE = re.compile(r"\b(?P<p>even|odd)(?:\s+numbered)?\s+(?:rows?|entries|applications)\b", re.IGNORECASE)
+
+
+def _pos_value(raw: str) -> int:
+    raw = raw.lower()
+    if raw in _ORDINAL_WORDS:
+        return _ORDINAL_WORDS[raw]
+    m = re.match(r"\d+", raw)
+    return int(m.group(0)) if m else 0
+
+
+def extract_row_selection(message: str):
+    """Which rows of a listing the officer named by position, or None.
+
+    ("nth", n)           "display 2nd row of nisd applications", "row 3", "the 5th application"
+    ("rows", [a, b])     "the 2nd and 3rd nisd applications", "rows 2 to 4"
+    ("parity", "even")   "even rows of nisd applications"
+
+    A position is 1-based and counts the rows as listed. 0 or past the end is a real
+    request with no answer, so the caller says so instead of printing everything."""
+    try:
+        from backend.services import followup_context as _fc
+        message = _fc.correct_spelling(message or "")
+    except Exception:
+        pass
+    msg = normalize_text(message)
+    if not msg:
+        return None
+    m = _POS_PARITY_RE.search(msg)
+    if m:
+        return ("parity", m.group("p").lower())
+    m = _POS_RANGE_RE.search(msg)
+    if m:
+        a, b = int(m.group("a")), int(m.group("b"))
+        if 0 < a <= b and b - a < 100:
+            return ("rows", list(range(a, b + 1)))
+    m = _POS_PAIR_RE.search(msg)
+    if m:
+        return ("rows", [_pos_value(m.group("a")), _pos_value(m.group("b"))])
+    m = _POS_ONE_RE.search(msg) or _POS_ROWN_RE.search(msg)
+    if m:
+        raw = m.groupdict().get("o") or m.groupdict().get("n")
+        return ("nth", _pos_value(raw))
+    return None
 
 
 def extract_result_limit(message: str) -> Optional[Tuple[int, str]]:
@@ -1131,7 +1203,34 @@ def detect_jurisdiction_focus(message: str) -> Optional[str]:
     return matched[0] if len(matched) == 1 else None
 
 
+_TA_EXTRA_TH = {
+    "Channel": "வழி", "Fee": "கட்டணம்", "Total Fee": "மொத்த கட்டணம்", "With Fee": "கட்டணத்துடன்",
+    "Payment mode": "செலுத்தும் முறை", "Payment Mode": "செலுத்தும் முறை", "Submitted": "சமர்ப்பிக்கப்பட்டது",
+    "Rejected On": "நிராகரிக்கப்பட்ட தேதி", "Rejected By": "நிராகரித்தவர்", "Reason": "காரணம்",
+    "Resubmitted": "மறு சமர்ப்பிப்பு", "Status": "நிலை", "Stage": "கட்டம்", "Type": "வகை",
+    "Application No.": "விண்ணப்ப எண்", "Application Number": "விண்ணப்ப எண்", "Application Type": "விண்ணப்ப வகை",
+    "Applicant": "விண்ணப்பதாரர்", "Applicant Name": "விண்ணப்பதாரரின் பெயர்", "Mobile": "தொலைபேசி",
+    "Address": "முகவரி", "Applications": "விண்ணப்பங்கள்", "Service Code": "சேவை குறியீடு",
+    "SLA": "கால வரம்பு", "Key Aspect": "முக்கிய அம்சம்", "Details": "விவரங்கள்", "OVERDUE DAYS": "தாமத நாட்கள்",
+    "Field": "புலம்", "Value": "மதிப்பு", "Metric": "அளவீடு", "Count": "எண்ணிக்கை", "Ward": "வார்டு",
+    "Block": "தொகுதி", "Survey No.": "கணக்கெண்", "Survey Number": "கணக்கெண்", "Sub-Divisions": "உட்பிரிவுகள்",
+    "Survey & Processing Workflow": "சர்வே மற்றும் செயலாக்க பணிப்பாய்வு", "Scheduled Date": "திட்டமிட்ட தேதி",
+    "Days Pending": "நிலுவை நாட்கள்", "Submission Date": "சமர்ப்பித்த தேதி", "Town": "நகரம்", "Taluk": "தாலுகா",
+    "District": "மாவட்டம்", "Area (sq.m)": "பரப்பளவு (ச.மீ)", "Priority": "முன்னுரிமை",
+}
+_TH_RE = re.compile(r"<th>([^<]*)</th>")
+
+
 def build_html_response(structured_data: Dict[str, Any], language: str = "en", query: str = "") -> str:
+    """The HTML answer; for Tamil / Tanglish every table header that is still English is
+    translated (the branches that hard-code a header do not consult the label table)."""
+    html = _build_html_response_core(structured_data, language, query)
+    if language in ("ta", "tanglish") and isinstance(html, str) and "<th>" in html:
+        html = _TH_RE.sub(lambda m: f"<th>{_TA_EXTRA_TH.get(m.group(1).strip(), m.group(1))}</th>", html)
+    return html
+
+
+def _build_html_response_core(structured_data: Dict[str, Any], language: str = "en", query: str = "") -> str:
     """
     Build a clean HTML response directly from structured DB data,
     bypassing the LLM entirely for table-based queries.
@@ -1305,12 +1404,11 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
         },
     }
 
-    # Always use English column headers regardless of the user's language.
-    # Tamil/Tanglish users get English table headers so the frontend
-    # status-badge logic (keyed on 'Status' / 'Stage') works correctly --
-    # table_renderer.js translates these specific header strings client-side
-    # for display (see its `colTranslations` map).
-    lang = "en"
+    # Column headers follow the officer's language. (They used to be pinned to English
+    # on the strength of a client-side translation map, `colTranslations`, that does
+    # not exist -- so a Tamil answer sat above an English table.) Nothing in the
+    # frontend keys on these header strings for HTML tables built here.
+    lang = "ta" if language in ("ta", "tanglish") else "en"
     t = labels[lang]
     # The narrative sentences OUTSIDE the table (the "Found N application(s)"
     # intro, sort/scope notes, "Details for X") are a different concern from
@@ -1614,6 +1712,31 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
             f"</table>"
         )
 
+    # ── Recorded fee on the newest applications of a type / channel ──
+    if "fee_lookup" in structured_data and isinstance(structured_data["fee_lookup"], dict):
+        parts = []
+        _sum = structured_data["fee_lookup"].get("summary")
+        if _sum:
+            parts.append("<div class='table-intro'>" + _e(_sum).replace("\n", "<br>") + "</div>")
+        for g in structured_data["fee_lookup"].get("groups", []):
+            if not g.get("latest"):
+                continue
+            label = _e(g.get("application_type") or "All types") + (
+                f" / {_e(g['channel'])}" if g.get("channel") else "")
+            rows = "".join(
+                f"<tr><td>{_e(x.get('application_number'))}</td>"
+                f"<td>{_e(x.get('channel'))}</td>"
+                f"<td>{_e(x.get('submission_date'))}</td>"
+                f"<td>{_money(x.get('fee_amount'))}</td>"
+                f"<td>{_e(x.get('payment_mode') or 'not recorded')}</td></tr>"
+                for x in g["latest"])
+            parts.append(
+                f"<div class='table-intro'><strong>Newest {label} files with a fee recorded</strong></div>"
+                "<table class='data-table'><thead><tr><th>Application No.</th><th>Channel</th>"
+                "<th>Submitted</th><th>Fee</th><th>Payment mode</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table>")
+        return "".join(parts)
+
     # ── Fee collection summary (aggregate over the officer's applications) ──
     if "fee_summary" in structured_data and isinstance(structured_data["fee_summary"], dict):
         fs = structured_data["fee_summary"]
@@ -1671,8 +1794,6 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
             f"<tr>"
             f"<td><span style='background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: bold;'>{_e(sc.get('service_code'))}</span></td>"
             f"<td><strong>{_e(sc.get('type'))}</strong><br><small style='color: #6b7280;'>{_e(sc.get('tamil_name'))}</small></td>"
-            f"<td>{_e(sc.get('govt_fee'))}</td>"
-            f"<td>{_e(sc.get('csc_fee'))}</td>"
             f"<td>{_e(sc.get('sla_days'))}</td>"
             f"<td>{_e(sc.get('workflow'))}</td>"
             f"</tr>"
@@ -1682,10 +1803,12 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
             f"<div class='table-intro'><strong>Tamil Nadu Land Administration — Service Codes Guide:</strong></div>"
             f"<table class='data-table'>"
             f"<thead><tr>"
-            f"<th>Service Code</th><th>Application Type</th><th>Govt Fee</th><th>CSC Fee</th><th>SLA</th><th>Survey & Processing Workflow</th>"
+            f"<th>Service Code</th><th>Application Type</th><th>SLA</th><th>Survey & Processing Workflow</th>"
             f"</tr></thead>"
             f"<tbody>{rows}</tbody>"
             f"</table>"
+            f"<div class='table-intro'><small>Fees are not listed here: they are "
+            f"taken from the register and can be revised. Ask \"what is the fee for ISD\".</small></div>"
         )
 
     # ── Applications (regular + merge) ──────────────────────────────
@@ -1720,6 +1843,9 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
                     _ord = _ordinal_suffix(_rl_n)
                     _rlimit_note = (f" — {_ord} of {_rl_total}" if not is_ta
                                     else f" — {_rl_total} இல் {_rl_n}-வது")
+            elif _rl_end == "rows":
+                count = len(applications)
+                _rlimit_note = f" — {_rlimit.get('label', 'selected rows')} of {_rl_total}"
             else:
                 count = _rl_total
                 if _rl_end == "tail":
@@ -1843,6 +1969,11 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
                 "priority": ("priority", "முன்னுரிமை"),
                 "status": ("status", "நிலை"),
                 "application_type": ("type", "வகை"),
+                "ward_number": ("ward", "வார்டு"),
+                "block_number": ("block", "பிளாக்"),
+                "survey_no": ("survey number", "சர்வே எண்"),
+                "fee_amount": ("fee", "கட்டணம்"),
+                "applicant_name": ("applicant name", "விண்ணப்பதாரர் பெயர்"),
             }.get(_sort_by or "submission_date", ("submission date", "சமர்ப்பித்த தேதி"))
             _desc = str(_sort_dir).lower() == "desc"
             if is_ta:
@@ -2444,6 +2575,22 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
                 else "No field visits scheduled.")
             return f"<div class='table-intro'><strong>{query_type}</strong>{date_info}: {_none_msg}</div>"
         
+        # "along with district / ward / taluk / town" -- geography columns for the visit table
+        _fvq = (query or "").lower()
+        _fv_add = bool(re.search(r"\b(along|with|add|adding|also|include|including|plus)\b", _fvq))
+        _geo_cols = [(k, lbl) for k, lbl in (("district", t["district"]), ("taluk", t["taluk"]),
+                                             ("town", t["town"]), ("ward_number", t["ward"]))
+                     if _fv_add and re.search(r"\b" + k.split("_")[0] + r"s?\b", _fvq)]
+        extra_th += "".join(f"<th>{lbl}</th>" for _k, lbl in _geo_cols)
+        # "no type" / "without status" / "hide block": a default column can be taken away
+        _drop_words = {"type": "type", "status": "status", "block": "block", "survey": "survey",
+                       "subdivision": "subdiv", "subdivisions": "subdiv", "sub-division": "subdiv",
+                       "sub-divisions": "subdiv", "date": "sched", "scheduled": "sched"}
+        _fv_drop = {_drop_words[w.replace(" ", "-") if "sub" in w else w] for w in re.findall(
+            r"\b(?:no|without|not|hide|exclude|remove|drop|skip)\s+(?:the\s+)?(?:along\s+)?"
+            r"(type|status|block|survey|sub[\s-]?divisions?|scheduled|date)\b", _fvq)
+            if (w.replace(" ", "-") if "sub" in w else w) in _drop_words}
+        _fv_keep = [k for k in ("survey", "subdiv", "block", "type", "status", "sched") if k not in _fv_drop]
         rows = ""
         for fv in field_visits:
             extra_td = ""
@@ -2453,27 +2600,28 @@ def build_html_response(structured_data: Dict[str, Any], language: str = "en", q
                 extra_td += f"<td>{_e(fv.get('applicant_mobile') or 'N/A')}</td>"
             if req_address:
                 extra_td += f"<td>{_e(fv.get('applicant_address') or 'N/A')}</td>"
+            for _k, _lbl in _geo_cols:
+                extra_td += f"<td>{_e(fv.get(_k) or 'N/A')}</td>"
 
             subdiv_val = fv.get('subdivisions') or fv.get('sub_division_no') or '-'
-            rows += (
-                f"<tr>"
-                f"<td>{_e(fv.get('application_number'))}</td>"
-                f"{extra_td}"
-                f"<td>{_e(fv.get('raw_survey_no') or fv.get('survey_no') or 'N/A')}</td>"
-                f"<td>{_e(subdiv_val)}</td>"
-                f"<td>{_e(fv.get('block_number'))}</td>"
-                f"<td>{_e(fv.get('application_type'))}</td>"
-                f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>"
-                f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>"
-                f"</tr>"
-            )
-        
+            cells = {
+                "survey": f"<td>{_e(fv.get('raw_survey_no') or fv.get('survey_no') or 'N/A')}</td>",
+                "subdiv": f"<td>{_e(subdiv_val)}</td>",
+                "block": f"<td>{_e(fv.get('block_number'))}</td>",
+                "type": f"<td>{_e(fv.get('application_type'))}</td>",
+                "status": f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>",
+                "sched": f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>",
+            }
+            rows += (f"<tr><td>{_e(fv.get('application_number'))}</td>{extra_td}"
+                     + "".join(cells[k] for k in _fv_keep) + "</tr>")
+
+        heads = {"survey": t['survey_no'], "subdiv": t['subdivisions'], "block": t['block'],
+                 "type": t['type'], "status": t['status'], "sched": t['scheduled_date']}
         return (
             f"<div class='table-intro'><strong>{query_type}</strong>{date_info}: {count_info}</div>"
             f"<table class='data-table'>"
             f"<thead><tr>"
-            f"<th>{t['application_no']}</th>{extra_th}<th>{t['survey_no']}</th><th>{t['subdivisions']}</th><th>{t['block']}</th>"
-            f"<th>{t['type']}</th><th>{t['status']}</th><th>{t['scheduled_date']}</th>"
+            f"<th>{t['application_no']}</th>{extra_th}" + "".join(f"<th>{heads[k]}</th>" for k in _fv_keep) +
             f"</tr></thead>"
             f"<tbody>{rows}</tbody>"
             f"</table>"
@@ -2790,9 +2938,9 @@ _SUPERLATIVE_MIN_WORDS = ("shortest", "fastest", "quickest", "least",
 _COMPARE_SUPERLATIVE_DOMAIN = (
     "application", "applications", "app", "apps", "file", "files",
     "approve", "approved", "approval", "approving",
-    "reject", "rejected", "rejection", "rejecting",
+    "reject", "rejected", "rejection", "rejecting", "cancel", "cancelled", "canceling",
     "turnaround", "processing", "decide", "decided", "decision",
-    "clear", "cleared", "close", "closed", "isd", "nisd", "merge",
+    "clear", "cleared", "close", "closed",
     "விண்ணப்ப", "கோப்பு",
 )
 
@@ -2802,9 +2950,9 @@ _COMPARE_TYPES = (("ISD", ("isd", "0154")), ("NISD", ("nisd", "0153")),
                   ("MERGE", ("merge", "merges", "merged", "0155")))
 _COMPARE_STATUSES = (("pending", ("pending",)),
                      ("approved", ("approved", "approve", "completed", "cleared")),
-                     ("rejected", ("rejected", "reject", "refused")),
+                     ("rejected", ("rejected", "reject", "refused", "cancelled", "cancel")),
                      ("in_progress", ("progress",)))
-_COMPARE_CHANNELS = (("CSC", ("csc", "esevai", "sevai")),
+_COMPARE_CHANNELS = (("CSC", ("csc",)),
                      ("sub_registrar", ("sro", "igrs", "registrar", "subregistrar")),
                      ("citizen", ("citizen", "portal")))
 _COMPARE_STATUS_TA = (("pending", ("நிலுவை",)),
@@ -2815,7 +2963,7 @@ _COMPARE_STATUS_TA = (("pending", ("நிலுவை",)),
 # Words that carry their own meaning and must never be absorbed as a typo of a
 # comparison keyword. "last" is one edit from "least": left unguarded it made
 # "what about last month" a superlative and "the least time" an age question.
-_NEVER_TYPO = frozenset({"last", "late", "list", "most", "post"})
+_NEVER_TYPO = frozenset({"last", "late", "list", "most", "post", "are"})
 
 
 def _tok_index(tokens: list, vocabulary, max_edits: Optional[int] = None) -> Optional[int]:
@@ -3010,8 +3158,16 @@ def parse_comparison_query(message: str) -> Optional[dict]:
     # just above `extract_month_scopes`). A real compare cue ("compare",
     # "vs", "difference", ...) still wins even inside a range-shaped
     # sentence; only the bare aspect=="count" trigger is guarded.
-    if has_cue or (aspect == "count" and not _RANGE_CONNECTOR_RE.search(raw)):
-        periods = _compare_periods(raw)
+    # a bare "how many ... in jan and feb 2025" is the two months TOGETHER; comparing them needs a real cue
+    if has_cue:
+        # An application number's own year must not become a period -- a
+        # follow-up that had "2026/0153/28/001720" appended to it (the
+        # resolved reference from a prior "last application" answer) read
+        # its embedded "2026" as a second period to compare against "this
+        # month", the same trap the numbers-stripped `msg` above exists to
+        # avoid for the type/status tables. Strip the number here too.
+        periods = _compare_periods(
+            re.sub(r"\d{4}/\d{3,4}/\d{1,3}/\d+", " ", raw))
         if periods:
             return {"kind": "period", "aspect": "count",
                     "periods": [{"label": p[0], "start": p[1].isoformat(),
@@ -3082,9 +3238,18 @@ def parse_comparison_query(message: str) -> Optional[dict]:
     _month_word = (_tok_index(tokens, ("month", "months", "matham", "madham")) is not None
                   or "மாதம்" in msg)
     _ta_quantity = any(n in msg for n in ("அதிக", "குறைவ", "மிக"))
+    # "which application/file was approved this month" is a single-application
+    # recency question with "this month" as a date filter, not a request to
+    # compare months. `has_cue` fires from the generic "which ... was" shape
+    # (_COMPARE_WHICH_RE), which is right for "which month had the most" but
+    # wrongly claims any "which application ..." sentence that happens to
+    # mention "month" too. Only let it count here when "which" actually asks
+    # about the month, not about an application/file.
+    _which_asks_month = bool(re.search(
+        r"\bwh?[iy]ch\b(?:\s+\w+){0,2}\s+month\b", msg))
     if not numbers and _month_word and (
             _tok_index(tokens, _SUPERLATIVE_WORDS) is not None
-            or _ta_quantity or has_cue):
+            or _ta_quantity or (has_cue and _which_asks_month)):
         return {"kind": "month", "aspect": "count",
                 "extreme": ("min" if (_tok_index(tokens, _SUPERLATIVE_MIN_WORDS) is not None
                                        or "குறைவ" in msg)
@@ -3112,7 +3277,7 @@ def parse_comparison_query(message: str) -> Optional[dict]:
         if _tok_index(tokens, ("approve", "approved", "approval", "cleared",
                                "clearance")) is not None:
             status = "approved"
-        elif _tok_index(tokens, ("reject", "rejected", "rejection")) is not None:
+        elif _tok_index(tokens, ("reject", "rejected", "rejection", "cancel", "cancelled", "canceling")) is not None:
             status = "rejected"
         _min = (_tok_index(tokens, _SUPERLATIVE_MIN_WORDS) is not None
                 or "குறைவ" in msg)
@@ -3265,7 +3430,7 @@ _LAST_APP_NOUN = r"(?:applications?|appls?|apps?|file|case|vinnappam)"
 # reference to one application, and the date-scoped intents own them.
 _LAST_APP_PERIOD = re.compile(
     r"\b(?:last|past|previous|prev|recent)\s+"
-    r"(?:\d+\s+)?(?:day|days|week|weeks|month|months|year|years|quarter|fortnight|"
+    r"(?:\d+\s+)?(?:day|days|week|weeks|month|months|year|years|yr|yrs|quarter|fortnight|"
     r"few|couple|several)\b",
     re.IGNORECASE,
 )
@@ -3299,7 +3464,7 @@ _LAST_APP_TA_RECENCY = ("கடைசி", "கடைசியாக", "மு�
 _LAST_APP_TA_NOUN = ("விண்ணப்ப",)
 _LAST_APP_STATUS_WORDS = (
     ("approved", ("approved", "approve", "accepted", "accept", "cleared", "sanctioned")),
-    ("rejected", ("rejected", "reject", "denied", "declined", "refused")),
+    ("rejected", ("rejected", "reject", "denied", "declined", "refused", "cancelled", "cancel", "canceling")),
     ("pending", ("pending",)),
     ("in_progress", ("in progress", "in-progress", "ongoing")),
 )
@@ -3344,7 +3509,7 @@ _LAST_APP_FIELD_SPECS = (
      r"\b(?:approval|rejection|closure|decision|disposal)\s+date\b"
      r"|\b(?:approved|rejected|closed|disposed|signed)\s+on\b"
      r"|அங்கீகரி|நிராகரி"),
-    ("channel", r"\bchannel\b|\bcsc\b|\be-?sevai\b|\bsub[\s-]?registrar\b|\bwhere\s+was\s+it\s+(?:filed|submitted)\b"),
+    ("channel", r"\bchannel\b|\bcsc\b|\bsub[\s-]?registrar\b|\bwhere\s+was\s+it\s+(?:filed|submitted)\b"),
 )
 # The filing named explicitly -- these keep "when ... submitted" on the
 # submission date even when a status word also appears in the question.
@@ -3546,18 +3711,88 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     #
     # A hyphen counts as a bullet only when a space follows it ("a - show my
     # files"). Without that rule this stripped the first letter off every
-    # message beginning with a hyphenated word: "e-sevai applications" became
-    # "sevai applications", which no longer names a channel, so a question with
-    # a deterministic answer (31 CSC applications) fell through to the LLM --
-    # which answered "There are 9 e-sevai applications" by relabelling the
-    # officer's ISD list. "e-Sevai" is the department's own name for the CSC
-    # counters and appears throughout backend/documents.
+    # message beginning with a hyphenated word.
     message = re.sub(r'^\s*\d+[\.\)]\s*', '', message)
     message = re.sub(r'^\s*[a-zA-Z][\.\)]\s*', '', message)
     message = re.sub(r'^\s*(?:\d+|[a-zA-Z])\s*-\s+', '', message)
 
     msg = normalize_text(message)
+
+    # "nisd table" / "display isd table" -- the type's applications, however the officer
+    # names the view.
+    _tt = re.fullmatch(r"\s*(?:display|show|give|list|get)?\s*(?:me\s+)?(?:the\s+|all\s+)?(nisd|isd|merge)\s+(?:table|tabel|list|data|records?)\s*[?.!]*\s*", msg)
+    if _tt:
+        return {"nisd": "nisd_applications", "isd": "isd_applications", "merge": "merge_applications"}[_tt.group(1)]
+
+    _tc = re.search(r"\b(nisd|isd|merge)\b.*\b(?:evlo|evvalavu|ethana|ethanai|ethane)\b|\b(?:evlo|evvalavu|ethana|ethanai)\b.*\b(nisd|isd|merge)\b", msg)
+    if _tc and not re.search(r"\bfee\b|\bsla\b|cost|price", msg):
+        return {"nisd": "nisd_applications", "isd": "isd_applications", "merge": "merge_applications"}[(_tc.group(1) or _tc.group(2))]
+
+    if re.search(r"\b(?:what\s+(?:are|is)\s+my\s+priorit(?:y|ies)|my\s+priorit(?:y|ies)|which\s+(?:are|is)\s+my\s+(?:top|urgent)|top\s+priorit(?:y|ies))\b", msg):
+        return "highest_priority_applications"
+    if re.search(r"\bhow\s+(?:am\s+i|are\s+we)\s+doing\b|\bhow\s+is\s+my\s+(?:performance|progress|work)\b|\bmy\s+performance\b", msg):
+        return "completion_rate"
+
+    # Bare reference-data questions: answered from the register / master tables,
+    # never from a model's memory, and never by asking for an application number.
+    if re.fullmatch(r"\s*(?:what\s+is|what's|tell\s+me)\s+the\s+(?:sla|processing\s+time|time\s+limit|turnaround)\s*[?.!]*\s*", msg):
+        return "service_code_guide"
+
+    # "show" itself has no typo tolerance anywhere in this function -- every
+    # one of the ~60 intents below checks for it (or "list"/"give"/
+    # "display") as a plain substring, so "shhoow applications" (2 edits --
+    # an extra 'h' and an extra 'o'), "shwo applications" (a transposition)
+    # and "sho applications" (a dropped letter) all matched NONE of them and
+    # fell through to the slow LLM, which then narrated the two rows as
+    # prose instead of returning the same deterministic table "show
+    # applications" gives. Corrected once, here, before any of those checks
+    # run, rather than teaching typo tolerance to each of them separately.
+    # max_edits=2 (wider than these words' own 1-edit standard budget) is
+    # deliberate: they are the single most-typed word in this whole
+    # pipeline. But at that budget several real, plausible words land inside
+    # it too -- "is my application slow" corrected to "...show", hijacking
+    # an unrelated question into a listing; "what is my LAST application"
+    # risked the same via "list". `_VERB_TYPO_NEVER` (measured against a
+    # sweep of common English words, the same way `_NEVER_TYPO` a few
+    # hundred lines down was built) is what a real word gets checked
+    # against before this rewrites it -- the same "would rather miss a typo
+    # than invent one" rule the rest of this module follows.
+    # "many" rides the same mechanism at its OWN, narrower budget (1 edit,
+    # not 2): at 2 edits "main"/"mine"/"mean" -- real words that show up in
+    # ordinary sentences -- land inside it too. Even at 1 edit "man" still
+    # does, hence its own exclusion; the value of catching "how mny
+    # applications" outweighs that one unlikely collision in this domain.
+    _VERB_TYPO_TARGETS = (("show", 2), ("list", 2), ("give", 2), ("display", 2),
+                          ("many", 1))
+    _VERB_TYPO_NEVER = frozenset({
+        "last", "lost", "slow", "snow", "stow", "line", "live", "gate", "gave",
+        "man",
+    })
+    msg = " ".join(
+        next((v for v, budget in _VERB_TYPO_TARGETS
+              if w != v and w not in _VERB_TYPO_NEVER
+              and is_token_typo_match(w, v, max_edits=budget)), w)
+        for w in msg.split()
+    )
     words = extract_tokens(msg)
+
+    # "merge" is 5 letters, long enough for the project's standard 1-edit
+    # typo budget (`_max_edits_for`) -- unlike the 3-letter "isd", which
+    # CLAUDE.md keeps typo-free on purpose so it can't absorb "nisd". A plain
+    # `\bmerge?\b` regex caught a dropped trailing letter ("merg") but not a
+    # transposition like "mrge", so "shw mrge applicatons" fell all the way
+    # through to the slow LLM fallback instead of the deterministic listing.
+    # The literal service code counts too -- symmetric with `_has_isd_w` /
+    # `_has_nisd_w` a few hundred lines down, which both match `|0154` /
+    # `|0153` alongside the word. Without it, "show 0155 applications" (typed
+    # the same way "show 0154 applications" correctly works) fell through to
+    # the generic pending-queue listing, silently discarding the "0155".
+    # "erge" is a dropped LEADING letter, which the typo matcher's own
+    # first-character guard refuses to cross on its own.
+    _has_merge_token = any(
+        is_token_typo_match(w, "merge") or is_qwerty_first_letter_typo(w, "merge")
+        for w in words
+    ) or bool(re.search(r'\b0155\b', msg)) or "erge" in words
 
     def fuzzy_match(keyword: str, threshold: float = 0.75) -> bool:
         """
@@ -3707,7 +3942,17 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # "good morning" is untouched in the middle.
     _greeting_filler = {"சார்", "சார", "sir", "bro", "anna", "please", "pls",
                          "plz", "kindly", "தயவு", "செய்து", "தயவுசெய்து",
-                         "கொஞ்சம்"}
+                         "கொஞ்சம்",
+                         # Tanglish casual address particles -- the same role
+                         # "bro" already covers, just in Tamil. Without these,
+                         "da", "pa", "di", "dee", "machi", "macha", "அண்ணா",
+                         # "thanks da" left a bare "da" that was in neither
+                         # the thanks/farewell/small-talk sets nor here,
+                         # failed the "every word must be a greeting word"
+                         # test, and fell to the LLM -- which then answered
+                         # with the officer's own jurisdiction summary, a
+                         # question nobody asked.
+                         "டா", "பா", "டி"}
     _core_words = [w for w in clean_msg.split()
                    if w.lower().strip(",.!") not in _greeting_filler]
     _core_msg = " ".join(_core_words)
@@ -3744,8 +3989,19 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _is_greet_phrase = bool(_greet_tokens) and len(_greet_tokens) <= 6 and all(
         t in _greet_vocab for t in _greet_tokens) and any(
         t in _greet_words or t in _bye_words for t in _greet_tokens)
+    # A greeting PREFIX only makes the message a greeting when nothing but greeting
+    # words follows it: "வணக்கம் எனது நிலுவை விண்ணப்பங்கள்" is the request, with
+    # a greeting in front.
+    def _startswith_greeting_only() -> bool:
+        for _g in ("வணக்கம்", "காலை வணக்கம்", "மாலை வணக்கம்", "good morning", "good evening", "good afternoon"):
+            if clean_msg.startswith(_g):
+                _rest = re.findall(r"[0-9a-z஀-௿']+", clean_msg[len(_g):].lower())
+                if all(t in _greet_vocab for t in _rest):
+                    return True
+        return False
+
     if (clean_msg in _greetings_exact or _core_msg in _greetings_exact or _is_greet_phrase or
-        any(clean_msg.startswith(g) for g in ["வணக்கம்", "காலை வணக்கம்", "மாலை வணக்கம்", "good morning", "good evening", "good afternoon"])) and len(words) <= 6:
+        _startswith_greeting_only()) and len(words) <= 6:
         if not any(w in msg for w in ["app-", "application", "survey", "145", "146", "147", "148", "status", "stage", "விண்ணப்பம்", "கணக்கெண்"]):
             return "greeting"
 
@@ -3764,6 +4020,13 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # Tanglish equivalents), exactly the two type words, no counting word, and
     # no application number -- so "difference between <appA> and <appB>" and
     # "compare ISD and NISD" are both untouched.
+    # "how do I file an ISD application" asks for the procedure, which the
+    # documents hold; "isd application" alone read as the officer's ISD listing.
+    if (re.search(r"^\s*(?:how|where)\s+(?:do|does|can|should|to)\s+(?:i|we|one|you|a\s+citizen)?\s*"
+                  r"(?:file|apply|submit|raise|register|create|make|lodge)\b", msg)
+            and not re.search(r"\d{4}/\d{3,4}/", msg)
+            and not re.search(r"\b(?:show|list|my|count|how\s+many)\b", msg)):
+        return "general_query"
     _defn_types = [w for w in ("nisd", "isd", "merge") if re.search(
         rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
     if (len(_defn_types) >= 2
@@ -3771,9 +4034,29 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                           r"|vithiyasam|vidhiyasam|வித்தியாச|வேறுபா", msg)
             and not re.search(r"\b(how many|count|total|my|show|list|which of|"
                               r"more|fewer|longer|faster|slower)\b", msg)
+            and not re.search(r"\b(fee|fees|charge|charges|cost|price)\b|கட்டண", msg)
             and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
             and not re.search(r"விண்ணப்ப|எனது|எனக்கு|எத்தனை", msg)):
         return "service_code_guide"
+
+    # "does ISD need a field visit?" / "ISD ku field visit venuma?" asks whether
+    # the service REQUIRES a visit -- a fact about the service code, answered by
+    # the lookup. It used to be read as the officer's own field-visit list. One
+    # type word or code, a need/require cue, and none of the words that make it
+    # a question about the officer's own files or schedule.
+    _fv_types = [w for w in ("nisd", "isd", "merge") if re.search(
+        rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
+    _fv_codes = re.findall(r"(?<!\d)015[345](?!\d)", msg)
+    if (len(_fv_types) + len(set(_fv_codes)) == 1
+            and re.search(r"field\s*(visit|inspection)|கள\s*ஆய்வு|களஆய்வு", msg)
+            and re.search(r"\b(need|needs|require|required|requires|mandatory|"
+                          r"compulsory|necessary|must|venuma|venduma|venum|"
+                          r"thevaya|thevaiya|thevai)\b|தேவையா|தேவை", msg)
+            and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
+            and not re.search(r"\b(my|show|list|how many|count|pending|scheduled|"
+                              r"schedule|overdue|when|which|applications?|apps?|"
+                              r"today|tomorrow|week)\b|விண்ணப்ப|எனது|எனக்கு", msg)):
+        return "service_code_lookup"
 
     if parse_comparison_query(message):
         return "compare_applications"
@@ -3794,7 +4077,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         r"(^|\b)(what\s+(is|are|does)|what's|whats|define|definition\s+of|"
         r"meaning\s+of|full\s+form\s+of|expand|stands?\s+for|explain)\b", msg)
         or re.search(r"(என்றால்\s*என்ன|endral\s*enna|nu\s*sonna\s*enna|"
-                     r"என்பது\s*என்ன|vidhiyasam|vithiyasam)", msg))
+                     r"என்பது\s*என்ன|vidhiyasam|vithiyasam|"
+                     r"\b(na|naa|nu|nnu|nna)\s+(enna|ennanu)\b|"
+                     r"(ன்னா|னா)\s*என்ன|என்னன்னு)", msg))
     _type_words = [w for w in ("nisd", "isd", "merge") if re.search(
         rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
     # "nisd" contains no "isd" under the boundary check above, so the two are
@@ -3912,6 +4197,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # ask these about the whole town -- the answer carries no application,
     # applicant, survey or owner data.
     if _WARD_DIRECTORY_RE.search(msg):
+        # "how many wards do I have" / "list my wards" ask for the officer's own posting.
+        if re.search(r"\bmy\b|\bdo\s+i\b|\bhave\s+i\b|\bi\s+(?:have|hold|cover|handle)\b", msg):
+            return "jurisdiction_summary"
         return "officer_directory"
 
     # ── "which block has the most applications?" ────────────────────────────
@@ -3955,30 +4243,67 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # left alone -- it is a field lookup and application_status answers it.
     _fee_word_strict = any(w in msg for w in [
         # "charge" only in its money sense -- a bare "charge" is also "who is
-        # in charge of ward 102", which is not a fee question. Specific to SIS
-        # fee vocabulary -- these need no extra domain word to fire.
-        "fee", "fees", "service charge", "service charges", "csc charge",
+        # in charge of ward 102", which is not a fee question. The multi-word
+        # phrases here are specific enough to SIS to fire with no extra
+        # domain word; the bare words below need a question shape too (see
+        # `_fee_bare_word` just under this).
+        "service charge", "service charges", "csc charge",
         "csc charges", "govt charge", "government charge", "processing charge",
         "challan",
         # Tamil / Tanglish
         "கட்டணம்", "கட்டண", "கட்டணங்கள்", "சேவை கட்டணம்",
         "kattanam", "kattanangal",
     ]) or "₹" in message
+    # A bare "fee"/"fees" is common enough in ordinary work sentences ("the
+    # officer submitted the fee receipt yesterday") that treating it as
+    # unambiguous SIS vocabulary dumped the whole fee-schedule table for a
+    # sentence that asked no question at all. It still needs no OTHER domain
+    # word (that is what makes it "bare"), but it does need to actually read
+    # as a question or a request -- the same short/question-mark/interrogative
+    # shape test used elsewhere in this file for exactly this failure mode.
+    _fee_bare_words = ("fee" in msg or "fees" in msg)
+    if _fee_bare_words:
+        # A greeting / address in front ("hello what is the fee for ISD") is not
+        # part of the question's shape.
+        _fee_lead = {"hi", "hii", "hello", "hey", "vanakkam", "sir", "anna", "bro", "please",
+                     "pls", "good", "morning", "afternoon", "evening", "thanks", "thank", "you"}
+        _fee_msg_words = msg.split()
+        while _fee_msg_words and _fee_msg_words[0].strip(".,!") in _fee_lead:
+            _fee_msg_words = _fee_msg_words[1:]
+        _fee_word_strict = _fee_word_strict or (
+            len(_fee_msg_words) <= 6 or "?" in message
+            or (_fee_msg_words and _fee_msg_words[0].strip(".,!") in (
+                "what", "how", "is", "was", "are", "does", "do", "did",
+                "show", "list", "give", "tell", "can", "could")))
     # Generic money words ("cost", "price", "payment", "money", "rupees",
     # "revenue") are also ordinary trivia ("flight ticket price to delhi",
     # "how do I lose weight" has none of these, but "what is the cost of a
     # flight" does) -- they need a domain word alongside them before this is
     # read as a question about the SIS fee schedule.
-    _fee_word_generic = any(w in msg for w in [
-        "cost", "costs", "price", "payment", "rupees", "money", "revenue",
-        "ரூபாய்", "பணம்", "panam", "rupaai",
-    ]) and any(w in msg for w in [
-        "isd", "nisd", "merge", "application", "applications", "csc",
+    _fee_money_words = [
+        "cost", "costs", "price", "prices", "payment", "rupees", "money", "revenue",
+        "charge", "charges", "tariff",
+        "ரூபாய்", "பணம்", "panam", "rupaai", "விலை", "vilai", "vila",
+    ]
+    _fee_msg_tokens = re.findall(r"[a-z0-9\u0b80-\u0bff]+", msg)
+    # "what is the price" / "isd cost" -- short money questions in this assistant
+    # are about the fee schedule; left to the LLM they were answered from memory
+    # ("The fee for service code 0154 is Rs. 400.00").
+    _fee_short_money = (len(_fee_msg_tokens) <= 6 and any(w in _fee_msg_tokens for w in _fee_money_words)
+                        and not any(w in msg for w in ("flight", "ticket", "gold", "petrol", "diesel", "share",
+                                                       "stock", "movie", "bitcoin", "house", "land price",
+                                                       "rent", "salary", "phone", "laptop", "car ")))
+    _fee_word_generic = (any(w in msg for w in _fee_money_words) and any(w in msg for w in [
+        "application", "applications", "csc",
         "service", "govt", "government", "registration", "mutation",
         "survey", "patta", "sub registrar", "sub-registrar", "tahsildar",
         "draughtsman", "ward", "block", "officer", "jurisdiction",
+        "isd", "nisd", "merge", "0153", "0154", "0155", "subdivision", "sub-division",
         "விண்ணப்ப", "சேவை", "வார்டு",
-    ])
+    ])) or _fee_short_money or (
+        bool(re.search(r"\b(?:isd|nisd|merge|015[345])\b", msg))
+        and bool(re.search(r"\b(?:rate|rates|amount|how\s+much|pay|paid|to\s+pay)\b", msg))
+        and not re.search(r"\bhow\s+many\b", msg))
     _fee_word = _fee_word_strict or _fee_word_generic
     if _fee_word and not _app_ref_early and not parse_last_application_query(message) and not any(
         p_ in msg for p_ in ["this application", "that application", "the application",
@@ -3997,7 +4322,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         ])
         if _fee_agg:
             return "fee_summary"
-        return "service_code_guide"
+        return "fee_lookup"
 
     # "now show details of both the applications" points at the list the last
     # answer produced. Without this it matched the listing keywords ("show",
@@ -4032,8 +4357,21 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # Plural "surveys" is a listing, not a lookup of one survey. Without this,
     # "surveys in ward 002" was read as survey number 002, and "show all
     # surveys" fell into survey_detail and answered "No records found".
-    if re.search(r'\bsurveys\b', msg) and not re.search(
-            r'\bsurvey\s*(?:no\.?|number)?\s*\d', msg):
+    #
+    # But a bare plural is also how a CONCEPTUAL question about surveys in
+    # general gets phrased -- "under what conditions can two surveys be
+    # merged" carries the word "surveys" and nothing else this rule checked
+    # for, so it dumped the officer's whole 61-row survey listing for a
+    # question that named no ward, no block and asked no listing verb at
+    # all. Excluded when the message reads as asking about a RULE rather
+    # than requesting a LIST -- the same distinction `service_code_guide`'s
+    # own gates draw elsewhere in this file.
+    if (re.search(r'\bsurveys\b', msg)
+            and not re.search(r'\bsurvey\s*(?:no\.?|number)?\s*\d', msg)
+            and not re.search(
+                r'\bcondition|\brule|\bcriteria|\beligib|\bcan\s+\w+\s+surveys?\b'
+                r'|\bhow\s+(?:do|does|can)\b|\bwhy\b',
+                msg)):
         if re.search(r'\bward\b', msg):
             return "ward_surveys"
         if re.search(r'\bblock\b', msg):
@@ -4117,10 +4455,22 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # deadline for 2026/...") and not a request for a definition.
     # Any digit at all also disqualifies it -- "what is the next sub-division
     # number for survey 1355", "what is service code 0154" name a record.
+    #
+    # A name that resolves to one of the 30 official service codes disqualifies
+    # it too, the same way a digit does: "what is natham settlement" / "what
+    # is TSLR extract with sketch" are exactly "what is 0188" / "what is 0156"
+    # spelled with the code's own name instead of its number, and every urban
+    # code has an official text in SIS_URBAN_SERVICES to answer from -- the
+    # same reasoning the (narrower, isd/nisd/merge-only) definition check above
+    # already applies. Without this, "natham" and "tslr" being in
+    # `_concept_terms` sent the question straight to the LLM before the
+    # service-code lookup a few hundred lines down ever got a chance to see it.
+    from backend.utils.helpers import find_service_codes as _early_svc_codes
     if (_defines and not _own_data and not _asks_for_rows
             and not _about_one_app and not app_scoped
             and any(t in msg for t in _concept_terms)
-            and not re.search(r'\d', msg)):
+            and not re.search(r'\d', msg)
+            and not _early_svc_codes(msg)):
         return "general_query"
 
     # workflow_guide.txt step 3: only the Tahsildar may approve a change to a
@@ -4128,10 +4478,22 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # that answer -- "can I postpone the field visit?" contains no word "date",
     # so it used to fall through and return a list of field visits instead of
     # telling the officer whose approval is needed.
+    # "resheduled" (a dropped 'c') matched none of these substrings, so a
+    # message asking about a field visit that "keeps getting resheduled"
+    # fell through this whole block and was caught by the later, much
+    # broader "escalat" substring check instead (it also said "escalate"),
+    # returning a table of applications with mostly blank fields for a
+    # question that wanted "ask the Tahsildar". Typo-tolerant on the longer,
+    # more typo-prone words; the short common ones (move/shift/change/...)
+    # stay exact, the same balance the rest of this module strikes.
     _wants_change = any(w in msg for w in [
-        "postpone", "prepone", "preponed", "reschedule", "re-schedule",
-        "move", "shift", "defer", "delay", "advance", "change", "modify", "alter",
-        "மாற்ற", "மாற்றம்", "தள்ளிவைக்க", "maatha", "date change panna"])
+        "move", "shift", "defer", "delay", "delayed", "delaying",
+        "advance", "change", "changing", "changed", "modify", "alter",
+        "மாற்ற", "மாற்றம்", "தள்ளிவைக்க", "maatha", "date change panna"]) or any(
+        is_token_typo_match(tok, w) for tok in extract_tokens(msg)
+        for w in ("postpone", "postponed", "postponing", "prepone", "preponed",
+                  "reschedule", "rescheduled", "rescheduling", "shifting", "shifted")) or any(
+        tok in ("shfit", "shfti", "sihft", "shiift", "shft") for tok in extract_tokens(msg))
     _about_visit = any(w in msg for w in [
         "field visit", "fieldvisit", "field-visit", "inspection", "visit",
         "கள ஆய்வு", "களஆய்வு", "ஆய்வு", "வருகை"])
@@ -4235,7 +4597,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         "common rejection", "rejection reasons", "reasons for rejection",
         "resubmission", "resubmissions are allowed", "how many resubmission",
         "can two applications", "allowed per survey", "one active application",
-        "what is tslr", "what does an sis", "what do sis officers",
+        "what does an sis", "what do sis officers",
     ]
     # Authority/permission questions phrased without a "who ...": "is this
     # entirely the SIS's own decision?", "can the Survey Department do X on
@@ -4255,6 +4617,13 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             r'\d{4}/\d{3,4}/\d{1,3}/\d+', msg):
         return "general_query"
 
+    if (re.search(r"\b(?:isd|nisd|merge)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
+            and not extract_application_number(message) and not re.search(r"\b(?:been|pending|my)\b", msg)):
+        return "service_code_lookup"
+    if re.fullmatch(r"\s*(?:what\s+is|what's|tell\s+me)\s+the\s+(?:sla|processing\s+time|time\s+limit|turnaround)\s*[?.!]*\s*", msg):
+        return "service_code_guide"
+    if re.fullmatch(r"\s*(?:what\s+is\s+|what's\s+|tell\s+me\s+)?(?:the\s+|my\s+)?(?:district|taluk)\s+codes?\s*[?.!]*\s*", msg):
+        return "district_code"
     # "How long does an ISD application take?" is an SLA question, answered by
     # the timelines in workflow_guide.txt, not by listing ISD applications.
     if any(w in msg for w in ["how long", "timeline", "time limit", "sla",
@@ -4288,12 +4657,39 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # ── Escalation check BEFORE field-visit block ─────────────────────────────
     # Must come first so "காலக்கெடு வரம்பு விண்ணப்பங்கள்" → escalation_check
     # and NOT get consumed by the FV block's deadline inner check.
-    if any(w in msg for w in ["escalat", "threshold", "approaching deadline",
-                               "deadline this week", "approaching threshold",
-                               "due this week", "close to deadline", "near deadline",
-                               "எஸ்கலேஷன்", "காலக்கெடு நெருங்கு", "காலக்கெடு அணுகு",
-                               "காலக்கெடு வரம்பு", "மேல்முறையீடு வரம்பு",
-                               "நெருங்கும் காலக்கெடு"]):
+    #
+    # Bare "escalat" (covering escalated/escalation/escalate) is deliberately
+    # NOT enough on its own when the message also looks like an ordinary
+    # status listing ("show"/"list"/"how many" + "applications"). "how
+    # escalatd applications" -- a typo of "escalated", a STATUS -- used to
+    # claim this branch and answer with the 3 applications approaching their
+    # deadline: a real, grounded query result, just the wrong question.
+    # "escalated" applications and applications "approaching the escalation
+    # threshold" are different things; only the second is this feature.
+    # `_explicit_status_request` already reads "escalated" as a status typo-
+    # tolerantly, so falling through here sends it to the ordinary listing,
+    # which correctly answers 0 -- the seeded register has no escalated
+    # applications at all (see CLAUDE.md).
+    _escalation_deadline_words = (
+        "threshold", "approaching deadline", "deadline this week",
+        "approaching threshold", "due this week", "close to deadline",
+        "near deadline", "காலக்கெடு நெருங்கு", "காலக்கெடு அணுகு",
+        "காலக்கெடு வரம்பு", "மேல்முறையீடு வரம்பு", "நெருங்கும் காலக்கெடு")
+    # "எஸ்கலேஷன்" (the Tamil transliteration of "escalation") joins the bare
+    # check below rather than the always-trigger list above -- it has
+    # exactly the same "status vs. threshold-feature" ambiguity as English
+    # bare "escalat", and unconditionally routing it to escalation_check
+    # made "எஸ்கலேஷன் விண்ணப்பங்களைக் காட்டு" ("show escalation
+    # applications") show the deadline table instead of answering the
+    # status question the same way its English equivalent now does.
+    _bare_escalat = "escalat" in msg or "எஸ்கலேஷன்" in msg
+    # "applications" itself is the real signal, not a specific verb --
+    # "how escalatd applications" (a grammatically broken typo, no "many")
+    # still names applications, and any message that does is a status
+    # question about them, not the standalone escalation-check feature.
+    _looks_like_status_listing = bool(re.search(r"\bapplic|விண்ணப்ப", msg))
+    if any(w in msg for w in _escalation_deadline_words) or (
+            _bare_escalat and not _looks_like_status_listing):
         return "escalation_check"
 
     # ── Context-aware type-filter follow-up detection (PRODUCTION) ───────────
@@ -4391,17 +4787,38 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # bare -- they carry no everyday-English meaning against an SIS backdrop
     # the way "visit" does -- but "visit" itself now needs the word "field" or
     # "site" next to it.
+    #
+    # Bare "field" alone is still ordinary English far more often than it is
+    # this domain's vocabulary -- "the field team is at the site today" and
+    # "he works in the field" both carry it with no field-VISIT question in
+    # sight, and neither names an application either, so the "not application"
+    # guard above let both through and dumped the officer's whole visit
+    # calendar for a sentence that asked nothing. A genuine bare-"field"
+    # question is short, a real question, or opens with an interrogative /
+    # imperative -- an ordinary declarative sentence is none of those, the
+    # same shape test `followup_context.classify` uses for its own field-cue
+    # words.
+    _fv_words = msg.split()
+    _looks_like_fv_question = (
+        len(_fv_words) <= 5 or "?" in message
+        or (_fv_words and _fv_words[0].strip(".,!") in (
+            "what", "when", "where", "how", "which", "who", "why", "is",
+            "was", "are", "does", "do", "did", "has", "have", "had", "can",
+            "could", "would", "should", "will", "show", "list", "give",
+            "tell", "any"))
+    )
     _has_fv_terms = any(w in msg for w in [
         "field visit", "field visits", "inspection", "inspections", "fv", "visit date",
         "site visit", "site visits",
         "கள ஆய்வு", "களஆய்வு", "வருகை", "கள பார்வை"
-    ]) or (("field" in msg or "inspection" in msg) and not any(w in msg for w in ["application", "applications", "survey number"]))
+    ]) or (("field" in msg or "inspection" in msg) and _looks_like_fv_question
+           and not any(w in msg for w in ["application", "applications", "survey number"]))
 
     has_field_visit_keywords = (_has_fv_terms or (
         any(w in msg for w in [
             "schedule", "calendar", "deadline", "15-working-day", "15 working day", "15-day",
             "திட்டமிட", "திட்டமிடப்பட", "திட்டமிடப்படாத", "காலக்கெடு", "கடந்து விட்டதா", "கடந்துவிட்டதா"
-        ]) and not any(w in msg for w in ["application", "applications", "isd", "nisd", "merge"])
+        ]) and not any(w in msg for w in ["application", "applications", "type"])
     )) and not _has_app_pattern
 
     # ── Context-aware override: per-application field-visit field query ──
@@ -4512,8 +4929,15 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         _is_negated_overdue = any(w in msg for w in [
             "not overdue", "non overdue", "non-overdue", "on time", "not late",
             "not delayed", "within sla", "தாமதமில்லாத", "தாமதம் இல்லாத", "காலதாமதமாகாத"
-        ])
-        
+        ]) or bool(re.search(
+            r"\b(?:except|excluding|other\s+than|without|skip(?:ping)?)\b[\w\s]{0,15}\boverdue\b"
+            r"|\boverdue\b[\w\s]{0,15}\b(?:excluded|not\s+included|left\s+out)\b"
+            # Tamil/Tanglish "except" (தவிர/தவிர்த்து, thavira/thavirthu), either side of the
+            # overdue word -- Tamil is matched as a substring, never \b (the virama trap).
+            r"|thavir(?:thu|a)?[\w\s]{0,15}overdue|overdue[\w\s]{0,15}thavir(?:thu|a)?"
+            r"|(?:தவிர்த்து|தவிர).{0,25}(?:தாமத|காலதாமத|ஓவர்)|(?:தாமத|காலதாமத|ஓவர்)\w*.{0,25}(?:தவிர்த்து|தவிர)",
+            msg))
+
         # --- Specific overdue field visit patterns (check FIRST) ---
         if not _is_negated_overdue and any(ph in msg for ph in [
             "show overdue field", "show overdue visit", "show overdue visits",
@@ -4522,7 +4946,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         ]):
             return "fv_overdue_inspections"
         
-        _is_overdue = any(w in msg for w in ["overdue", "late", "delayed", "காலதாமதமான"])
+        _is_overdue = any(w in msg for w in ["overdue", "delayed", "காலதாமதமான"]) or bool(re.search(r"\blate\b", msg))
         _is_field_visit = any(w in msg for w in ["field visit", "field visits", "visit", "visits", "inspection", 
                                                    "கள ஆய்வு", "கள்ஆய்வு", "ஆய்வு"])
         _is_list_action = any(w in msg for w in ["show", "list", "all", "display", "fetch", "get", "which", "how many", "count", "பட்டியல்", "காட்டு", "எத்தனை"])
@@ -4578,14 +5002,50 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         return "fv_change_date"
 
     # 3. Escalation — check BEFORE field-visit block so "காலக்கெடு வரம்பு" routes here
-    if any(w in msg for w in ["escalat", "threshold", "approaching deadline",
-                               "deadline this week", "approaching threshold",
-                               "due this week", "close to deadline", "near deadline",
-                               # Tamil: எஸ்கலேஷன், காலக்கெடு நெருங்ுகிறது
-                               "எஸ்கலேஷன்", "காலக்கெடு நெருங்கு", "காலக்கெடு அணுகு",
-                               "காலக்கெடு வரம்பு", "மேல்முறையீடு வரம்பு",
-                               "நெருங்கும் காலக்கெடு"]):
+    # Same narrowing as the earlier escalation check in this function: a bare
+    # "escalat" is not enough on its own when the message also looks like an
+    # ordinary status listing -- see that check's own comment for why.
+    _escalation_deadline_words_2 = (
+        "threshold", "approaching deadline", "deadline this week",
+        "approaching threshold", "due this week", "close to deadline",
+        "near deadline", "காலக்கெடு நெருங்கு", "காலக்கெடு அணுகு",
+        "காலக்கெடு வரம்பு", "மேல்முறையீடு வரம்பு", "நெருங்கும் காலக்கெடு")
+    _bare_escalat_2 = "escalat" in msg or "எஸ்கலேஷன்" in msg
+    _looks_like_status_listing_2 = bool(re.search(r"\bapplic|விண்ணப்ப", msg))
+    if any(w in msg for w in _escalation_deadline_words_2) or (
+            _bare_escalat_2 and not _looks_like_status_listing_2):
         return "escalation_check"
+
+    if re.match(r"\s*(?:details\s+of\s+|show\s+|about\s+)?survey\s+(?:no|number)\.?\s*\d", msg) and not extract_application_number(message):
+        return "survey_detail"
+    if (re.search(r"\b(?:isd|nisd|merge)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
+            and not extract_application_number(message) and not re.search(r"\b(?:been|pending|my)\b", msg)):
+        return "service_code_lookup"
+    if re.search(r"\b(?:isd|nisd|merge)\s+(?:meaning|means|full\s+form|expansion)\b|\b(?:meaning|full\s+form)\s+of\s+(?:isd|nisd|merge)\b", msg):
+        return "service_code_lookup"
+    if re.search(r"\bmy\s+(?:wards?|blocks?)\b|\bhow\s+many\s+(?:wards?|blocks?)\s+(?:do\s+i|have\s+i)\b", msg):
+        return "jurisdiction_summary"
+    if re.search(r"\bpending\s+(?:for|with|on)\s+me\b|\bon\s+my\s+desk\b|\bwaiting\s+for\s+me\b", msg):
+        return "pending_applications"
+    # "what are the applications present in SIS / in my queue" -- the desk queue, not an LLM guess
+    if (re.match(r"\s*(?:what|which|list|show|display|give)\b", msg) and not extract_application_number(message)
+            and re.search(r"\bapplic\w*", msg)
+            and re.search(r"\b(?:pres\w{2,4}|availab\w+|exist\w*|there|in\s+(?:the\s+)?sis|in\s+(?:my\s+)?queue|at\s+sis|with\s+sis)\b", msg)
+            and not re.search(r"\b(?:isd|nisd|merge|csc|sro|approved|rejected|overdue|pending|month|year|ward|block|survey|fee|how\s+many|count)\b|\d", msg)):
+        return "pending_applications"
+    if re.search(r"\bwhat\s+(?:should|do)\s+i\s+(?:do|need\s+to\s+do)\s+today\b|\bwhat\s+to\s+do\s+today\b|\bmy\s+tasks?\b"
+                 r"|\btoday'?s\s+work\b", msg) or re.fullmatch(
+            r"\s*(?:give\s+me\s+|show\s+me\s+)?(?:a\s+)?(?:summary|overview)(?:\s+of\s+my\s+(?:work|day|queue))?\s*[?.!]*", msg):
+        return "officer_workload"
+    if (re.search(r"\bhow\s+(?:many\s+days|long|much\s+time)\b.*\b(?:take|takes|for|does|will)\b", msg)
+            and re.search(r"\b(?:isd|nisd|merge)\b|\bit\s+take", msg) and not extract_application_number(message)
+            and not re.search(r"\b(?:pending|been)\b|\bmy\b", msg)):
+        return "service_code_lookup"
+    if re.fullmatch(r"\s*(?:what\s+is|what's)\s+the\s+(?:sla|processing\s+time|time\s+limit|turnaround)\s*[?.!]*\s*", msg):
+        return "service_code_guide"
+    if re.fullmatch(r"\s*(?:எனது|என்|என்னுடைய|எங்கள்)\s+(?:எல்லா\s+)?விண்ணப்பங்கள்(?:ை|ளை)?\s*[?.!]*\s*", msg) \
+            or re.fullmatch(r"\s*(?:en|ennoda|enoda)\s+applications?\s*[?.!]*\s*", msg):
+        return "pending_applications"
 
     # 1a2. Standalone Tamil application list — catch before FV outer block consumes காட்டு/பட்டியல்
     # "விண்ணப்பங்கள் பட்டியல் காட்டு" should be pending_applications not general_query
@@ -4678,8 +5138,31 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _svc_app_no = extract_application_number(message)
     _svc_msg_no_app = msg.replace(str(_svc_app_no).lower(), " ") if _svc_app_no else msg
     _svc_codes_named = _find_service_codes(_svc_msg_no_app)
+    # A code found only by its NAME ("owner name" -> 0165) is a coincidence of
+    # words when the message is about a record ("father name of the owner of
+    # survey 5"), not a service question.
+    if (_svc_codes_named and not re.search(r'\b\d{3,4}\b', _svc_msg_no_app)
+            and not re.search(r'\bservice\b|\bcode\b', _svc_msg_no_app)
+            and re.search(r'\b(?:survey|owner|owners|applicant|father|husband|his|her|their|of\s+the|of\s+survey)\b', _svc_msg_no_app)):
+        _svc_codes_named = []
     _svc_named_kw = any(w in msg for w in ("service code", "service codes",
                                           "service_code", "சேவை குறியீடு"))
+
+    # "show 0169 applications" / "show 0161 applications" -- an imperative,
+    # not a "what is" question, so `_svc_def_cue` is False and this used to
+    # fall straight through to the generic pending-queue listing, which
+    # ignores any code it doesn't recognise and silently returned the
+    # officer's whole desk under the "Pending Applications" label. Only
+    # 0153/0154/0155 admit real rows (`ck_application_type` in the schema),
+    # so a listing request naming any OTHER real code has the same honest
+    # answer as "what is 0169" -- there is no register to list, and that is
+    # a fact about the schema, the same rule CLAUDE.md already states for the
+    # question form. isd/nisd/merge listings (0154/0153/0155) are handled
+    # below and must not be caught here.
+    if (not _svc_def_cue and not _svc_app_no and _svc_codes_named
+            and all(c not in ("0153", "0154", "0155") for c in _svc_codes_named)):
+        return "service_code_lookup"
+
     if _svc_def_cue and (_svc_codes_named or _svc_app_no or _svc_named_kw):
         if _svc_app_no and (_svc_named_kw or "which code" in msg or "what code" in msg):
             # "what is the service code of 2026/0154/28/000156" — a field on
@@ -4792,7 +5275,17 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _is_negated_overdue = any(w in msg for w in [
         "not overdue", "non overdue", "non-overdue", "on time", "not late",
         "not delayed", "within sla", "தாமதமில்லாத", "தாமதம் இல்லாத", "காலதாமதமாகாத"
-    ])
+    ]) or bool(re.search(
+        # the general negation words the rest of the app uses ("except", "without", …) over
+        # "overdue" -- without this, "except overdue" / "excluding overdue" matched none of the
+        # phrases above and routed to overdue_applications instead of excluding it.
+        r"\b(?:except|excluding|other\s+than|without|skip(?:ping)?)\b[\w\s]{0,15}\boverdue\b"
+        r"|\boverdue\b[\w\s]{0,15}\b(?:excluded|not\s+included|left\s+out)\b"
+        # Tamil/Tanglish "except" (தவிர/தவிர்த்து, thavira/thavirthu), either side of the
+        # overdue word -- Tamil is matched as a substring, never \b (the virama trap).
+        r"|thavir(?:thu|a)?[\w\s]{0,15}overdue|overdue[\w\s]{0,15}thavir(?:thu|a)?"
+        r"|(?:தவிர்த்து|தவிர).{0,25}(?:தாமத|காலதாமத|ஓவர்)|(?:தாமத|காலதாமத|ஓவர்)\w*.{0,25}(?:தவிர்த்து|தவிர)",
+        msg))
     _is_interrogative_or_specific = any(w in msg for w in ["what", "where", "who", "which", "is it", "is this", "tell me", "give me", "காரணம்", "பெயர்", "முகவரி", "நிலை", "reason", "stage"])
     if has(ta_overdue) and not _is_negated_overdue and not _is_interrogative_or_specific:
         return "overdue_applications"
@@ -4824,9 +5317,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     if has(ta_pending) and (has(ta_application) or has(ta_show)):
         return "pending_applications"
 
-    _has_nisd_w  = bool(re.search(r'\b(nisd|0153)\b', msg))
+    _has_nisd_w  = bool(re.search(r'\b(nisd|nsid|nisdd|niisd|nidsd|ninsd|0153)\b', msg))
     _has_isd_w   = bool(re.search(r'\b(isd|0154)\b', msg))
-    _has_merge_w = bool(re.search(r'\bmerge?\b', msg))
+    _has_merge_w = _has_merge_token
     _has_list_or_app = (
         has(ta_application) or has(ta_show) or
         any(w in msg for w in ["show", "list", "display", "view", "get", "fetch", "all", "application", "applications", "applic", "no", "number", "காட்டு", "பட்டியல்"])
@@ -4910,7 +5403,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # "which sub registrar registered 2026/..." asks who registered the sale
     # deed -- so that route counts only alongside a submission phrase.
     _channel_named = any(w in msg for w in [
-        "csc", "common service cent", "e-sevai", "esevai", "e sevai", "citizen",
+        "csc", "common service cent", "citizen",
     ])
     # Bare "source" is also half of "irrigation source" -- a real
     # urban_parcel_register field name (_UNTRACKED_PARCEL_FIELDS) -- so "what
@@ -4957,8 +5450,18 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         # from sro n csc" names TWO channels and the plural noun — route to
         # pending_applications so the channel filter is applied instead.
         _named_channels = extract_submission_channels(message)
+        # `applications?` (note the `?`) matched the SINGULAR "application"
+        # too, so it fired for exactly the back-reference `_app_ref_for_
+        # channel` had just confirmed was singular ("this application" /
+        # "that application") -- "how was this application submitted"
+        # named one file, tripped this plural-listing guard anyway, and the
+        # whole block was skipped, falling through to general_query for a
+        # question the deterministic handler above it was built to answer.
+        # Required the true plural here; "apps"/"app" stay ambiguous on
+        # their own and are deliberately not matched at all.
         _plural_listing = bool(re.search(
-            r"\b(?:applications?|apps?|list|all|show|present|what\s+r|what\s+are)\b", msg))
+            r"\bapplications\b|\bapps\b|\blist\b|\ball\b|\bshow\b|\bpresent\b"
+            r"|\bwhat\s+r\b|\bwhat\s+are\b", msg))
         _multi_channel = len(_named_channels) >= 2
         if not (_plural_listing or _multi_channel):
             return "submission_channel_check"
@@ -5072,6 +5575,27 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _is_singular_app_ref = bool(re.search(
         r'\b(?:this|that|same|my|the)\s+app(?:lication)?(?!\w)'
         r'|இந்த\s+விண்ணப்பம்|அந்த\s+விண்ணப்பம்', msg))
+
+    # "what was approved last year", "what got rejected this month" -- a
+    # status word plus a date scope, with no "application" noun at all to
+    # trip the block below. Without this, these fell all the way through to
+    # general_query and the LLM answered "I don't have information on
+    # specific approvals" instead of listing the register's own record.
+    _bare_status_word = any(
+        is_token_typo_match(tok, w) for tok in words
+        for w in ("approved", "approve", "rejected", "reject", "cancelled", "cancel",
+                   "pending", "escalated")) or bool(re.search(
+        r"\bin[ _-]?progres{1,2}\b", msg))
+    _bare_date_scope = (bool(re.search(r"\b20\d{2}\b", msg)) or any(
+        w in msg for w in ("last year", "this year", "previous year",
+                            "last month", "this month", "previous month",
+                            "between", "since"))
+        or bool(re.search(r"\b(?:last|this|previous|prev|past)\s+yrs?\b", msg))
+        or extract_month_from_text(msg))
+    if (_bare_status_word and _bare_date_scope and not _is_singular_app_ref
+            and not re.search(r'\d{4}/\d{3,4}/\d{1,3}/\d+', msg)):
+        return "pending_applications"
+
     # "applicants" is here in the PLURAL only: "show the first two applicants"
     # is a request for the officer's list with the names on it, while the
     # singular "the applicant" names a field of one file and belongs to the
@@ -5088,12 +5612,29 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             return "overdue_applications"
         elif has(ta_pending):
             return "pending_applications"
-        elif has_exact(["today", "yesterday", "day before", "tomorrow", "day after", "morning", "afternoon", "evening", "am", "pm", "new", "received", "submitted", "இன்று", "நேற்று", "நாளை", "காலை", "பிற்பகல்", "மதியம்"]):
+        # "approved applications" / "rejected applications" / "escalated
+        # applications" / "in progress applications" -- a bare status
+        # adjective plus the noun, no verb at all. "pending applications"
+        # already worked (`ta_pending` covers it); these four did not, and
+        # fell all the way through this whole chain to the LLM -- which
+        # then had no register to answer from. This is also what let a
+        # NEGATED status ("not approved applications", "neither approved
+        # nor rejected applications") reach the LLM too: `_explicit_status_
+        # request` in chatbot.py already reads the negation correctly, but
+        # only once the message is routed HERE for it to run on.
+        elif (re.search(r"\bapprove", msg) or re.search(r"\bcompleted\b", msg)
+              or re.search(r"\brejec", msg) or re.search(r"\bescalat", msg)
+              or re.search(r"\bin[ _-]?progres{1,2}\b", msg)
+              or any(is_token_typo_match(w, t) for w in words
+                     for t in ("approved", "approve", "completed", "rejected", "cancelled", "cancel",
+                               "reject", "escalated"))):
+            return "pending_applications"
+        elif has_exact(["today", "yesterday", "day before", "tomorrow", "day after", "morning", "afternoon", "evening", "am", "pm", "new", "received", "submitted", "இன்று", "இன்னிக்கு", "இனிக்கு", "நேற்று", "நேத்து", "நாளை", "காலை", "பிற்பகல்", "மதியம்"]):
             return "pending_applications"
         elif any(w in msg for w in ["count", "number", "how many", "total", "no of", "no.", "எண்ணிக்கை", "மொத்தம்", "எத்தனை"]) or \
              any(w in msg for w in ["between", "from", "year", "during", "week", "month", "இடையே", "வரை",
                                     "மாத", "மாதம்", "இந்த மாத", "கடந்த மாத", "முந்தைய மாத", "ஆண்டு", "வருடம்"]) or \
-             re.search(r"\b20\d{2}\b", msg):
+             re.search(r"\b20\d{2}\b", msg) or re.search(r"\byrs?\b", msg):
             # Any four-digit year, not just the two that were hard-coded here:
             # "give me rejected files in 2023" fell through to the LLM.
             return "pending_applications"   # date-range / count query → fetch all in range
@@ -5105,6 +5646,15 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         elif any(w in msg for w in ["show", "list", "display", "view", "get", "fetch", "all", "with", "காட்டு", "பட்டியல்", "உடன்"]):
             return "pending_applications"
         elif any(w in msg for w in ["evlo", "eppadi", "iruku", "irukku", "kaattu", "kaami",
+                                     # "kami" (single 'a') is the same word as
+                                     # "kaami" -- Tanglish vowel length is
+                                     # typed inconsistently, and the substring
+                                     # match above has no typo budget at all,
+                                     # so "applications kami" fell through to
+                                     # the LLM, which had no application list
+                                     # to answer from and invented a
+                                     # jurisdiction refusal instead.
+                                     "kami",
                                      "venum", "maasam", "innaiku", "inniku", "naalaikku",
                                      "poana", "indha", "list pannu", "kaatunga"]):
             # Tanglish as officers type it: "indha maasam files enna",
@@ -5336,7 +5886,15 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # so without this guard it was caught here before ever reaching the
     # litigation_check keyword match below and lost the litigation flag.
     _is_litigation_wording = any(w in msg for w in ["litigation", "court", "legal", "flagged", "case flag"])
-    if _is_survey_query and not _is_litigation_wording and (has(ta_subdivision) or has(ta_detail) or has(ta_show) or has_interrogative or "subdivision" in msg or "subdivisions" in msg):
+    # "under what conditions can two surveys be merged" names no survey; it asks
+    # for a rule, which the documents answer, not for a survey record ("No
+    # records found").
+    _is_rule_question = (not re.search(r"\d", msg)
+                         and re.search(r"\b(conditions?|criteria|rules?|requirements?|eligib\w*)\b", msg))
+    if (_is_rule_question and re.search(r"\bmerg", msg)
+            and not re.search(r"\b(my|show|list|how many|pending|approved|rejected)\b", msg)):
+        return "general_query"
+    if _is_survey_query and not _is_litigation_wording and not _is_rule_question and (has(ta_subdivision) or has(ta_detail) or has(ta_show) or has_interrogative or "subdivision" in msg or "subdivisions" in msg):
         return "survey_detail"
 
     # A question about the workflow itself ("what happens after the SIS stage?",
@@ -5363,7 +5921,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # stays with last_application and "how many approved applications do I
     # have" stays a count.
     _event_word = bool(re.search(
-        r"\b(?:approved|approval|rejected|rejection|closed|closure|disposed"
+        r"\b(?:approved|approval|rejected|rejection|closed|closure|disposed|cancelled|cancel"
         r"|decided|decision|signed|submitted|submission|filed|lodged)\b", msg)
         or any(w in msg for w in ("அங்கீகரி", "நிராகரி", "சமர்ப்பி")))
     _when_word = bool(re.search(
@@ -5397,7 +5955,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         # Sub-division applications are ISD applications (ISD = Involving Sub-Division).
         return "isd_applications"
 
-    if not _is_litigation_wording and has(ta_survey) and (has(ta_show) or has(ta_detail) or "surveys" in msg or "எண்கள்" in msg or ("number" in msg and not any(w in msg for w in ["applications", "விண்ணப்பங்கள்", "விண்ணப்பங்களை"]))):
+    if not _is_litigation_wording and not _is_rule_question and has(ta_survey) and (has(ta_show) or has(ta_detail) or "surveys" in msg or "எண்கள்" in msg or ("number" in msg and not any(w in msg for w in ["applications", "விண்ணப்பங்கள்", "விண்ணப்பங்களை"]))):
         return "survey_detail"
 
     if has(ta_workload):
@@ -5470,7 +6028,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         return "application_status"
 
     # 3. Overdue applications list
-    if has(ta_overdue):
+    if has(ta_overdue) and not _is_negated_overdue:
         return "overdue_applications"
 
     # 4. (Escalation handled above before FV block)
@@ -5590,7 +6148,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         # Use word-boundary regex so "nisd", "0153", "isd", "0154" match accurately
         _has_nisd_word  = bool(re.search(r'\b(nisd|0153)\b', msg))
         _has_isd_word   = bool(re.search(r'\b(isd|0154)\b', msg))
-        _has_merge_word = bool(re.search(r'\bmerge?\b', msg))  # matches "merge" and "merg"
+        _has_merge_word = _has_merge_token
         _type_count = sum([_has_nisd_word, _has_isd_word, _has_merge_word])
         if _type_count >= 2:
             # Multiple types requested — combined intent
@@ -5753,7 +6311,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                                                    "என்றால்", "என்ன", "எது"])
     
     if not is_explanation_query and not has(ta_merge):
-        is_type_query   = any(w in msg for w in ["isd", "nisd", "merge"])
+        is_type_query   = any(w in msg for w in ["isd", "nisd", "merge", "type"]) or bool(re.search(r'\b0\d{3}\b', msg))
         is_app_query    = has(ta_application)
         is_year_query   = bool(re.search(r'\b(20\d{2})\b', msg))  # Check for year like 2025, 2026
         is_month_query  = any(w in msg for w in ["january", "february", "march", "april", "may", "june",
@@ -5873,7 +6431,7 @@ def extract_survey_number(message: str) -> Optional[str]:
     # Keyword match first (e.g. "survey 145", "survey no 145/1A")
     keyword_match = re.search(
         r'\bsurvey(?:\s+(?:no|num|number|nos|numbers)(?:\.|\b)?)?(?:\s*[:\-#])?\s*'
-        r'(\d{1,4}(?:/' + _SUBDIV_TAIL + r')?)\b',
+        r'(\d{1,6}(?:/' + _SUBDIV_TAIL + r')?)\b',
         cleaned, re.IGNORECASE
     )
     if keyword_match:
@@ -5904,13 +6462,18 @@ def extract_survey_number(message: str) -> Optional[str]:
 SUBMISSION_CHANNELS = ("CSC", "sub_registrar", "citizen")
 
 _CHANNEL_VOCAB = (
-    # e-Sevai is what the CSC counters are called in Tamil Nadu, so an officer
-    # asking for "e-sevai applications" means the same set as "CSC".
     ("CSC", (r"csc", r"cscs", r"common\s+service\s+cent(?:er|re)s?",
-             r"e[\s-]?sevai", r"service\s+cent(?:er|re)s?"),
-     ("இ-சேவை", "இ சேவை", "சேவை மைய")),
+             r"service\s+cent(?:er|re)s?"),
+     ("சேவை மைய",)),
     ("sub_registrar", (r"sub[\s_-]?registrars?(?:\s+office)?", r"sro", r"sros",
-                       r"registrar(?:'s)?\s+office", r"igrs\s+referrals?"),
+                       r"registrar(?:'s)?\s+office", r"igrs\s+referrals?",
+                       # Bare "registrar(s)" -- `_CHANNEL_FUZZY_NEVER` excludes
+                       # it from the fuzzy path on the assumption this exact
+                       # pattern already covers it, which used to be true only
+                       # when "sub" or "office" was also typed: "show
+                       # registrar applications" named no channel at all and
+                       # fell through to the whole desk queue.
+                       r"registrars?"),
      ("சார்-பதிவாளர்", "சார் பதிவாளர்", "பதிவாளர் அலுவலக")),
     ("citizen", (r"citizen\s+portal", r"direct\s+citizen", r"self[\s-]?submitted",
                  r"self[\s-]?registered", r"tn\s+portal", r"online\s+portal"),
@@ -5930,7 +6493,7 @@ _ALL_CHANNELS_TA = ("அனைத்து வழி", "எல்லா வழ�
 
 # Words a misspelling of which still names the channel, checked with the same
 # edit-distance rule parse_intent uses (`_max_edits_for`: 4-7 chars one edit,
-# 8+ two, 3 or fewer exact only). "citizn", "sub registrer", "e-sevi" are what
+# 8+ two, 3 or fewer exact only). "citizn" and "sub registrer" are what
 # officers actually type, and each used to name no channel at all -- so the
 # question either fell to the LLM or, worse, was answered as an UNSCOPED
 # listing with the misspelt word silently ignored.
@@ -5943,7 +6506,6 @@ _ALL_CHANNELS_TA = ("அனைத்து வழி", "எல்லா வழ�
 # Matching it here would reach the caller ahead of the guard and make every CAN
 # question a channel question.
 _CHANNEL_FUZZY = (
-    ("CSC", ("esevai", "sevai")),
     ("sub_registrar", ("registrar", "registrars")),
 )
 
@@ -5963,11 +6525,11 @@ _CHANNEL_FUZZY_NEVER = {
 
 # Tokens that are part of a channel's own name, and the politeness a message
 # may carry around it. A message made of nothing else -- "csc", "sro",
-# "citizen", "e-sevai please" -- names a channel and asks for nothing else, so
+# "citizen", "CSC please" -- names a channel and asks for nothing else, so
 # it is that channel's listing. Left to fall through, "csc" reached the LLM,
 # which is the one path in the pipeline that cannot look a channel up.
 _CHANNEL_NAME_TOKENS = {
-    "csc", "cscs", "sro", "sros", "citizen", "citizens", "esevai", "sevai", "e",
+    "csc", "cscs", "sro", "sros", "citizen", "citizens",
     "sub", "registrar", "registrars", "office", "portal", "common", "service",
     "center", "centre", "centers", "centres", "counter", "counters",
 }
@@ -6036,7 +6598,19 @@ def _channel_positions(message: str) -> List[Tuple[int, str]]:
         for token in extract_tokens(msg):
             if token in _CHANNEL_FUZZY_NEVER:
                 continue
-            if any(is_token_typo_match(token, w) for w in words):
+            # A dropped LEADING letter is a real edit but
+            # fails `is_token_typo_match`'s own first-character guard, same as
+            # `names_only_a_channel._close_enough` exists to cross for a bare
+            # channel name -- this is the same truncation for "show <channel>
+            # applications" phrasing.
+            # A QWERTY-adjacent first letter is
+            # a fat-finger substitution, not a random edit -- see
+            # `is_qwerty_first_letter_typo`'s own docstring for why it is a
+            # separate, narrower check rather than a loosened core guard.
+            if (any(is_token_typo_match(token, w)
+                    or (len(token) >= 4 and w[1:] == token)
+                    or is_qwerty_first_letter_typo(token, w)
+                    for w in words)):
                 idx = msg.find(token)
                 hits.append((idx if idx != -1 else len(msg), channel))
                 break
@@ -6085,11 +6659,19 @@ def extract_submission_channels(message: str) -> List[str]:
     # loosening that guard globally -- checked clean against survey/submit/
     # stage/status/sub/sir/show/site/signature and the rest of the s-prefixed
     # domain vocabulary at the same budget.
+    # "itizen" is a dropped LEADING letter -- a real edit that the typo
+    # matcher's own first-character
+    # guard refuses to cross regardless of max_edits, so it needs the same
+    # narrow w[1:]==token allowance `_channel_positions`'s fuzzy loop uses.
+    _tokens = extract_tokens(msg)
     _says_citizen = bool(re.search(r"\bcitizens?\b", msg)) or any(
         is_token_typo_match(tok, "citizen", max_edits=2)
         or is_token_typo_match(tok, "citizens", max_edits=2)
         or is_token_typo_match(tok, "sitizen", max_edits=2)
-        for tok in extract_tokens(msg))
+        or (len(tok) >= 4 and tok in ("itizen", "itizens"))
+        or is_qwerty_first_letter_typo(tok, "citizen")
+        or is_qwerty_first_letter_typo(tok, "citizens")
+        for tok in _tokens)
     if "citizen" not in named and _says_citizen \
             and not re.search(r"\bcitizen\s+access\s+(?:number|no)\b", msg) \
             and (names_only_a_channel(message)
@@ -6117,7 +6699,27 @@ def extract_submission_channels(message: str) -> List[str]:
     if (not named
             and any(kw in msg for kw in ("igrs", "form 6", "form6", "படிவம் 6"))
             and not extract_application_number(message)):
-        named.append("sub_registrar")
+        # "without an IGRS number" / "no IGRS number" / "not having an IGRS
+        # number" is the OTHER two channels, not a plain substring match on
+        # "igrs" landing on sub_registrar again -- only a Sub-Registrar
+        # referral ever carries one, so asking for applications WITHOUT it
+        # named the one channel that always has it, the literal opposite of
+        # the question. "applications without igrs number" was answered
+        # with the Sub-Registrar list.
+        if re.search(r"\b(?:without|no|not\s+having|excluding|except)\b", msg):
+            named.extend(c for c in SUBMISSION_CHANNELS if c != "sub_registrar")
+        else:
+            named.append("sub_registrar")
+
+    # "neither CSC nor Sub-Registrar" named both channels the ordinary way --
+    # the channel matcher has no idea "neither"/"nor" sit around them -- so
+    # "applications neither from csc nor sub registrar" returned exactly the
+    # two channels the officer excluded, the literal opposite of the
+    # question (only 3 channels exist, so excluding 2 unambiguously means
+    # the third). Inverted here rather than in the matcher itself, so every
+    # existing positive-channel call site is untouched.
+    if named and re.search(r"\bneither\b", msg) and re.search(r"\bnor\b", msg):
+        named = [c for c in SUBMISSION_CHANNELS if c not in named]
 
     seen, ordered = set(), []
     for channel in named:
@@ -6141,8 +6743,7 @@ def extract_submission_channels(message: str) -> List[str]:
 # "she", "set", "sir", "six", "son", "sun", "sit", "sat", "sky", "sea" all sit
 # within 2 edits of "sro". A numeric threshold cannot separate a channel typo
 # from a real word here, so this uses a curated list of the typos officers
-# actually type instead -- the same shape as `_CHANNEL_FUZZY`'s
-# esevai/sevai list a few lines up, just for the 3-letter codes that list
+# actually type instead -- just for the 3-letter codes that list
 # deliberately excludes.
 _CHANNEL_CLARIFY_VARIANTS = {
     "sro": ("seo", "sro's", "sto", "srp", "aro", "dro", "sr0"),
@@ -6180,7 +6781,7 @@ def extract_submission_channel(message: str) -> Optional[str]:
     that "CSC and Sub-Registrar" is not silently answered as CSC alone.
 
     Returns:
-        'CSC'           — Common Service Center / e-Sevai counter
+        'CSC'           — Common Service Center
         'citizen'       — Citizen self-submitted / portal / revenue camp
         'sub_registrar' — Sub-Registrar (IGRS) referral
         None            — no channel mentioned
@@ -6631,7 +7232,7 @@ _DATE_SCOPE_PHRASE_RE = re.compile(
     r"\s*(?:20\d{2})?"
     r"|\b(?:summer|winter|monsoon|rainy\s+season)\b"
     r"|\b20\d{2}\b"
-    r"|(?:இன்று|நேற்று|நாளை|முந்தாநாள்|நாளை\s*மறுநாள்)"
+    r"|(?:இன்று|இன்னிக்கு|இனிக்கு|நேற்று|நேத்து|நாளை|முந்தாநாள்|நாளை\s*மறுநாள்)"
     r"|(?:இந்த|கடந்த|சென்ற|முந்தைய|அடுத்த)\s*(?:வாரம்|மாதம்|ஆண்டு|வருடம்)"
     r")",
     re.IGNORECASE,
@@ -6692,6 +7293,40 @@ def is_bare_date_scope(message: str) -> bool:
 
 _MONTH_LABELS = ["", "January", "February", "March", "April", "May", "June",
                  "July", "August", "September", "October", "November", "December"]
+
+
+_BOUND_RE = re.compile(
+    r"\b(?P<kw>before|prior\s+to|earlier\s+than|until|till|upto|up\s+to|after|since|later\s+than|post)\s+"
+    r"(?:(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+)?(?:(?P<mon>[a-z]{3,9})\s+)?(?P<year>(?:19|20)\d{2})\b")
+
+
+def _written_period_bound(cleaned: str, today: date):
+    """(start, end) for a one-sided written period, or None when not one."""
+    m = _BOUND_RE.search(cleaned)
+    if not m:
+        return None
+    year = int(m.group("year"))
+    month = extract_month_from_text(m.group("mon") + " " + m.group("year")) if m.group("mon") else None
+    if m.group("mon") and not month:
+        return None
+    day = int(m.group("day")) if m.group("day") else None
+    try:
+        if month and day:
+            first = last = date(year, month, day)
+        elif month:
+            first, last = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+        else:
+            first, last = date(year, 1, 1), date(year, 12, 31)
+    except ValueError:
+        return None
+    kw = re.sub(r"\s+", " ", m.group("kw"))
+    if kw in ("before", "prior to", "earlier than"):
+        return None, first - timedelta(days=1)
+    if kw in ("until", "till", "upto", "up to"):
+        return None, last
+    if kw == "since":
+        return first, max(today, first)
+    return last + timedelta(days=1), max(today, last + timedelta(days=1))
 
 
 def extract_date_range(message: str) -> Tuple[Optional[date], Optional[date]]:
@@ -6759,6 +7394,15 @@ def extract_date_range(message: str) -> Tuple[Optional[date], Optional[date]]:
         if parsed:
             return None, parsed
 
+    # 0b. "before march 2025", "after 1 jan 2025", "since 2025", "until may 2025" --
+    # a written-out period on one side. Before this the bound was dropped and the
+    # question answered as if the period itself had been named ("before March"
+    # listed March).
+    if not _all_date_tokens:
+        _bound = _written_period_bound(cleaned, today)
+        if _bound is not None:
+            return _bound
+
     # 1. ISO format date pattern (YYYY-MM-DD)
     iso_dates = []
     for d in re.findall(r'\b\d{4}-\d{2}-\d{2}\b', cleaned):
@@ -6804,10 +7448,15 @@ def extract_date_range(message: str) -> Tuple[Optional[date], Optional[date]]:
         tmrw = today + timedelta(days=1)
         return tmrw, tmrw
 
-    if any(w in cleaned for w in ["today", "tonight", "இன்று"]):
+    if any(w in cleaned for w in ["today", "tonight", "இன்று", "இன்னிக்கு", "இனிக்கு"]):
         return today, today
 
-    if any(w in cleaned for w in ["yesterday", "நேற்று"]):
+    # "நேத்து" is the colloquial, spoken-Tamil spelling of "yesterday" --
+    # distinct from the formal "நேற்று" already handled, and at least as
+    # common in what an officer actually types. Missing it meant the whole
+    # date scope was silently dropped: "நேத்து எத்தனை விண்ணப்பம் வந்துச்சு"
+    # answered with the officer's unscoped desk count, not yesterday's.
+    if any(w in cleaned for w in ["yesterday", "நேற்று", "நேத்து"]):
         ystd = today - timedelta(days=1)
         return ystd, ystd
 
@@ -6856,6 +7505,24 @@ def extract_date_range(message: str) -> Tuple[Optional[date], Optional[date]]:
         _, last_day = calendar.monthrange(start_m.year, start_m.month)
         end_m = start_m.replace(day=last_day)
         return start_m, end_m
+
+    # "this year" / "last year" / "previous year" -- the month block above has
+    # always covered "this month" / "last month", but the year-scale sibling
+    # had no branch at all, so "what was approved last year" carried no date
+    # scope out of this function and fell through to the LLM with nothing to
+    # look up. "yr" is aliased to "year" by normalize_relative_date_tokens
+    # above, so it is covered here too.
+    if any(w in cleaned for w in ["next year", "coming year", "அடுத்த ஆண்டு", "அடுத்த வருடம்"]):
+        return date(today.year + 1, 1, 1), date(today.year + 1, 12, 31)
+
+    if any(w in cleaned for w in ["this year", "current year", "இந்த ஆண்டு", "இந்த வருடம்"]):
+        return date(today.year, 1, 1), date(today.year, 12, 31)
+
+    if any(w in cleaned for w in [
+        "last year", "past year", "previous year", "prev year", "preceding year",
+        "கடந்த ஆண்டு", "சென்ற ஆண்டு", "முந்தைய ஆண்டு", "கடந்த வருடம்", "முந்தைய வருடம்"
+    ]):
+        return date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
 
     # 3b. Seasons (Tamil Nadu convention: Summer = Apr-Jun, Winter = Dec-Feb,
     # Monsoon/Rainy = Oct-Nov). Year defaults to current year unless a year is

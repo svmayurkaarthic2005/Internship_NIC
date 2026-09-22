@@ -1,0 +1,3 @@
+FROM llama3.1:8b
+
+ADAPTER C:\proj\nic_internship\sis-qlora-adapter

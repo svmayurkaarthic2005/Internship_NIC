@@ -582,7 +582,7 @@ tbody td{padding:9px 12px;vertical-align:middle}
 const RAW = """ + data_json + r""";
 
 const CH_META = {
-  CSC:           { label:'CSC / e-Sevai',        cls:'csc',     icon:'🏪', short:'CSC'     },
+  CSC:           { label:'CSC',        cls:'csc',     icon:'🏪', short:'CSC'     },
   sub_registrar: { label:'Sub-Registrar (SRO)',   cls:'sro',     icon:'🏛️', short:'SRO'     },
   citizen:       { label:'Citizen (Camp)',         cls:'citizen', icon:'👤', short:'Citizen' },
 };
@@ -879,7 +879,7 @@ function renderChannelCards(){
           <span class="ch-icon">${meta.icon}</span>
           <div>
             <div class="ch-name">${meta.label}</div>
-            <div class="ch-desc">${ch==='sub_registrar'?'IGRS auto-mutation · No operator':ch==='CSC'?'Common Service Centre / e-Sevai':'Revenue camp filing'}</div>
+            <div class="ch-desc">${ch==='sub_registrar'?'IGRS auto-mutation · No operator':ch==='CSC'?'Common Service Centre / CSC':'Revenue camp filing'}</div>
           </div>
           <div class="ch-total">${chData.length}</div>
         </div>

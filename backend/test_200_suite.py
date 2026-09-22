@@ -46,7 +46,6 @@ import asyncio
 import sys
 import time
 import uuid
-from uuid import UUID
 from datetime import datetime
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -143,7 +142,7 @@ TEST_QUESTIONS_200 = [
     {"id": 70, "column": "source_code", "lang": "en", "q": "Show applications with source_code CITIZEN"},
     {"id": 71, "column": "source_code", "lang": "ta", "q": "பொதுமக்கள் நேரடியாக சமர்ப்பித்த (CITIZEN) விண்ணப்பங்களைக் காட்டு"},
     {"id": 72, "column": "source_code", "lang": "en", "q": "Show applications with source_code CSC"},
-    {"id": 73, "column": "source_code", "lang": "ta", "q": "இ-சேவை மையம் (CSC) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு"},
+    {"id": 73, "column": "source_code", "lang": "ta", "q": "CSC மையம் மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு"},
     {"id": 74, "column": "source_name", "lang": "en", "q": "What is the source_name of application 2026/0154/02/000001?"},
     {"id": 75, "column": "source_name", "lang": "ta", "q": "2026/0154/02/000001 விண்ணப்பத்தின் ஆதாரம் (source_name) என்ன?"},
 
@@ -247,7 +246,7 @@ TEST_QUESTIONS_200 = [
     {"id": 166, "column": "government_service_charge", "lang": "en", "q": "Is survey fee paid for application 2026/0154/02/000001?"},
     {"id": 167, "column": "government_service_charge", "lang": "ta", "q": "2026/0154/02/000001 விண்ணப்பத்திற்கு சர்வே கட்டணம் செலுத்தப்பட்டுள்ளதா?"},
     {"id": 168, "column": "csc_service_charge", "lang": "en", "q": "What are the CSC charges for TSLR extract services?"},
-    {"id": 169, "column": "csc_service_charge", "lang": "ta", "q": "TSLR சான்றிதழுக்கான இ-சேவை கட்டணம் என்ன?"},
+    {"id": 169, "column": "csc_service_charge", "lang": "ta", "q": "TSLR சான்றிதழுக்கான CSC கட்டணம் என்ன?"},
     {"id": 170, "column": "government_service_charge", "lang": "en", "q": "Show total service charges collected for July 2026"},
 
     # ── Category 8: Citizen & External Integration (Q171 - Q185) ──

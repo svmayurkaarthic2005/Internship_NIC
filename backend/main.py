@@ -76,6 +76,18 @@ async def lifespan(app: FastAPI):
         print(f"   ⚠️  Chat attachment store warning: {e}")
 
     
+    # "Overdue" is a fact about today: re-derive it now and every few hours, so an
+    # answer given days after the projection was built is not stale.
+    _overdue_task = None
+    try:
+        import asyncio as _asyncio
+        from backend.database import AsyncSessionLocal as _Session
+        from backend.services import overdue_refresh
+        _overdue_task = _asyncio.create_task(overdue_refresh.refresh_forever(_Session))
+        print("   ✅ Overdue flags refresh scheduled")
+    except Exception as e:
+        print(f"   ⚠️  Overdue refresh warning: {e}")
+
     # Check Ollama connectivity
     try:
         import httpx
@@ -97,6 +109,8 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("\n" + "=" * 60)
     print("🛑 Shutting down SIS Chatbot Portal API...")
+    if _overdue_task:
+        _overdue_task.cancel()
     await engine.dispose()
     print("   ✅ Database connections closed")
     print("=" * 60)
