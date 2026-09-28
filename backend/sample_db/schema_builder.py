@@ -17,22 +17,22 @@ SAMPLE_TABLE_DIR = Path(__file__).resolve().parents[1] / "sample_table"
 # The "_demo" suffix is dropped and a few names are tightened so the table
 # reads as a table rather than as an export file.
 TABLE_NAMES = {
-    "appl_log_urban_demo.csv": "urban_application_log",
-    "application_workflow_demo.csv": "application_workflow_action",
-    "areg_temp_subdivclub_demo.csv": "urban_temp_subdivision_parcel",
-    "chitta_temp_subdivclub_demo.csv": "urban_temp_subdivision_owner",
-    "full_field_patta_transfer_application_information_demo.csv": "nisd_transfer_application_info",
-    "full_field_patta_transfer_igrs_owner_demo.csv": "nisd_transfer_igrs_owner",
-    "full_field_patta_transfer_new_owner_demo.csv": "nisd_transfer_new_owner",
-    "full_field_patta_transfer_old_owner_demo.csv": "nisd_transfer_old_owner",
-    "full_field_patta_transfer_return_owner_demo.csv": "nisd_transfer_return_owner",
-    "full_field_patta_transfer_urban_demo.csv": "nisd_transfer_urban_detail",
-    "sub_div_patta_transfer_application_information_urban_demo.csv": "isd_transfer_application_info",
-    "sub_div_patta_transfer_urban_demo.csv": "isd_transfer_urban_detail",
-    "uareg_demo.csv": "urban_parcel_register",
-    "uaregmap_ds_demo.csv": "urban_parcel_signature",
-    "uchitta_natham_demo.csv": "urban_natham_chitta_owner",
-    "uchitta_nathammap_ds_demo.csv": "urban_natham_chitta_signature",
+    "appl_log_urban_demo.csv": "appl_log_urban_demo",
+    "application_workflow_demo.csv": "application_workflow_demo",
+    "areg_temp_subdivclub_demo.csv": "areg_temp_subdivclub_demo",
+    "chitta_temp_subdivclub_demo.csv": "chitta_temp_subdivclub_demo",
+    "full_field_patta_transfer_application_information_demo.csv": "full_field_patta_transfer_application_information_demo",
+    "full_field_patta_transfer_igrs_owner_demo.csv": "full_field_patta_transfer_igrs_owner_demo",
+    "full_field_patta_transfer_new_owner_demo.csv": "full_field_patta_transfer_new_owner_demo",
+    "full_field_patta_transfer_old_owner_demo.csv": "full_field_patta_transfer_old_owner_demo",
+    "full_field_patta_transfer_return_owner_demo.csv": "full_field_patta_transfer_return_owner_demo",
+    "full_field_patta_transfer_urban_demo.csv": "full_field_patta_transfer_urban_demo",
+    "sub_div_patta_transfer_application_information_urban_demo.csv": "sub_div_patta_transfer_application_information_urban_demo",
+    "sub_div_patta_transfer_urban_demo.csv": "sub_div_patta_transfer_urban_demo",
+    "uareg_demo.csv": "uareg_demo",
+    "uaregmap_ds_demo.csv": "uaregmap_ds_demo",
+    "uchitta_natham_demo.csv": "uchitta_natham_demo",
+    "uchitta_nathammap_ds_demo.csv": "uchitta_nathammap_ds_demo",
 }
 
 # Service codes handled by SIS, per documents/tamilnilam_urban_services_and_districts.txt.

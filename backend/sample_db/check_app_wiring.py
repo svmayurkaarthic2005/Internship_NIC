@@ -79,9 +79,9 @@ async def main(run_chat: bool) -> int:
 
         # the sample tables and the app tables share this database
         n_sample = (await db.execute(text(
-            "SELECT count(*) FROM urban_application_log"))).scalar()
+            "SELECT count(*) FROM appl_log_urban_demo"))).scalar()
         n_apps = (await db.execute(text("SELECT count(*) FROM applications"))).scalar()
-        print(f"urban_application_log rows: {n_sample}   applications rows: {n_apps}")
+        print(f"appl_log_urban_demo rows: {n_sample}   applications rows: {n_apps}")
         if not n_sample or not n_apps:
             failures.append("sample tables or projected applications are empty")
 

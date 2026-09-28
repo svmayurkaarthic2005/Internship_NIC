@@ -254,10 +254,10 @@ def main(clean_path: Path, out_train: Path, out_val: Path,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("clean", type=Path)
-    parser.add_argument("--train-out", type=Path, default=Path("train.jsonl"))
-    parser.add_argument("--val-out", type=Path, default=Path("validation.jsonl"))
+    parser.add_argument("--train-out", type=Path, default=Path("lora_training/train.jsonl"))
+    parser.add_argument("--val-out", type=Path, default=Path("lora_training/validation.jsonl"))
     parser.add_argument("--val-fraction", type=float, default=0.05)
-    parser.add_argument("--report", type=Path, default=Path("lora_dataset_validation_report.json"))
+    parser.add_argument("--report", type=Path, default=Path("lora_training/lora_dataset_validation_report.json"))
     args = parser.parse_args()
     raise SystemExit(main(args.clean, args.train_out, args.val_out,
                           args.val_fraction, args.report))

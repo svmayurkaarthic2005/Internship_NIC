@@ -171,7 +171,7 @@ async def main(out_path: Path, officer_email: str | None) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=Path, default=Path("eval_baseline_results.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("lora_training/eval_baseline_results.jsonl"))
     parser.add_argument("--officer", type=str, default=None)
     args = parser.parse_args()
     raise SystemExit(asyncio.run(main(args.out, args.officer)))

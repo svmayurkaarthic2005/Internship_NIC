@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     # the request with nothing to show; on timeout the caller gets a readable
     # message instead.
     LLM_TIMEOUT_SECONDS: float = 90.0
+    # See services/llm_gate.py: generations allowed at once, and how long to wait for a slot.
+    LLM_MAX_CONCURRENT: int = 2
+    LLM_QUEUE_WAIT_SECONDS: float = 20.0
+    # Stream deadlines: first token (slow with a 16k prompt), gap between chunks, whole reply.
+    LLM_FIRST_TOKEN_TIMEOUT_SECONDS: float = 60.0
+    LLM_STREAM_IDLE_SECONDS: float = 30.0
+    LLM_STREAM_TOTAL_SECONDS: float = 180.0
+    # HTTP timeouts on the Ollama chat and embedding clients.
+    LLM_HTTP_READ_TIMEOUT: float = 100.0
+    EMBED_TIMEOUT_SECONDS: float = 15.0
     # How long Ollama keeps the chat model in memory after the last request.
     LLM_KEEP_ALIVE: str = "30m"
 
@@ -140,7 +150,8 @@ class Settings(BaseSettings):
     # How long an attachment stays answerable. Cleanup is explicit (a sweep at
     # startup and on upload), so a restart never silently loses a live
     # attachment -- it is in PostgreSQL, not in process memory.
-    UPLOAD_RETENTION_HOURS: int = 72
+    UPLOAD_RETENTION_MINUTES: int = 15
+    UPLOAD_SWEEP_INTERVAL_SECONDS: int = 60
 
     # A follow-up ("the 2nd one", "how many of them") only refers to what was shown
     # this recently. Older than this, the list is gone from the officer's mind and

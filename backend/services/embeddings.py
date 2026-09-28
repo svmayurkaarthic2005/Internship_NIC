@@ -12,7 +12,9 @@ logger = get_logger(__name__)
 # Initialize Ollama embeddings
 embeddings_model = OllamaEmbeddings(
     model=settings.EMBEDDING_MODEL,
-    base_url=settings.OLLAMA_BASE_URL
+    base_url=settings.OLLAMA_BASE_URL,
+    # Called from worker threads that can't be cancelled, so the client needs its own timeout.
+    client_kwargs={"timeout": settings.EMBED_TIMEOUT_SECONDS},
 )
 
 

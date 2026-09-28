@@ -56,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.schemas import OfficerContext
-from backend.services import rag
+from backend.services import llm_gate, rag
 from backend.services.agent_tools import ToolContext, execute_tool, tool_schemas
 from backend.utils.logger import get_logger
 
@@ -274,7 +274,8 @@ async def gather_evidence(
     for round_no in range(1, rounds_allowed + 1):
         evidence.rounds = round_no
         try:
-            reply = await (bound if round_no == 1 else followup).ainvoke(messages)
+            async with llm_gate.llm_slot():
+                reply = await (bound if round_no == 1 else followup).ainvoke(messages)
         except Exception as exc:
             if round_no == 1:
                 raise AgentUnavailable(f"LLM tool call failed: {exc}") from exc

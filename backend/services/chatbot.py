@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, date, timezone
 import asyncio
 import contextvars
 import time
+import difflib
 import re
 import json
 from pathlib import Path
@@ -23,7 +24,7 @@ from backend.config import (
 # a common verb, so "does encroachment erode the boundary" was answered with
 # Erode's district code. \b keeps it to the whole word.
 _DISTRICT_NAME_RE = re.compile(
-    r"\b(" + "|".join(re.escape(_n) for _n in DISTRICT_NAME_MAP) + r")\b",
+    r"\b(" + "|".join(re.escape(_n) for _n in DISTRICT_NAME_MAP) + r")\b", # checks district names in English with regex
     re.IGNORECASE)
 # Same substring trap for the Tanglish cues beside it: "oda" is a plain
 # substring of "today", so "what's today's district code" read as Tanglish
@@ -1366,6 +1367,7 @@ _NEG_CHANNEL_RE = re.compile(
     rf"\b{_NEG_LEAD}\s+(?:the\s+|any\s+|all\s+|of\s+)*(?:from\s+|via\s+|through\s+)?"
     r"(csc|citizen|sub[\s-]?registrar|sro)\b(?:\s+(?:ones?|applications?|apps?))?", re.IGNORECASE)
 _NEG_EXCLUDE = contextvars.ContextVar("neg_exclude", default=None)
+_RAW_MESSAGE = contextvars.ContextVar("raw_message", default=None)
 _SORT_RESET = contextvars.ContextVar("sort_reset", default=False)
 _VISIT_KEY = {"completed": "completed", "complete": "completed", "done": "completed", "finished": "completed",
               "unscheduled": "unscheduled", "scheduled": "scheduled", "overdue": "overdue"}
@@ -1694,7 +1696,7 @@ def _contentless_reply(kind: str, language: str, message: str = "") -> str:
 # through untouched -- catching a real question is a worse failure than letting
 # an odd off-topic one reach the model.
 _OUT_OF_SCOPE_CUES = (
-    "say something", "what is love", "meaning of life", "sing ", "tell me a story", "riddle",
+    "say something", "what is love", "meaning of life", "sing a ", "sing me", "sing song", "tell me a story", "riddle",
     "chief minister", "prime minister", "who is the president", "who is the governor",
     "who is the collector", "who is the mla", "my salary", "salary slip", "leave balance",
     "bitcoin", "stock price", "share price", "cricket score", "movie", "song lyrics",
@@ -2321,6 +2323,60 @@ def _unknown_qualifier_reply(words, language: str) -> str:
             "ward or block, month or year, or overdue -- which should I use?")
 
 
+_CN_NUMBER_RE = re.compile(r"\bcn\s*(?:number|numbr|nmber|no\b|எண்)", re.IGNORECASE)
+
+_TERM_ASK_RES = (
+    re.compile(r"^(?:please\s+)?(?:what\s+(?:is|are|does|do)|what'?s|whats|define|explain|meaning\s+of|"
+               r"tell\s+me\s+(?:about|the\s+meaning\s+of))\s+(?:a\s+|an\s+|the\s+)?([a-z]{5,})"
+               r"(?:\s+(?:mean|means|meaning))?\s*[?.!]*$", re.IGNORECASE),
+    re.compile(r"^([a-z]{5,})\s+(?:meaning|means|definition|enna|endral\s+enna|na\s+enna|artham)\s*[?.!]*$",
+               re.IGNORECASE),
+)
+_SUPERSEDED_FAMILY = ("supersed", "supercede", "superced")
+_CORPUS_WORDS: Optional[frozenset] = None
+
+
+def _corpus_words() -> frozenset:
+    global _CORPUS_WORDS
+    if _CORPUS_WORDS is None:
+        _CORPUS_WORDS = frozenset(re.findall(r"[a-z]{5,}", _corpus_blob().lower()))
+    return _CORPUS_WORDS
+
+
+def _unknown_term(message: str) -> Optional[str]:
+    """The word in "what is X" / "X meaning" when X is not an SIS term (nor a typo of one)."""
+    text = (message or "").strip()
+    match = next((m for m in (rx.match(text) for rx in _TERM_ASK_RES) if m), None)
+    if not match:
+        return None
+    word = match.group(1).lower()
+    known = set(_GLOSSARY) | set(_corpus_words())
+    shares_stem = any(k.startswith(word[:6]) or word.startswith(k[:6]) for k in known if len(k) >= 6)
+    if word in known or shares_stem or difflib.get_close_matches(word, list(known), n=1, cutoff=0.8):
+        return None
+    if parse_intent(message) != "general_query" or _is_out_of_scope(message):
+        return None
+    return word
+
+
+def _unknown_term_reply(word: str, language: str) -> str:
+    ta = language in ("ta", "tanglish")
+    if any(word.startswith(p) for p in _SUPERSEDED_FAMILY):
+        return ("\"superseded\" SIS ஆவணங்களில் வரையறுக்கப்பட்ட சொல் அல்ல. இந்த உதவியாளரின் பதில்களில் அது "
+                "புதிய குறியீட்டால் மாற்றப்பட்ட பழைய குறியீட்டைக் குறிக்கிறது — புவியியல் மாஸ்டரில் உள்ள பழைய "
+                "தாலுகா / நகர / பிளாக் குறியீடுகள்; பதிவேட்டில் அவை இல்லை. \"old block code\" என்று கேளுங்கள்."
+                if ta else
+                "\"Superseded\" is not defined as a term in the SIS documents. Where it appears in this "
+                "assistant's answers it means an old code that a newer one has replaced -- the old taluk / "
+                "town / block codes in the geography master, which the register does not hold. Ask for the "
+                "\"old block code\" to see that answer.")
+    return (f"\"{word}\" SIS ஆவணங்களில் உள்ள சொல் அல்ல, எனவே அதற்கு நான் பொருள் யூகிக்க மாட்டேன். "
+            "ISD, NISD, patta, sub-division, field visit, overdue, CAN, IGRS போன்ற SIS சொற்களை விளக்க முடியும்."
+            if ta else
+            f"\"{word}\" is not a term in the SIS documents, so I will not guess a meaning for it. I can "
+            "explain SIS terms such as ISD, NISD, patta, sub-division, field visit, overdue, CAN or IGRS.")
+
+
 def _special_scope_kind(message: str):
     if _fullform_term(message):
         return "fullform"
@@ -2328,6 +2384,10 @@ def _special_scope_kind(message: str):
         return "fullform_ask"          # "full form" with no term in the conversation to expand
     if _unknown_fullform(message):
         return "unknown_fullform"
+    if _CN_NUMBER_RE.search(message or ""):
+        return "cn_number"             # "cn number" -- not a term; ask, never guess it is the CAN
+    if _unknown_term(message):
+        return "unknown_term"
     if _unknown_from_word(message):
         return "unknown_from"
     if _unknown_qualifier(message):
@@ -2365,6 +2425,13 @@ def _special_scope_reply(message: str, language: str) -> str:
                 "(எ.கா. IGRS, SRO, CSC, CAN, SLA, DSC, SD, DIS)." if language in ("ta", "tanglish") else
                 f"I do not have the full form of {w} in the SIS documents, so I will not guess. I can give the ones the department "
                 "documents define -- for example IGRS, SRO, CSC, CAN, SLA, DSC, SD, DIS.")
+    if _special_scope_kind(message) == "unknown_term":
+        return _unknown_term_reply(_unknown_term(message), language)
+    if _special_scope_kind(message) == "cn_number":
+        return ("'cn' என்பது எனக்குத் தெரிந்த சொல் அல்ல. CAN எண் (Citizen Access Number) வேண்டுமா? "
+                "\"CAN எண்\" என்று கேளுங்கள், தருகிறேன்." if language in ("ta", "tanglish") else
+                "I do not recognise \"cn\". Did you mean the CAN number (Citizen Access Number)? "
+                "Ask for \"CAN number\" and I will give it.")
     if _special_scope_kind(message) == "unknown_qualifier":
         return _unknown_qualifier_reply(_unknown_qualifier(message), language)
     if _special_scope_kind(message) == "unknown_from":
@@ -5537,7 +5604,7 @@ def build_isd_processing_answer(message: str, structured_data: Dict[str, Any], a
 # ── Owner photo / image retrieval requests ──────────────────────────────────
 # The SIS records projected from the TAMILNILAM urban extracts hold no owner
 # photograph. The source `owner_photo` / `owner_image` columns
-# (nisd_transfer_*_owner, nisd_transfer_igrs_owner) are placeholders — every
+# (nisd_transfer_*_owner, full_field_patta_transfer_igrs_owner_demo) are placeholders — every
 # value is `-`, an empty string, or NULL — and the ORM `owners` table has no
 # image column at all. So there is nothing to return as a PNG/JPG. Rather than
 # let the request fall through to RAG (which answers vaguely), intercept it and
@@ -6303,7 +6370,7 @@ def _month_name_answer(sd: dict, app_no: str, message_lower: str,
             f"({parsed.isoformat()}).")
 
 
-# Columns of the source `application_workflow_action` log that are NOT projected
+# Columns of the source `application_workflow_demo` log that are NOT projected
 # into the officer's register (layer 2). `get_application_detail()` never returns
 # them, so a pointed question about one used to fall through to the LLM/agent
 # (an ungrounded guess) or -- for "received flag" -- get caught by the bare
@@ -6347,7 +6414,7 @@ _BARE_IP_RE = re.compile(r"(?<![a-z0-9_])ip(?![a-z0-9_])")
 
 
 def _asked_untracked_wf_field(message_lower: str) -> Optional[str]:
-    """The `application_workflow_action` column a pointed question is about, when
+    """The `application_workflow_demo` column a pointed question is about, when
     it is one the chatbot has no data for. None otherwise."""
     for key, _label, cues in _UNTRACKED_WF_FIELDS:
         if any(c in message_lower for c in cues):
@@ -6525,7 +6592,7 @@ def _untracked_wf_field_answer(app_no: str, field_key: str, is_tamil: bool) -> s
         f"workflow remarks, the current stage, and the from/to desk of each hop.")
 
 
-# Columns of the source `urban_application_log` extract that `build_app_tables.py`
+# Columns of the source `appl_log_urban_demo` extract that `build_app_tables.py`
 # does NOT project into the officer's register (layer 2). `get_application_detail`
 # never returns them, so a pointed question about one used to be fuzzy-matched to
 # a semantically-near ORM field and answered WRONG with confidence:
@@ -6539,7 +6606,7 @@ def _untracked_wf_field_answer(app_no: str, field_key: str, is_tamil: bool) -> s
 # contains ("land use description" before "land use", "group ... number" before
 # "survey"/"patta").
 # NOTE: patta-transfer / registration-detail extract columns
-# (`nisd_/isd_transfer_urban_detail`) are handled separately by
+# (`nisd_/sub_div_patta_transfer_urban_demo`) are handled separately by
 # `_asked_untracked_transfer_field` / `_asked_registration_detail` below -- do
 # not add them here.
 _UNTRACKED_SOURCE_FIELDS = [
@@ -6584,7 +6651,7 @@ _UNTRACKED_SOURCE_FIELDS = [
 
 
 def _asked_untracked_source_field(message_lower: str) -> Optional[str]:
-    """The `urban_application_log` column a pointed question is about, when it is
+    """The `appl_log_urban_demo` column a pointed question is about, when it is
     one the ORM projection drops. None otherwise."""
     for key, _label, cues in _UNTRACKED_SOURCE_FIELDS:
         if any(c in message_lower for c in cues):
@@ -6597,19 +6664,19 @@ def _untracked_source_field_answer(app_no: str, field_key: str, is_tamil: bool) 
     if is_tamil:
         return (
             f"விண்ணப்பம் {app_no}-ன் {label} தகவல் உங்கள் SIS பதிவேட்டில் "
-            f"இல்லை. அது மூல விண்ணப்பப் பதிவில் (urban_application_log / "
+            f"இல்லை. அது மூல விண்ணப்பப் பதிவில் (appl_log_urban_demo / "
             f"{field_key}) மட்டுமே உள்ளது — இந்த உதவியாளர் அந்த அடுக்கை "
             f"வினவுவதில்லை. சர்வே எண், பட்டா எண், பரப்பளவு (ச.மீ), நில வகை, "
             f"உட்பிரிவுகள், நிலை, கள ஆய்வு ஆகியவற்றை என்னால் தர முடியும்.")
     return (
         f"Application {app_no}'s {label} is not held in your SIS register. It "
-        f"exists only in the source application extract (urban_application_log / "
+        f"exists only in the source application extract (appl_log_urban_demo / "
         f"{field_key}), which this assistant does not query. I can give you the "
         f"survey number, patta number, area (sq.m), land type, sub-divisions, "
         f"status and field visit.")
 
 
-# Columns of `urban_parcel_register` that `build_app_tables.py` reads for the
+# Columns of `uareg_demo` that `build_app_tables.py` reads for the
 # geography / area / patta / land-type projection but does NOT carry into
 # `survey_numbers` / `sub_divisions`. Unlike the owner extract these are largely
 # POPULATED in the source (soil ~540 rows, tax_per_hectare / total_tax / the
@@ -6705,7 +6772,7 @@ _UNTRACKED_PARCEL_FIELDS = [
 
 
 def _asked_untracked_parcel_field(message_lower: str) -> Optional[str]:
-    """The `urban_parcel_register` column a pointed survey question is about,
+    """The `uareg_demo` column a pointed survey question is about,
     when it is one the ORM projection drops. None otherwise."""
     for key, _label, cues in _UNTRACKED_PARCEL_FIELDS:
         if any(c in message_lower for c in cues):
@@ -6809,21 +6876,21 @@ def _untracked_parcel_field_answer(survey_no: str, field_key: str,
     if is_tamil:
         return (
             f"கணக்கெண்{ref}-ன் {label} உங்கள் SIS பதிவேட்டில் இல்லை. அது மூல "
-            f"நகர்ப்புற நிலப் பதிவேட்டில் (urban_parcel_register / {field_key}) "
+            f"நகர்ப்புற நிலப் பதிவேட்டில் (uareg_demo / {field_key}) "
             f"உள்ளது — இந்த உதவியாளர் அந்த அடுக்கை வினவுவதில்லை. கணக்கெண், "
             f"பட்டா எண், பரப்பளவு (ச.மீ), நில வகை, உட்பிரிவுகள், ஆக்கிரமிப்பு / "
             f"வழக்கு நிலை ஆகியவற்றை என்னால் தர முடியும்.")
     return (
         f"The {label} for survey{ref} is not held in your SIS register. It lives "
-        f"in the source parcel register (urban_parcel_register / {field_key}), "
+        f"in the source parcel register (uareg_demo / {field_key}), "
         f"which this assistant's projection does not carry. What I can give you "
         f"for a survey number: the patta number, the area (sq.m), the land type, "
         f"the sub-divisions, and the encroachment / litigation flags.")
 
 
 # Columns of the parcel / owner digital-signature extracts
-# (`urban_parcel_signature` = uaregmap_ds_demo.csv,
-#  `urban_natham_chitta_signature` = uchitta_nathammap_ds_demo.csv). These hold
+# (`uaregmap_ds_demo` = uaregmap_ds_demo.csv,
+#  `uchitta_nathammap_ds_demo` = uchitta_nathammap_ds_demo.csv). These hold
 # the X.509 / PKCS#7 DSC blob applied to the cadastral parcel and natham-chitta
 # records; `build_app_tables.py` projects NONE of them into layer 2, so
 # `get_application_detail()` never returns them. A pointed question about one
@@ -6909,7 +6976,7 @@ def _untracked_signature_field_answer(ref: str, field_key: str, is_tamil: bool) 
             return (
                 f"{ref_txt} — படிவம் 8 எண் உங்கள் SIS பதிவேட்டில் இல்லை. "
                 f"பதிவேட்டில் உள்ள எந்த விண்ணப்பத்திற்கும் படிவம் 8 எண் "
-                f"கிடையாது; மூல கையொப்ப அட்டவணையின் (urban_parcel_signature) "
+                f"கிடையாது; மூல கையொப்ப அட்டவணையின் (uaregmap_ds_demo) "
                 f"form8_number நெடுவரிசை முழுவதும் காலியாக உள்ளது. அனுமதிக்கும் "
                 f"போது வலய நிலை தாசில்தார் பட்டா மாற்ற ஆணையை உருவாக்குகிறார் — "
                 f"முடிவு தேதி, கையொப்பமிட்டவர், பட்டா எண், நிலை ஆகியவற்றை "
@@ -6924,7 +6991,7 @@ def _untracked_signature_field_answer(ref: str, field_key: str, is_tamil: bool) 
     if is_tamil:
         where_ta = (
             "மூல பட்டா / நத்தம்-சிட்டா கையொப்ப அட்டவணையில் "
-            "(urban_parcel_signature / urban_natham_chitta_signature) மட்டுமே "
+            "(uaregmap_ds_demo / uchitta_nathammap_ds_demo) மட்டுமே "
             "உள்ளது — இந்த உதவியாளர் அந்த அடுக்கை வினவுவதில்லை"
             if kind == "source" else
             "மூல கையொப்ப அட்டவணையின் ஒவ்வொரு வரிசையிலும் காலியாக உள்ளது; "
@@ -6936,7 +7003,7 @@ def _untracked_signature_field_answer(ref: str, field_key: str, is_tamil: bool) 
             f"ஆகியவற்றை என்னால் தர முடியும்.")
     where_en = (
         "It exists only in the source parcel / natham-chitta digital-signature "
-        "extract (urban_parcel_signature / urban_natham_chitta_signature), which "
+        "extract (uaregmap_ds_demo / uchitta_nathammap_ds_demo), which "
         "this assistant's projection does not carry"
         if kind == "source" else
         "That column is blank on every row of the source signature extract and "
@@ -6949,7 +7016,7 @@ def _untracked_signature_field_answer(ref: str, field_key: str, is_tamil: bool) 
 
 
 # Columns of the NISD / ISD application-info extracts
-# (nisd_transfer_application_info / isd_transfer_application_info) that
+# (full_field_patta_transfer_application_information_demo / sub_div_patta_transfer_application_information_urban_demo) that
 # `build_app_tables.py` reads but does NOT project into the ORM `applications`
 # / `applicants` rows. A pointed question about one used to fall through to the
 # LLM/agent -- or, for "challan date" and "documents received", get fuzzy-matched
@@ -7054,14 +7121,14 @@ def _untracked_appinfo_field_answer(app_no: str, field_key: str, is_tamil: bool)
         return (
             f"விண்ணப்பம் {app_no}-ன் {label} தகவல் உங்கள் SIS பதிவேட்டில் "
             f"சேமிக்கப்படவில்லை. அது மூல விண்ணப்பத் தகவல் பிரிவில் "
-            f"(nisd_/isd_transfer_application_info / {field_key}) மட்டுமே உள்ளது "
+            f"(nisd_/sub_div_patta_transfer_application_information_urban_demo / {field_key}) மட்டுமே உள்ளது "
             f"— இந்த உதவியாளர் அந்த அடுக்கை வினவுவதில்லை. விண்ணப்பதாரர் விவரம், "
             f"கட்டணம் மற்றும் சலான் எண், கட்டண முறை, ஆவண நிலை, கள ஆய்வு "
             f"ஆகியவற்றை என்னால் தர முடியும்.")
     return (
         f"Application {app_no}'s {label} is not held in your SIS register. It "
         f"exists only in the source application-info extract "
-        f"(nisd_/isd_transfer_application_info / {field_key}), which this "
+        f"(nisd_/sub_div_patta_transfer_application_information_urban_demo / {field_key}), which this "
         f"assistant does not query. I can give you the applicant details, the "
         f"fee and challan number, the payment mode, the document status and the "
         f"field visit.")
@@ -7148,7 +7215,7 @@ _UNTRACKED_GEO_MASTER_FIELDS = [
         "next patta number", "next patta no", "next_patta_no", "next patta",
         "next available patta", "patta number counter", "patta counter",
         "அடுத்த பட்டா எண்"]),
-    ("old_codes", "the master's superseded (old) taluk / town / block codes", [
+    ("old_codes", "old (superseded) taluk / town / block code", [
         "old taluk code", "old town code", "old block code", "old_taluk_code",
         "old_town_code", "old_block_code", "previous block code",
         "superseded code", "பழைய குறியீடு"]),
@@ -7219,6 +7286,8 @@ def _asked_untracked_geo_master_field(message_lower: str) -> Optional[str]:
 def _untracked_geo_master_field_answer(field_key: str, is_tamil: bool) -> str:
     label = next(l for k, l, _c in _UNTRACKED_GEO_MASTER_FIELDS if k == field_key)
     if is_tamil:
+        if field_key == "old_codes":
+            label = "பழைய (மாற்றப்பட்ட) தாலுகா / நகர / பிளாக் குறியீடு"
         return (
             f"{label} தகவல் உங்கள் SIS பதிவேட்டில் இல்லை. நகரம் / வார்டு / "
             f"பிளாக் ஆகியவற்றின் TAMILNILAM மூல அட்டவணையில் மட்டுமே அது உள்ளது "
@@ -7233,7 +7302,7 @@ def _untracked_geo_master_field_answer(field_key: str, is_tamil: bool) -> str:
 
 
 # Columns of the natham-chitta / IGRS owner extracts
-# (`urban_natham_chitta_owner`, `nisd_transfer_igrs_owner`) that
+# (`uchitta_natham_demo`, `full_field_patta_transfer_igrs_owner_demo`) that
 # `build_app_tables.py` does NOT project into the ORM `owners` /
 # `survey_ownership` rows. Most are empty in the source too:
 # `ration_card_number`, `epic_no`, `occupation_code`, `assignment_number`,
@@ -7284,7 +7353,7 @@ _UNTRACKED_OWNER_FIELDS = [
         "relation number", "relation no", "relation_no", "rel num", "rel_num",
         "உறவு எண்"]),
     # `relationship` (s/o, w/o, d/o) IS now projected: build_app_tables.py maps
-    # urban_natham_chitta_owner.relationship_code -> owners.relationship_type
+    # uchitta_natham_demo.relationship_code -> owners.relationship_type
     # (5->s/o, 4->w/o, 6->d/o; code 0 stays NULL). get_survey_owners returns it
     # and _owner_detail_line renders it beside the relative name, so a plain
     # "owner's relationship" question is answered, not deflected. Only the raw
@@ -7433,7 +7502,7 @@ def _untracked_owner_field_answer(app_no: str, field_key: str, is_tamil: bool) -
 
 
 # Columns of the patta-transfer / registration detail extracts
-# (`nisd_/isd_transfer_urban_detail`) that `build_app_tables.py` does NOT
+# (`nisd_/sub_div_patta_transfer_urban_demo`) that `build_app_tables.py` does NOT
 # project into `patta_transfers`. The reason, registration place / date, old
 # patta, transfer order, and the SIS's own recommendation / remarks ARE
 # projected now and answered from the field map -- these are the rest. A
@@ -7448,7 +7517,7 @@ _UNTRACKED_TRANSFER_FIELDS = [
     ("legal_heir_certificate_issue_place", "legal-heir certificate issue place", [
         "legal heir certificate", "legal-heir certificate", "legal heir cert",
         "சட்டப்பூர்வ வாரிசு சான்றிதழ்"]),
-    # Sub-division sketch milestone dates. `isd_transfer_urban_detail` carries
+    # Sub-division sketch milestone dates. `sub_div_patta_transfer_urban_demo` carries
     # `sketch_sent_date` (31/50) and `sketch_received_date` (0/50); neither is
     # projected. Without this the field map sends "when was the sketch sent" to
     # `submission_date` and answers the filing date.
@@ -7693,7 +7762,7 @@ def _untracked_transfer_field_answer(app_no: str, field_key: str, is_tamil: bool
     if is_tamil:
         return (
             f"விண்ணப்பம்{ref}-ன் {label} உங்கள் SIS பதிவேட்டில் எடுக்கப்படவில்லை. அது "
-            f"மூல பதிவு/மாற்ற விவர அடுக்கில் (nisd_/isd_transfer_urban_detail / "
+            f"மூல பதிவு/மாற்ற விவர அடுக்கில் (nisd_/sub_div_patta_transfer_urban_demo / "
             f"{field_key}) மட்டுமே உள்ளது — இந்த உதவியாளர் அதை வினவுவதில்லை, மேலும் "
             f"அந்த நெடுவரிசை பெரும்பாலான வரிசைகளில் காலியாகவே உள்ளது. மாற்றத்திற்கு "
             f"என்னால் தர முடிந்தவை: மாற்றக் காரணம், பதிவு இடம் மற்றும் தேதி, பதிவு "
@@ -7702,7 +7771,7 @@ def _untracked_transfer_field_answer(app_no: str, field_key: str, is_tamil: bool
     return (
         f"The {label} for application{ref} is not carried in your SIS register. "
         f"It exists only in the source registration/transfer detail extract "
-        f"(nisd_/isd_transfer_urban_detail / {field_key}), which this assistant "
+        f"(nisd_/sub_div_patta_transfer_urban_demo / {field_key}), which this assistant "
         f"does not query — and that column is blank on most rows there too. For "
         f"a transfer I can give you: the transfer reason, the registration place "
         f"and date, the registered deed number, the old / new patta number, the "
@@ -7799,7 +7868,7 @@ def _sub_division_numbers(app) -> tuple:
 def _render_submission_channel_basis(sd: dict, is_tamil: bool) -> str:
     """Show the working behind `applications.submission_channel`.
 
-    The channel is derived once, when `urban_application_log` is projected, by
+    The channel is derived once, when `appl_log_urban_demo` is projected, by
     `can_channel()` in backend/sample_db/identifiers.py, from two columns:
     `source_name` (a placeholder `-` means no operator account touched the file,
     so it is the Sub-Registrar's unattended IGRS referral; an operator / VLE code
@@ -7969,7 +8038,7 @@ def _render_submission_channel_answer(structured_data: dict, language: str,
                                       message: str = "") -> str:
     """Direct answer to "did this application come from a citizen or a CSC?".
 
-    The channel is a stored fact, derived from urban_application_log:
+    The channel is a stored fact, derived from appl_log_urban_demo:
     `source_name = '-'` is the Sub-Registrar's unattended IGRS referral, an
     operator code with `camp_flag = 'P'` is a citizen filing at a special camp,
     and any other operator code is a CSC counter.
@@ -9490,10 +9559,20 @@ _RULE_DEFN_RE = re.compile(
     r"|\bwhat\s+is\s+igrs\s+form\b",
     re.IGNORECASE,
 )
+# "CAN எண் என்ன" -- bare Tamil "என்ன" ("what") after the subject, the plainer
+# twin of "என்றால் என்ன" ("what does X mean") above. Tamil has no articles, so
+# unlike "a can number" vs "the can number" in English, this exact phrasing is
+# also the commonest follow-up ("status of <app>" then "CAN எண் என்ன?" wants
+# THAT application's CAN, not the definition). Kept separate from
+# `_RULE_STRONG_RE` so the caller can drop it when an application is already
+# in view -- weak on its own, strong only when nothing else already answers it.
+_TAMIL_BARE_WHAT_RE = re.compile(r"என்ன")
 
 
-def _is_rule_shaped(msg: str) -> bool:
-    return bool(_RULE_STRONG_RE.search(msg) or _RULE_DEFN_RE.search(msg))
+def _is_rule_shaped(msg: str, allow_bare_tamil_what: bool = True) -> bool:
+    if _RULE_STRONG_RE.search(msg) or _RULE_DEFN_RE.search(msg):
+        return True
+    return allow_bare_tamil_what and bool(_TAMIL_BARE_WHAT_RE.search(msg))
 _SRO_RE = re.compile(r"\bsro\b|\bsub[\s-]?registrar\b", re.IGNORECASE)
 # "who is the sub registrar", "what does the SRO do", "what is the role of the
 # sub registrar", "sub registrar யார்" -- role questions about the office. None
@@ -10054,7 +10133,7 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
         return None
     need = r"(?:need\w*|requir\w*|necessar\w*|mandatory|compulsory|venum|vendum|thevai\w*|தேவை\w*|வேண்டும்|கட்டாயம்|kattayam)"
     # Tamil / Tanglish: "எந்த சேவைக்கு கள ஆய்வு தேவை", "evlo service ku field visit venum"
-    if re.search(rf"(?:எந்த|எது|evlo|edhu|ethu|yentha|entha)\s*(?:சேவை|வகை|விண்ணப்ப|service|type|application)", msg) and re.search(need, msg):
+    if re.search(r"(?:எந்த|எது|evlo|edhu|ethu|yentha|entha)\s*(?:சேவை|வகை|விண்ணப்ப|service|type|application)", msg) and re.search(need, msg):
         return "fv_not_needed" if re.search(r"(?:தேவையில்லை|வேண்டாம்|vendam|thevai\s*illa|venda)", msg) else "fv_needed"
     # yes / no about the rule: "is a field visit needed for ISD", "do all applications need a field visit"
     if not re.search(r"\b(?:which|what)\b", msg) and re.search(r"\b(?:is|are|does|do|should|must|will)\b", msg) and re.search(need, msg) and re.search(
@@ -10071,11 +10150,14 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     return None
 
 
-def _igrs_can_rule_topic(message: str) -> Optional[str]:
+def _igrs_can_rule_topic(message: str, allow_bare_tamil_what: bool = True) -> Optional[str]:
     """Which IGRS/CAN rule the officer is asking about, if any.
 
     Returns None for anything naming an application -- that is a question about
-    one file, answered from its record, not from the rule.
+    one file, answered from its record, not from the rule. `allow_bare_tamil_what`
+    is False when the caller already has an application in view from context, so
+    a bare "CAN எண் என்ன?" -- ambiguous between the definition and a follow-up --
+    is left to the context-aware answer instead of claimed here.
     """
     msg = (message or "").lower()
     if not msg:
@@ -10174,7 +10256,7 @@ def _igrs_can_rule_topic(message: str) -> Optional[str]:
             return "can_length" if _yes_no else "can_format"
         return "igrs_who"
 
-    if not _is_rule_shaped(msg):
+    if not _is_rule_shaped(msg, allow_bare_tamil_what=allow_bare_tamil_what):
         return None
 
     if has_igrs and _ABSENT_RE.search(msg):
@@ -10503,7 +10585,7 @@ def _named_periods(text: str) -> set:
 
 _TYPE_CODE_WORD = {"0153": "NISD", "0154": "ISD", "0155": "MERGE"}
 _TYPE_TOKEN_RE = re.compile(r"(?<![a-z0-9])(nisd|isd|merge)(?![a-z0-9])|(?<!\d)(015[345])(?!\d)", re.IGNORECASE)
-_TYPE_TYPOS = {"nsid": "NISD", "nids": "NISD", "nisdd": "NISD", "nissd": "NISD", "nissd": "NISD",
+_TYPE_TYPOS = {"nsid": "NISD", "nids": "NISD", "nisdd": "NISD", "nissd": "NISD",
                "iisd": "ISD", "isdd": "ISD", "sid": "ISD", "mrege": "MERGE", "merg": "MERGE",
                "mergee": "MERGE", "mearge": "MERGE", "megre": "MERGE", "mreg": "MERGE"}
 _BARE_TYPE_FILLER = frozenset({"back", "to", "again", "um", "kum", "ku", "na", "naa", "ah", "aa", "pathi", "patri", "pathiyum",
@@ -10862,6 +10944,10 @@ async def _mark_session_cleared(db, session_id, officer) -> None:
             pass
 
 
+_PLURAL_REF_RE = re.compile(r"\b(?:they|their|them|those|these|all|each|every|ellam|ellaam|anaithu|avarrin|avatrin)\b"
+                            r"|அவற்றின்|இவற்றின்|அனைத்து|எல்லா", re.IGNORECASE)
+
+
 async def _load_followup_context(db, session_id, chat_history=None, message=None, officer_id=None):
     """The reference context left by the previous deterministic answer.
 
@@ -10908,7 +10994,12 @@ async def _load_followup_context(db, session_id, chat_history=None, message=None
         return None
     _nav = bool(message and fctx.nav_direction(message))
     if message and (_nav or fctx.mentions_ordinal(message) or fctx.mentions_slice(message)
-                    or fctx.field_projection(message)
+                    # a field cue reaches back to the older list only when it is plural
+                    # ("their wards"); "when was it submitted" after a single application
+                    # is about THAT application
+                    or (fctx.field_projection(message)
+                        and (parsed[0].entity != fctx.ENTITY_APPLICATION
+                             or _PLURAL_REF_RE.search(message.lower())))
                     or re.search(r"\b(?:last|first)\s+one\b", message.lower())):
         head = parsed[0]
         if head.entity == fctx.ENTITY_APPLICATION and (head.filters or {}).get("list_numbers"):
@@ -11506,6 +11597,12 @@ def _scoped_list_answer(sd: dict, resolution, message: str, language: str) -> st
     if dated and re.search(
             r"\boldest\b|\bearliest\b|\bolder\b|\bpazhusu\b|\bpazha(?:i)?y(?:a|adhu|athu)\b|பழைய", msg_lower):
         pick = min(dated, key=lambda r: r["submission_date"])
+        tied = [r["application_number"] for r in dated if r["submission_date"] == pick["submission_date"]]
+        if len(tied) > 1:
+            return (f"{len(tied)} விண்ணப்பங்கள் ஒரே நாளில் ({pick['submission_date']}) சமர்ப்பிக்கப்பட்டன: "
+                    f"{', '.join(tied)}." if is_tamil else
+                    f"{len(tied)} of those {total} share the oldest submission date "
+                    f"({pick['submission_date']}): {', '.join(tied)}.")
         return (f"{pick['application_number']} — சமர்ப்பிக்கப்பட்டது "
                 f"{pick['submission_date']}." if is_tamil else
                 f"The oldest of those {total} is {pick['application_number']}, "
@@ -11514,6 +11611,12 @@ def _scoped_list_answer(sd: dict, resolution, message: str, language: str) -> st
             r"\bnewest\b|\blatest\b|\bnewer\b|\bmore\s+recent\b|\bmost\s+recent\b"
             r"|\bputhusu\b|\bpudhusu\b|\bpu(?:th|dh)iy(?:a|adhu|athu)\b|சமீபத்திய|புதிய", msg_lower):
         pick = max(dated, key=lambda r: r["submission_date"])
+        tied = [r["application_number"] for r in dated if r["submission_date"] == pick["submission_date"]]
+        if len(tied) > 1:
+            return (f"{len(tied)} விண்ணப்பங்கள் ஒரே நாளில் ({pick['submission_date']}) சமர்ப்பிக்கப்பட்டன: "
+                    f"{', '.join(tied)}." if is_tamil else
+                    f"{len(tied)} of those {total} share the most recent submission date "
+                    f"({pick['submission_date']}): {', '.join(tied)}.")
         return (f"{pick['application_number']} — சமர்ப்பிக்கப்பட்டது "
                 f"{pick['submission_date']}." if is_tamil else
                 f"The most recent of those {total} is {pick['application_number']}, "
@@ -12277,6 +12380,217 @@ async def _stats_turn(message, session_id, officer, db, chat_history):
             "response_time_ms": 0, "table_data": None}
 
 
+_OLD_WORD_RE = re.compile(
+    r"\b(?:old|olld|previous|prev|superseded|former|earlier|pazhaya|pazhaiya|pazhya|palaya|pazhay)\b"
+    r"|old_|பழைய|பழய|முந்தைய|முன்னைய", re.IGNORECASE)
+_OLD_LEVEL_RE = re.compile(r"taluk|talk|taluq|thaluk|town|twon|block|blok|blck|தாலுகா|நகர|பிளாக்|தொகுதி", re.IGNORECASE)
+_OLD_CODE_RE = re.compile(r"code|kuriyeedu|kuriyedu|kuri|குறியீடு", re.IGNORECASE)
+_OLD_COLUMN_RE = re.compile(r"old_(?:taluk|town|block)_code", re.IGNORECASE)
+
+_TAMIL_CHARS_RE = re.compile(r"[஀-௿]")
+
+
+def _is_tamil_turn(message: str, language: str) -> bool:
+    return language in ("ta", "tanglish") or bool(_TAMIL_CHARS_RE.search(message or ""))
+
+
+async def _answer_turn(message, reply, intent, session_id, officer, db, language,
+                       out_ctx=None, context_used=False):
+    """Save a fixed reply and return it in the shape every other turn uses."""
+    await save_chat_messages(db=db, session_id=session_id, user_message=message,
+                             assistant_message=reply, language=language, response_time_ms=0,
+                             officer_id=officer.officer_id if officer else None,
+                             structured_context=out_ctx.to_json() if out_ctx else None)
+    return {"response": reply, "language": language, "intent": intent, "sources": [],
+            "timestamp": datetime.now(timezone.utc).isoformat(), "context_used": context_used,
+            "response_time_ms": 0, "table_data": None}
+
+
+def _old_codes_question(message: str) -> bool:
+    """Asks for the master's old taluk / town / block code, in any spelling or script."""
+    low = (message or "").lower()
+    if _is_mutation_request(low):
+        return False
+    if _OLD_COLUMN_RE.search(low):
+        return True
+    return bool(_OLD_WORD_RE.search(low) and _OLD_LEVEL_RE.search(low) and _OLD_CODE_RE.search(low))
+
+
+async def _old_codes_turn(message, session_id, officer, db, chat_history):
+    """Runs before the follow-up layers, which would read "old block code?" as the block column."""
+    if not _old_codes_question(message):
+        return None
+    language = detect_language(message)
+    reply = _untracked_geo_master_field_answer("old_codes", _is_tamil_turn(message, language))
+    return await _answer_turn(message, reply, "untracked_field", session_id, officer, db, language)
+
+
+def _close_match(tokens, target: str, min_len: int, cutoff: float) -> bool:
+    """True if any token is a near spelling of `target`."""
+    return any(len(t) >= min_len and difflib.SequenceMatcher(None, t, target).ratio() >= cutoff
+               for t in tokens)
+
+
+_OWNER_SHARE_FOLLOWUP_RE = re.compile(
+    r"^(?:(?:and|what about|show|tell me|the)\s+)?(?:their|its|the|his|her|each)?\s*(?:owner'?s?\s+)?"
+    r"(?:shares?|percentage|பங்கு\w*)\s*\??$", re.IGNORECASE)
+
+
+def _asked_ownership_field(message: str, has_owner_context: bool) -> Optional[str]:
+    """"share" or "type" when the question is about ownership (ownership_share, typos, Tamil...)."""
+    low = (message or "").lower()
+    if not low.strip() or _is_mutation_request(low):
+        return None
+    words = re.findall(r"[a-z]+", low)
+    about_ownership = _close_match(words, "ownership", 6, 0.8) or "உரிமை" in low
+    about_share = (_close_match(words, "share", 4, 0.75) or "percent" in low or "%" in low
+                   or "பங்கு" in low or "pangu" in low)
+    about_type = (_close_match(words, "type", 3, 0.75) or "sole" in words or "joint" in words
+                  or "வகை" in low or "vagai" in low)
+    if about_ownership and about_share:
+        return "share"
+    if about_ownership and about_type:
+        return "type"
+    if has_owner_context and _OWNER_SHARE_FOLLOWUP_RE.match(low.strip()):
+        return "share"
+    return None
+
+
+def _asked_record_timestamp(message: str) -> Optional[str]:
+    """"created", "updated", or "owner_ts" for created_at / updated_at style questions."""
+    low = (message or "").lower()
+    if _is_mutation_request(low):
+        return None
+    updated = re.search(r"updated_at|last\s+updat\w*|updat\w*\s+(?:date|on|time)|last\s+modif\w*"
+                        r"|\b(?:when|wen|whn)\b.*\bupdat\w*|கடைசியாக.*புதுப்பி|புதுப்பிக்கப்பட்ட", low)
+    created = re.search(r"created_at|creat\w*\s+(?:date|on|time)|(?:date|time)\s+(?:of\s+)?creat\w*"
+                        r"|\b(?:when|wen|whn)\b.*\bcreat\w*|எப்போது.*உருவாக்க|உருவாக்கப்பட்ட", low)
+    if (not updated and _close_match(re.findall(r"[a-z]+", low), "updated", 6, 0.75)
+            and re.search(r"\blast\b|\bwhen\b|\bdate\b|_at", low)):
+        updated = True
+    kind = "updated" if updated else ("created" if created else None)
+    if kind and re.search(r"owner|ownership|உரிமை", low):
+        return "owner_ts"
+    return kind
+
+
+def _ownership_field_answer(kind: str, survey_no, app_no, owners: list, ta: bool) -> str:
+    count = len(owners)
+    where = f"survey {survey_no}" + (f" (application {app_no})" if app_no else "")
+    if kind == "type":
+        sole = sum(1 for o in owners if str(o.get("ownership_type") or "").lower() == "sole")
+        joint = sum(1 for o in owners if str(o.get("ownership_type") or "").lower() == "joint")
+        other = f", {count - sole - joint} unspecified" if count - sole - joint else ""
+        return (f"{where}: {count} உரிமையாளர் பதிவுகள் — {sole} தனி, {joint} கூட்டு." if ta else
+                f"Ownership type for {where}: {count} owner record(s) — {sole} sole, {joint} joint{other}.")
+
+    shares = [round(float(o["ownership_share"]), 2) for o in owners
+              if o.get("ownership_share") not in (None, "", "N/A")]
+    if not shares:
+        return (f"{survey_no} க்கான உரிமைப் பங்கு பதிவேட்டில் இல்லை." if ta else
+                f"No ownership share is recorded for {where}.")
+    distinct = sorted(set(shares))
+    if len(distinct) > 1:
+        parts = ", ".join(f"{shares.count(s)} at {s:g}%" for s in distinct)
+        return f"{where}: பங்குகள் — {parts}." if ta else f"Ownership share for {where}: {parts}."
+    share = distinct[0]
+    if count == 1:
+        return (f"{where}: ஒரே உரிமையாளர் பதிவு; பங்கு {share:g}%." if ta else
+                f"Ownership share for {where}: the one owner record carries a share of {share:g}%.")
+    return (f"{where}: {count} உரிமையாளர் பதிவுகள்; ஒவ்வொன்றிலும் பங்கு {share:g}%. கூட்டு உரிமையாளர்களுக்கும் "
+            f"பதிவேடு அதே எண்ணையே வைத்திருப்பதால், நிலம் எவ்வாறு பங்கிடப்படுகிறது என்பதை இது காட்டாது." if ta else
+            f"Ownership share for {where}: the register holds {count} owner record(s), each with a share of "
+            f"{share:g}%. The register stores the same figure against every owner, joint owners "
+            f"included, so it does not show how the parcel is divided between them.")
+
+
+def _timestamp_reply(stamp: str, app_no, detail: dict, ta: bool) -> str:
+    if stamp == "created":
+        filed = detail.get("submission_date")
+        if not filed:
+            return "சமர்ப்பித்த தேதி பதிவில் இல்லை." if ta else "Its filing date is not on record."
+        return (f"{app_no} சமர்ப்பிக்கப்பட்ட (உருவாக்கப்பட்ட) தேதி: {filed}. பதிவேட்டில் தனி உருவாக்க நேரம் இல்லை." if ta else
+                f"{app_no} was filed (created) on {filed}. The register keeps no separate creation "
+                f"timestamp; the filing date is when the application was created.")
+    updated = detail.get("last_updated_datetime")
+    if not updated:
+        return "கடைசி புதுப்பிப்பு பதிவில் இல்லை." if ta else "Its last update is not on record."
+    return (f"{app_no} கடைசியாகப் புதுப்பிக்கப்பட்டது: {updated} (கடைசி பணிப்பாய்வு நடவடிக்கையின் நேரம்)." if ta else
+            f"{app_no} was last updated on {updated} — the time of its latest workflow action.")
+
+
+async def _record_field_turn(message, session_id, officer, db, chat_history):
+    """Ownership share / type and created / updated questions. Runs before the generic field
+    map, which would read "ownership type" as the application type."""
+    low = (message or "").lower()
+    if (not low.strip() or any(w in low for w in attachment_qa._DOC_WORDS)
+            or attachment_qa._PAGE_OR_FILETYPE_RE.search(low)):
+        return None
+    try:
+        ctx = await _load_followup_context(db, session_id, chat_history, message,
+                                           officer_id=officer.officer_id if officer else None)
+    except Exception:
+        ctx = None
+    field = _asked_ownership_field(message, bool(ctx and ctx.intent in ("survey_owners", "owner_lookup")))
+    stamp = None if field else _asked_record_timestamp(message)
+    if not (field or stamp):
+        return None
+    if stamp and _asked_untracked_geo_master_field(low):
+        return None  # a master-table column ("when was the ward record updated")
+
+    language = detect_language(message)
+    ta = _is_tamil_turn(message, language)
+
+    def reply_with(reply, out_ctx=None):
+        return _answer_turn(message, reply, "record_field", session_id, officer, db, language,
+                            out_ctx, context_used=bool(ctx))
+
+    if stamp == "owner_ts":
+        return await reply_with(
+            "உரிமையாளர் பதிவுகளுக்கு உருவாக்க / புதுப்பித்த தேதி SIS பதிவேட்டில் இல்லை." if ta else
+            "The register keeps no created / updated date for ownership records; it holds the "
+            "owner, share and type only.")
+
+    app_no = extract_application_number(message)
+    if not app_no and ctx and ctx.application_numbers and ctx.entity in (fctx.ENTITY_APPLICATION,
+                                                                        fctx.ENTITY_FIELD_VISIT):
+        app_no = ctx.application_numbers[0]
+    if not app_no:
+        app_no = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True)
+    survey_no = None
+    if not app_no and field:
+        survey_no = await _survey_ref(db, session_id, message, chat_history)
+        if not survey_no and ctx and ctx.survey_numbers:
+            survey_no = ctx.survey_numbers[0]  # the owners list just shown was about this survey
+    if not app_no and not survey_no:
+        return None
+
+    detail = {}
+    if app_no:
+        detail = await get_application_detail(db, app_no, officer=officer)
+        if not detail.get("found"):
+            return await reply_with(detail.get("message") or "I could not find that application in your jurisdiction.")
+        app_no = detail.get("application_id") or app_no
+
+    if field:
+        survey_no = survey_no or detail.get("survey_no")
+        data = await get_survey_owners(db, survey_no, officer=officer) if survey_no else {}
+        if not data.get("found", True) or not data.get("owners"):
+            reply = data.get("message") or "No ownership records were found for that survey number."
+        else:
+            reply = _ownership_field_answer(field, survey_no, app_no, data["owners"], ta)
+    else:
+        reply = _timestamp_reply(stamp, app_no, detail, ta)
+
+    out_ctx = None
+    if app_no:
+        out_ctx = fctx.FollowupContext(
+            entity=fctx.ENTITY_APPLICATION, application_numbers=[str(app_no).upper()],
+            filters={"owner_field": field} if field else {}, query_type="Record field",
+            intent="survey_owners" if field else "application_status")
+    return await reply_with(reply, out_ctx)
+
+
 async def _number_turn(message, session_id, officer, db, chat_history):
     """Totals, percentages, ratios, breakdowns and "how many X and how many Y", counted from the
     officer's rows (and, for a follow-up, exactly the rows on screen). None for any other message."""
@@ -12299,6 +12613,12 @@ async def _number_turn(message, session_id, officer, db, chat_history):
                      else f"There {'is' if n == 1 else 'are'} {n} survey number{'s' if n != 1 else ''} in your jurisdiction.")
     elif (_number_qa._COUNT.search(text) or _number_qa._PCT.search(text) or _number_qa._RATIO.search(text)
           or _number_qa._BREAK.search(text) or _number_qa.bare_scope_terms(text)):
+        # A question that names the field-visit domain itself ("how many field visits are
+        # pending?") is not a count over the application list on screen: the field-visit
+        # handler owns it, so stale list context must not answer it.
+        if (re.search(r"\bfield\s+visits\b|\bvisits\b|\binspections\b|கள\s*ஆய்வுகள்", text, re.IGNORECASE)
+                and not re.search(r"\bapplications?\b|விண்ணப்ப|\d{4}/|\bof\s+(?:them|those|these)\b", text, re.IGNORECASE)):
+            return None
         ctx = await _load_followup_context(db, session_id, chat_history, message,
                                            officer_id=officer.officer_id if officer else None)
         # a field-visit table on screen: "how many of them are completed?" counts the VISITS, which the
@@ -12372,7 +12692,12 @@ async def process_chat(
     loop and the attachment pipeline alike. See `readonly_guard`.
     """
     with chat_turn():
-        _rc = await _recheck_turn(message, session_id, officer, db, chat_history)
+        _RAW_MESSAGE.set(message)
+        _rc = await _old_codes_turn(message, session_id, officer, db, chat_history)
+        if _rc is None:
+            _rc = await _record_field_turn(message, session_id, officer, db, chat_history)
+        if _rc is None:
+            _rc = await _recheck_turn(message, session_id, officer, db, chat_history)
         if _rc is None:
             _rc = await _compound_followup(message, session_id, officer, db, chat_history)
         if _rc is None:
@@ -12415,7 +12740,7 @@ async def _process_chat_impl(
         # Step 0: Use provided chat history from client
         if not chat_history:
             chat_history = []
-        logger.info(f"=== CHAT CONTEXT DEBUG ===")
+        logger.info("=== CHAT CONTEXT DEBUG ===")
         logger.info(f"Received {len(chat_history)} previous messages from client")
         logger.info(f"Current message: '{message}'")
         if chat_history:
@@ -12484,7 +12809,8 @@ async def _process_chat_impl(
         # is what the Sub-Registrar channel filter did -- answers a question
         # nobody asked. The rule is a documented invariant, so it is stated in
         # Python rather than left to the model.
-        _rule_topic = _igrs_can_rule_topic(message)
+        _rule_ctx_app = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True)
+        _rule_topic = _igrs_can_rule_topic(message, allow_bare_tamil_what=not _rule_ctx_app)
         if _rule_topic:
             _rule_text = _igrs_can_rule_answer(_rule_topic, language)
             if _rule_text and _rule_topic.startswith("channel_basis"):
@@ -12521,8 +12847,17 @@ async def _process_chat_impl(
         # every time, context or not. Stand aside for just these two terms
         # when an application was named recently, and let the field-lookup
         # path (reached once _followup_ctx is resolved) answer instead.
-        if _wf_topic in ("GLOSS:ward", "GLOSS:block") and _recent_app_number_in_history(chat_history):
-            _wf_topic = None
+        if _wf_topic in ("GLOSS:ward", "GLOSS:block", "GLOSS:wards", "GLOSS:blocks"):
+            _stand_aside = _recent_app_number_in_history(chat_history)
+            # "blocks enna?" (plural, Tanglish/Tamil) after a listing asks for that column;
+            # "what is a block?" is still the definition
+            if (not _stand_aside and _wf_topic in ("GLOSS:wards", "GLOSS:blocks")
+                    and re.search(r"enna|என்ன|edhu", message.lower())):
+                _stand_aside = bool(await _load_followup_context(
+                    db, session_id, chat_history, message,
+                    officer_id=officer.officer_id if officer else None))
+            if _stand_aside:
+                _wf_topic = None
         if _wf_topic:
             _wf_text = _workflow_steps_answer(_wf_topic, language in ("ta", "tanglish"))
             logger.info(f"Answered the {_wf_topic} workflow-steps question deterministically")
@@ -13148,10 +13483,12 @@ async def _process_chat_impl(
         # a plan with no prompt is answered without calling the LLM.
         _att_plan = None if _attachment_turn_is_not_about_a_file(message) else await attachment_qa.plan_answer(
             db=db, officer=officer, session_id=session_id,
-            message=message, intent=intent, language=language)
+            message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
             if _att_plan.prompt:
                 res_txt = await call_llama(_att_plan.prompt)
+                if _att_plan.retry_prompt and attachment_qa.is_refusal(res_txt):
+                    res_txt = await call_llama(_att_plan.retry_prompt)
             else:
                 res_txt = _att_plan.text
             # Leave a focus behind only when this turn resolved to exactly one
@@ -13727,13 +14064,13 @@ async def _process_chat_impl(
                 _uof_app, _uoa_lbl, language in ("ta", "tanglish"))
             logger.info(f"Responded 'not a register field' for owner attr {_uoa_lbl!r}")
 
-        # A `urban_parcel_register` column the survey projection drops (soil,
+        # A `uareg_demo` column the survey projection drops (soil,
         # irrigation, the tax variants, double-crop / partition / priority
         # flags, old survey number, Form 6/7/8, door / street code, ...). Name
         # it as not held, before `survey_detail` answers with the generic parcel
         # card that omits it. `_UNTRACKED_SOURCE_FIELDS` is checked first when an
         # application number is in view -- it is the narrower, more specific
-        # list for `urban_application_log` columns and must win where the two
+        # list for `appl_log_urban_demo` columns and must win where the two
         # overlap (soil type, tax rate, tax/hectare, land use). Only the fields
         # neither list shares (municipal tax, total tax, old survey/subdivision
         # number, Form 6/7/8, the assignment/relinquishment/alienation/
@@ -14260,7 +14597,7 @@ async def _process_chat_impl(
                 from backend.services.postgres import get_jurisdiction_filter
                 
                 today = date.today()
-                logger.info(f"=== OVERDUE FIELD VISITS QUERY ===")
+                logger.info("=== OVERDUE FIELD VISITS QUERY ===")
                 logger.info(f"Today: {today}")
                 logger.info(f"Officer ID: {officer.officer_id}")
                 
@@ -14855,44 +15192,43 @@ async def _process_chat_impl(
             structured_data["query_type"] = "Ward Directory"
 
         elif intent == "completion_rate":
-            _msg_lower_cr = message.lower()
-            _this_month = any(p in _msg_lower_cr for p in ["this month", "month", "monthly", "current month"])
-            _today_cr = date.today()
-            _month_start = _today_cr.replace(day=1)
+            message_lower = message.lower()
+            is_this_month = any(p in message_lower for p in ["this month", "month", "monthly", "current month"])
+            month_start = date.today().replace(day=1)
 
             # "What is my completion rate in June 2026" named a period the
             # handler never looked at, so it answered with the all-time rate.
-            _cr_start, _cr_end, _cr_label = _period_from_message(message)
+            period_start, period_end, period_label = _period_from_message(message)
 
-            if _cr_start and _cr_end:
-                _cr_window = and_(Application.submission_date >= _cr_start,
-                                  Application.submission_date <= _cr_end)
+            if period_start and period_end:
+                period_window = and_(Application.submission_date >= period_start,
+                                     Application.submission_date <= period_end)
                 completed_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
                         Application.current_status.in_(["approved", "rejected"]),
-                        _cr_window,
+                        period_window,
                     )
                 )
                 total_query = select(func.count(Application.id)).where(
-                    and_(Application.assigned_officer_id == officer.officer_id, _cr_window)
+                    and_(Application.assigned_officer_id == officer.officer_id, period_window)
                 )
-                scope_label = _cr_label or f"{_cr_start} to {_cr_end}"
-            elif _this_month:
+                scope_label = period_label or f"{period_start} to {period_end}"
+            elif is_this_month:
                 completed_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
                         Application.current_status.in_(["approved", "rejected"]),
-                        Application.updated_at >= _month_start
+                        Application.updated_at >= month_start
                     )
                 )
                 total_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
-                        Application.submission_date >= _month_start
+                        Application.submission_date >= month_start
                     )
                 )
-                scope_label = f"this month ({_month_start.strftime('%B %Y')})"
+                scope_label = f"this month ({month_start.strftime('%B %Y')})"
             else:
                 completed_query = select(func.count(Application.id)).where(
                     and_(
@@ -17574,7 +17910,8 @@ async def _process_chat_impl(
         ]):
             # User is asking about an uploaded document but no content was extracted.
             response_text = (
-                "I don't see a file attached in this chat yet. "
+                "I don't see a file attached in this chat (uploaded files are kept for "
+                f"{settings.UPLOAD_RETENTION_MINUTES} minutes only). "
                 "Upload a PDF, Word (.docx), CSV or text file using the attach "
                 "button and I'll answer your questions from it, with citations."
             )
@@ -17822,9 +18159,14 @@ async def process_chat_stream(
     the transcript write all happen between chunks. See `readonly_guard`.
     """
     with chat_turn():
+        _RAW_MESSAGE.set(message)
         plan = _plan_requests(message)
         import json as _json_plan
-        res = await _recheck_turn(message, session_id, officer, db, chat_history)
+        res = await _old_codes_turn(message, session_id, officer, db, chat_history)
+        if res is None:
+            res = await _record_field_turn(message, session_id, officer, db, chat_history)
+        if res is None:
+            res = await _recheck_turn(message, session_id, officer, db, chat_history)
         if res is None:
             res = await _compound_followup(message, session_id, officer, db, chat_history)
         if res is None:
@@ -17862,7 +18204,7 @@ async def _process_chat_stream_impl(
         # Step 0: Use provided chat history from client
         if not chat_history:
             chat_history = []
-        logger.info(f"=== CHAT STREAM CONTEXT DEBUG ===")
+        logger.info("=== CHAT STREAM CONTEXT DEBUG ===")
         logger.info(f"Received {len(chat_history)} previous messages from client")
         logger.info(f"Current message: '{message}'")
         if chat_history:
@@ -17927,7 +18269,8 @@ async def _process_chat_stream_impl(
 
         # Step 1b2: IGRS / CAN asked as a RULE -- see the same step in
         # process_chat for why this runs before the channel filter.
-        _rule_topic = _igrs_can_rule_topic(message)
+        _rule_ctx_app = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True)
+        _rule_topic = _igrs_can_rule_topic(message, allow_bare_tamil_what=not _rule_ctx_app)
         if _rule_topic:
             _rule_text = _igrs_can_rule_answer(_rule_topic, language)
             if _rule_text and _rule_topic.startswith("channel_basis"):
@@ -17949,8 +18292,17 @@ async def _process_chat_stream_impl(
         # Step 1b3: ISD/NISD workflow-steps -- see the same step in
         # process_chat for why this is answered deterministically.
         _wf_topic = _workflow_steps_topic(message)
-        if _wf_topic in ("GLOSS:ward", "GLOSS:block") and _recent_app_number_in_history(chat_history):
-            _wf_topic = None
+        if _wf_topic in ("GLOSS:ward", "GLOSS:block", "GLOSS:wards", "GLOSS:blocks"):
+            _stand_aside = _recent_app_number_in_history(chat_history)
+            # "blocks enna?" (plural, Tanglish/Tamil) after a listing asks for that column;
+            # "what is a block?" is still the definition
+            if (not _stand_aside and _wf_topic in ("GLOSS:wards", "GLOSS:blocks")
+                    and re.search(r"enna|என்ன|edhu", message.lower())):
+                _stand_aside = bool(await _load_followup_context(
+                    db, session_id, chat_history, message,
+                    officer_id=officer.officer_id if officer else None))
+            if _stand_aside:
+                _wf_topic = None
         if _wf_topic:
             import json as _json
             _wf_text = _workflow_steps_answer(_wf_topic, language in ("ta", "tanglish"))
@@ -18398,14 +18750,26 @@ async def _process_chat_stream_impl(
         # are identical text in both, because only the delivery differs.
         _att_plan = None if _attachment_turn_is_not_about_a_file(message) else await attachment_qa.plan_answer(
             db=db, officer=officer, session_id=session_id,
-            message=message, intent=intent, language=language)
+            message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
             import json as _json_upl
             _acc = ""
             if _att_plan.prompt:
+                _sent = 0
                 async for _chunk in call_llama_stream(_att_plan.prompt):
                     _acc += _chunk
-                    yield f"data: {_json_upl.dumps({'content': _chunk})}\n\n".encode('utf-8')
+                    # Hold back while the text could still be the refusal, so a
+                    # recovery retry can replace it before the officer sees it.
+                    if (_att_plan.retry_prompt and _sent == 0
+                            and attachment_qa.REFUSAL_EN.startswith(_acc.strip())):
+                        continue
+                    yield f"data: {_json_upl.dumps({'content': _acc[_sent:]})}\n\n".encode('utf-8')
+                    _sent = len(_acc)
+                if _att_plan.retry_prompt and attachment_qa.is_refusal(_acc):
+                    _acc = await call_llama(_att_plan.retry_prompt)
+                    _sent = 0
+                if _sent < len(_acc):
+                    yield f"data: {_json_upl.dumps({'content': _acc[_sent:]})}\n\n".encode('utf-8')
             else:
                 _acc = _att_plan.text
                 yield f"data: {_json_upl.dumps({'content': _acc})}\n\n".encode('utf-8')
@@ -18795,7 +19159,7 @@ async def _process_chat_stream_impl(
                 _uof_app, _uoa_lbl, language in ("ta", "tanglish"))
             logger.info(f"Responded 'not a register field' for owner attr {_uoa_lbl!r} (stream)")
 
-        # `urban_parcel_register` column the survey projection drops -- name it
+        # `uareg_demo` column the survey projection drops -- name it
         # as not held before `survey_detail` answers with the generic card.
         # Mirrors process_chat, including the application-scoped fallback --
         # see the comment there for why `_UNTRACKED_SOURCE_FIELDS` is checked
@@ -19675,9 +20039,8 @@ async def _process_chat_stream_impl(
             }
 
         elif intent == "escalation_check":
-            from datetime import date as _date_esc_s
-            _today_esc_s = _date_esc_s.today()
-            esc_query_s = select(Application).where(
+            today = date.today()
+            escalation_query = select(Application).where(
                 and_(
                     Application.assigned_officer_id == officer.officer_id,
                     Application.current_status.in_(["pending", "in_progress", "escalated"])
@@ -19685,47 +20048,47 @@ async def _process_chat_stream_impl(
             ).order_by(Application.submission_date.asc())
             # "escalated ISD applications" named a type; without this the answer
             # mixed ISD and NISD rows together.
-            _esc_msg = message.lower()
-            if re.search(r'\bnisd\b|\b0153\b', _esc_msg):
-                esc_query_s = esc_query_s.where(Application.application_type == "NISD")
-            elif re.search(r'\bisd\b|\b0154\b', _esc_msg):
-                esc_query_s = esc_query_s.where(Application.application_type == "ISD")
-            elif re.search(r'\bmerge\b|\b0155\b', _esc_msg):
-                esc_query_s = esc_query_s.where(Application.application_type == "MERGE")
-            esc_result_s = await db.execute(esc_query_s)
-            all_apps_s = esc_result_s.scalars().all()
-            approaching_s = []
-            for a in all_apps_s:
+            message_lower = message.lower()
+            if re.search(r'\bnisd\b|\b0153\b', message_lower):
+                escalation_query = escalation_query.where(Application.application_type == "NISD")
+            elif re.search(r'\bisd\b|\b0154\b', message_lower):
+                escalation_query = escalation_query.where(Application.application_type == "ISD")
+            elif re.search(r'\bmerge\b|\b0155\b', message_lower):
+                escalation_query = escalation_query.where(Application.application_type == "MERGE")
+            escalation_result = await db.execute(escalation_query)
+            open_applications = escalation_result.scalars().all()
+            approaching_deadline = []
+            for a in open_applications:
                 if not a.submission_date:
                     continue
-                wd_s = 0
-                curr_s = a.submission_date
-                while curr_s < _today_esc_s:
-                    curr_s += timedelta(days=1)
-                    if curr_s.weekday() < 5:
-                        wd_s += 1
-                if wd_s >= 10:
-                    dr_s = max(0, 15 - wd_s)
-                    ov_s = wd_s > 15
-                    approaching_s.append({
+                working_days = 0
+                current_date = a.submission_date
+                while current_date < today:
+                    current_date += timedelta(days=1)
+                    if current_date.weekday() < 5:
+                        working_days += 1
+                if working_days >= 10:
+                    days_remaining = max(0, 15 - working_days)
+                    is_overdue = working_days > 15
+                    approaching_deadline.append({
                         "application_number": a.application_number,
                         "type": a.application_type,
                         "status": a.current_status,
                         "stage": a.current_stage,
                         "submission_date": a.submission_date.isoformat(),
-                        "working_days_elapsed": wd_s,
-                        "days_remaining": dr_s,
-                        "is_overdue": ov_s,
-                        "urgency": "⚠ OVERDUE" if ov_s else (
-                            "🔴 Critical (1–2 days)" if dr_s <= 2 else
-                            "🟡 Warning (3–5 days)" if dr_s <= 5 else
+                        "working_days_elapsed": working_days,
+                        "days_remaining": days_remaining,
+                        "is_overdue": is_overdue,
+                        "urgency": "⚠ OVERDUE" if is_overdue else (
+                            "🔴 Critical (1–2 days)" if days_remaining <= 2 else
+                            "🟡 Warning (3–5 days)" if days_remaining <= 5 else
                             "🟢 Watch"
                         )
                     })
             structured_data = {
-                "applications": approaching_s,
-                "total_approaching": len(approaching_s),
-                "overdue_count": sum(1 for x in approaching_s if x["is_overdue"]),
+                "applications": approaching_deadline,
+                "total_approaching": len(approaching_deadline),
+                "overdue_count": sum(1 for x in approaching_deadline if x["is_overdue"]),
                 "query_type": "Escalation Threshold — Applications Approaching Deadline"
             }
 
@@ -19736,7 +20099,7 @@ async def _process_chat_stream_impl(
                 from backend.services.postgres import get_jurisdiction_filter
                 
                 today = date.today()
-                logger.info(f"=== OVERDUE FIELD VISITS QUERY (STREAM) ===")
+                logger.info("=== OVERDUE FIELD VISITS QUERY (STREAM) ===")
                 logger.info(f"Today: {today}")
                 logger.info(f"Officer ID: {officer.officer_id}")
                 
@@ -19866,43 +20229,42 @@ async def _process_chat_stream_impl(
             structured_data["query_type"] = "Ward Directory"
 
         elif intent == "completion_rate":
-            _msg_lower_cr_s = message.lower()
-            _this_month_s = any(p in _msg_lower_cr_s for p in ["this month", "month", "monthly", "current month"])
-            _today_cr_s = date.today()
-            _month_start_s = _today_cr_s.replace(day=1)
+            message_lower = message.lower()
+            is_this_month = any(p in message_lower for p in ["this month", "month", "monthly", "current month"])
+            month_start = date.today().replace(day=1)
 
             # Same as process_chat: honour whatever period the officer named.
-            _cr_start_s, _cr_end_s, _cr_label_s = _period_from_message(message)
+            period_start, period_end, period_label = _period_from_message(message)
 
-            if _cr_start_s and _cr_end_s:
-                _cr_window_s = and_(Application.submission_date >= _cr_start_s,
-                                    Application.submission_date <= _cr_end_s)
+            if period_start and period_end:
+                period_window = and_(Application.submission_date >= period_start,
+                                     Application.submission_date <= period_end)
                 completed_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
                         Application.current_status.in_(["approved", "rejected"]),
-                        _cr_window_s,
+                        period_window,
                     )
                 )
                 total_query = select(func.count(Application.id)).where(
-                    and_(Application.assigned_officer_id == officer.officer_id, _cr_window_s)
+                    and_(Application.assigned_officer_id == officer.officer_id, period_window)
                 )
-                scope_label_s = _cr_label_s or f"{_cr_start_s} to {_cr_end_s}"
-            elif _this_month_s:
+                scope_label = period_label or f"{period_start} to {period_end}"
+            elif is_this_month:
                 completed_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
                         Application.current_status.in_(["approved", "rejected"]),
-                        Application.updated_at >= _month_start_s
+                        Application.updated_at >= month_start
                     )
                 )
                 total_query = select(func.count(Application.id)).where(
                     and_(
                         Application.assigned_officer_id == officer.officer_id,
-                        Application.submission_date >= _month_start_s
+                        Application.submission_date >= month_start
                     )
                 )
-                scope_label_s = f"this month ({_month_start_s.strftime('%B %Y')})"
+                scope_label = f"this month ({month_start.strftime('%B %Y')})"
             else:
                 completed_query = select(func.count(Application.id)).where(
                     and_(
@@ -19913,7 +20275,7 @@ async def _process_chat_stream_impl(
                 total_query = select(func.count(Application.id)).where(
                     Application.assigned_officer_id == officer.officer_id
                 )
-                scope_label_s = "overall"
+                scope_label = "overall"
 
             completed = (await db.execute(completed_query)).scalar() or 0
             total = (await db.execute(total_query)).scalar() or 0
@@ -19921,7 +20283,7 @@ async def _process_chat_stream_impl(
                 "completed": completed,
                 "total": total,
                 "rate": int((completed / total) * 100) if total > 0 else 0,
-                "scope": scope_label_s,
+                "scope": scope_label,
                 "query_type": "Completion Rate"
             }
 
@@ -21643,10 +22005,8 @@ async def _process_chat_stream_impl(
                     "kaaranam": ("declared_reason", "Declared Reason"),
                     "karanum": ("declared_reason", "Declared Reason"),
                     # Priority & Overdue
-                    "priority": ("priority_flag", "Priority"),
                     "high priority": ("priority_flag", "Priority"),
                     "priority flag": ("priority_flag", "Priority"),
-                    "overdue": ("is_overdue", "Overdue"),
                     "is overdue": ("is_overdue", "Overdue"),
                     "is it overdue": ("is_overdue", "Overdue"),
                     # Field visit
@@ -22671,7 +23031,8 @@ async def _process_chat_stream_impl(
             "the file", "attached file", "from this file",
         ]):
             chunk = (
-                "I don't see a file attached in this chat yet. "
+                "I don't see a file attached in this chat (uploaded files are kept for "
+                f"{settings.UPLOAD_RETENTION_MINUTES} minutes only). "
                 "Upload a PDF, Word (.docx), CSV or text file using the attach "
                 "button and I'll answer your questions from it, with citations."
             )
@@ -22762,7 +23123,10 @@ async def _process_chat_stream_impl(
                 full_response_text, structured_data, intent)
             if _verified_text != full_response_text or _verify_note:
                 _correction = (_verify_note or "").strip()
-                if _verified_text != full_response_text and not _correction:
+                # Only a stated total that was really rewritten earns this note: text that
+                # merely differs after clean-up (spacing, table formatting) corrected no figure.
+                if (_verified_text != full_response_text and not _correction
+                        and _reconcile_count_claims(full_response_text, structured_data)[1]):
                     _correction = ("Note: a figure in that answer disagreed with your "
                                    "register and has been corrected to "
                                    f"{structured_data.get('count')}.")

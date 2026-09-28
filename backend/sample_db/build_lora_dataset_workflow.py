@@ -175,6 +175,6 @@ def main(out_path: Path) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=Path, default=Path("lora_dataset_workflow.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("lora_training/lora_dataset_workflow.jsonl"))
     args = parser.parse_args()
     raise SystemExit(main(args.out))

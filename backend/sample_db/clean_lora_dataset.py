@@ -260,11 +260,11 @@ def main(raw_path: Path, clean_path: Path, train_path: Path, val_path: Path,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw", type=Path, default=Path("lora_dataset_final.jsonl"))
-    parser.add_argument("--clean", type=Path, default=Path("lora_dataset_clean.jsonl"))
-    parser.add_argument("--train", type=Path, default=Path("lora_dataset_train.jsonl"))
-    parser.add_argument("--val", type=Path, default=Path("lora_dataset_val.jsonl"))
-    parser.add_argument("--report", type=Path, default=Path("lora_dataset_clean_report.json"))
+    parser.add_argument("--raw", type=Path, default=Path("lora_training/lora_dataset_final.jsonl"))
+    parser.add_argument("--clean", type=Path, default=Path("lora_training/lora_dataset_clean.jsonl"))
+    parser.add_argument("--train", type=Path, default=Path("lora_training/lora_dataset_train.jsonl"))
+    parser.add_argument("--val", type=Path, default=Path("lora_training/lora_dataset_val.jsonl"))
+    parser.add_argument("--report", type=Path, default=Path("lora_training/lora_dataset_clean_report.json"))
     parser.add_argument("--val-fraction", type=float, default=0.05)
     parser.add_argument("--max-identical-answer", type=int, default=6)
     parser.add_argument("--seed", type=int, default=42)

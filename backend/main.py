@@ -64,12 +64,15 @@ async def lifespan(app: FastAPI):
 
     # Chat attachments: they live in PostgreSQL, so a restart keeps every live
     # one. What a restart is a good moment for is dropping the expired ones.
+    _sweep_task = None
     try:
+        import asyncio
         from backend.database import AsyncSessionLocal
         from backend.services import attachment_store
         attachment_store.storage_dir()
         async with AsyncSessionLocal() as _session:
             removed = await attachment_store.cleanup_expired(_session)
+        _sweep_task = asyncio.create_task(attachment_store.cleanup_forever(AsyncSessionLocal))
         print(f"   ✅ Chat attachment store ready "
               f"({removed} expired attachment(s) cleared)")
     except Exception as e:
@@ -111,6 +114,8 @@ async def lifespan(app: FastAPI):
     print("🛑 Shutting down SIS Chatbot Portal API...")
     if _overdue_task:
         _overdue_task.cancel()
+    if _sweep_task:
+        _sweep_task.cancel()
     await engine.dispose()
     print("   ✅ Database connections closed")
     print("=" * 60)

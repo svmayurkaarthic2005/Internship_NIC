@@ -162,7 +162,7 @@ the ORM projection:
 - **CAN** (Citizen Access Number) — the length identifies the **counter that
   issued it**, not the channel: 15 digits from a Common Service Centre /
   CSC counter, 12 digits from the TN portal. The channel itself is derived
-  by `can_channel()` from `urban_application_log.source_name` + `camp_flag`:
+  by `can_channel()` from `appl_log_urban_demo.source_name` + `camp_flag`:
   `-` (no operator account) = `sub_registrar`, a bare mobile number with
   `camp_flag='P'` = `citizen`, everything else attended = `CSC`. See
   CLAUDE.md's "Submission channels" section for the full derivation and the
@@ -187,7 +187,7 @@ the ORM projection:
 ### Application Statuses
 `pending` → `in_progress` → `escalated` → `approved` / `rejected`
 
-What the extracts actually carry, via `urban_application_log.application_status`
+What the extracts actually carry, via `appl_log_urban_demo.application_status`
 cross-checked against the wording in the transfer extracts and against how each
 workflow chain ends:
 
@@ -204,7 +204,7 @@ has none. The current split is 150 approved, 52 rejected, 5 pending,
 
 ### Workflow Roles
 
-The role ids in `application_workflow_action`, read off the data rather than
+The role ids in `application_workflow_demo`, read off the data rather than
 assumed — the applications whose wording says "Send to SIS" are sitting at role
 44 or 41, and 42 shares its actors with 44:
 

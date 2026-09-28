@@ -528,6 +528,13 @@ _NEVER_CORRECT = frozenset({
     # documented above, just for a word this domain never had reason to type
     # until officers started asking the assistant what it is.
     "bot", "bots",
+    # Tanglish "naan" ("I") is one edit from "naal" ("day"): "naan yaaru"
+    # ("who am I") was corrected to "naal yaaru" before
+    # `_is_officer_identity_question` ever saw it, so the identity regex
+    # (`\bnaan\s*yaaru\b`) no longer matched and the question fell through to
+    # the greeting/small-talk classifier instead of answering the officer's
+    # own name and post.
+    "naan",
 })
 
 
@@ -826,7 +833,7 @@ _SINGULAR_FIELD_CUES = (
     # "not in your SIS register" handler answers it instead.
     "tax", "soil", "plot", "adopted", "land use", "waste", "govern",
     "classification", "group",
-    # Parcel-register (urban_parcel_register) columns the survey projection
+    # Parcel-register (uareg_demo) columns the survey projection
     # drops. A bare "what is the irrigation source?" / "is it double crop?" /
     # "the form 6 number?" / "is it cultivable?" follow-up after a survey
     # answer carried none of the cues above, classified as NONE, lost the
@@ -848,7 +855,7 @@ _SINGULAR_FIELD_CUES = (
     "transfer", "transferred", "registered", "registration", "deed",
     "remarks", "remark", "recommendation", "recommended", "order",
     "மாற்ற", "பதிவு", "பரிந்துரை", "குறிப்பு", "ஆணை",
-    # Owner (urban_natham_chitta_owner) sub-fields. A bare "what is the gender?"
+    # Owner (uchitta_natham_demo) sub-fields. A bare "what is the gender?"
     # / "the relationship?" / "the aadhaar number?" / "the ownership share?"
     # follow-up after a joint-owner or survey-ownership answer carried none of
     # the cues above -- it classified as NONE, lost the survey/application
@@ -1472,6 +1479,15 @@ _PROJECT_TRIGGER_RE = re.compile(
     # "adhuvodu" / "adhu udan" -- Tanglish for "along with that", the same
     # inclusion request as "along" in a different script.
     r"|\balong\b|\badhuvodu\b|\badhu\s*udan\b"
+    # "with district" (no "along") after a listing -- the same column-add
+    # shorthand, just without the word "along" in front of it. Scoped to the
+    # geography columns only: "with" alone is too common a word to trust as a
+    # trigger ("application with status pending" is a filter, not a column
+    # request), but "with district/taluk/town/ward/block" has no other
+    # reading. Without this, "with district" over a 70-row list fell past
+    # `field_for_each`'s MAX_PER_ROW_ANSWER cap and asked "which one do you
+    # mean?" of a question that named no single application at all.
+    r"|\bwith\s+(?:the\s+)?(?:district|taluk|town|ward|block)s?\b"
     # "only submitted date" / "submitted date only" / "just the status" --
     # `_APP_NO_ONLY_RE` below only ever covered this shape for the row key
     # itself ("application no only"); a bare "only <field>" for any OTHER
@@ -2509,6 +2525,16 @@ def resolve(message: str,
         kind = FOLLOWUP_SINGULAR
 
     if kind == FOLLOWUP_NONE:
+        return Resolution()
+
+    # "which field visit is oldest?" asked over an APPLICATION list names the
+    # field-visit domain: it is not a superlative over the rows on screen. With a
+    # visit table on screen (about_visit) it stays a follow-up on those rows.
+    _low = (message or "").lower()
+    if (context is not None and not (context.filters or {}).get("about_visit")
+            and re.search(r"\bfield\s+visits?\b|\binspections?\b", _low)
+            and re.search(r"\b(?:oldest|newest|latest|earliest|longest)\b", _low)
+            and not _BACKREF_RE.search(_low)):
         return Resolution()
 
     if context is None:

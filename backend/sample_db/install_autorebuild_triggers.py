@@ -7,7 +7,7 @@ notification, not one per row. `watch_rebuild.py` listens for it and reruns the
 projection. Dev-only: nothing in the running FastAPI app depends on this, and
 production has no layer 1 to edit by hand (see CLAUDE.md).
 
-Also installs a second trigger, on `urban_application_log` only: a BEFORE
+Also installs a second trigger, on `appl_log_urban_demo` only: a BEFORE
 UPDATE that stamps `last_updated_datetime = now()` on every edit. An
 application that spans several parcels has one row per parcel there (CLAUDE.md:
 1211 rows over 1139 ids), and `build_app_tables.py` picks ONE of those rows per
@@ -29,13 +29,13 @@ from backend.sample_db.dbconn import conn_params
 # every FROM in build_app_tables.py, minus district_unicode/taluk (the layer-0
 # masters, loaded by a separate script and not something pgAdmin edits by hand)
 SOURCE_TABLES = (
-    "urban_application_log",
-    "application_workflow_action",
-    "urban_parcel_register",
-    "urban_natham_chitta_owner",
-    "nisd_transfer_igrs_owner",
-    "urban_temp_subdivision_parcel",
-    "urban_temp_subdivision_owner",
+    "appl_log_urban_demo",
+    "application_workflow_demo",
+    "uareg_demo",
+    "uchitta_natham_demo",
+    "full_field_patta_transfer_igrs_owner_demo",
+    "areg_temp_subdivclub_demo",
+    "chitta_temp_subdivclub_demo",
 )
 
 FUNCTION_SQL = """
@@ -80,13 +80,13 @@ def main() -> None:
         print(f"  trigger installed: {table}")
 
     cur.execute(TOUCH_FUNCTION_SQL)
-    cur.execute("DROP TRIGGER IF EXISTS trg_urban_application_log_touch ON urban_application_log")
+    cur.execute("DROP TRIGGER IF EXISTS trg_urban_application_log_touch ON appl_log_urban_demo")
     cur.execute("""
         CREATE TRIGGER trg_urban_application_log_touch
-        BEFORE UPDATE ON urban_application_log
+        BEFORE UPDATE ON appl_log_urban_demo
         FOR EACH ROW EXECUTE FUNCTION touch_urban_application_log()
     """)
-    print("  trigger installed: urban_application_log (auto-timestamps edits,"
+    print("  trigger installed: appl_log_urban_demo (auto-timestamps edits,"
           " so a multi-parcel application's edited row always wins the rebuild)")
 
     print(f"\n{len(SOURCE_TABLES)} tables now notify 'app_tables_stale' on change.")

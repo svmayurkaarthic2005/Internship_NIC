@@ -2211,7 +2211,7 @@ async def get_survey_owners(
                 "name": owner.name,
                 "name_tamil": owner.name_tamil,
                 # Owner columns carried across from the natham-chitta owner row
-                # (urban_natham_chitta_owner -> owners). "who is the father of
+                # (uchitta_natham_demo -> owners). "who is the father of
                 # the owner of survey 5", "the owner's aadhaar / gender /
                 # address" have real answers here; without these keys they fell
                 # through to the LLM. `mobile` / `address` are blank for every
@@ -2219,7 +2219,7 @@ async def get_survey_owners(
                 # can say "not recorded" rather than ignore the question.
                 "relative_name": owner.father_name,
                 # s/o, w/o, d/o -- how relative_name relates to the owner
-                # (urban_natham_chitta_owner.relationship_code). None where the
+                # (uchitta_natham_demo.relationship_code). None where the
                 # extract left it as code 0.
                 "relationship": owner.relationship_type,
                 "aadhaar_last4": owner.aadhaar_last4,

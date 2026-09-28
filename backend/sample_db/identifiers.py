@@ -18,7 +18,7 @@ Both layers of the database go through here, so the rules live in one place:
   | 12 | the citizen on the TN portal              | `202329380999`    |
 
   The length does **not** decide the submission channel. That comes from two
-  other columns of `urban_application_log`:
+  other columns of `appl_log_urban_demo`:
 
   | channel       | `source_name`          | `camp_flag`   |
   |---------------|------------------------|---------------|
@@ -147,7 +147,7 @@ def _looks_self_filed(source_name: str | None) -> bool:
 def can_channel(source_name: str | None, camp_flag: str | None = None) -> str:
     """Which channel submitted the application.
 
-    Two columns of `urban_application_log`:
+    Two columns of `appl_log_urban_demo`:
 
     * `source_name` -- a placeholder (`-`) means no operator account touched
       the file: it came in unattended from the Sub-Registrar, where IGRS raised

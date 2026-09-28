@@ -17,7 +17,7 @@ let officerData = null;
 let activeRequestController = null; // AbortController for the in-flight send, so the stop button can cancel it
 let userStoppedResponse = false;    // distinguishes a manual stop from a timeout/network abort
 let longConversationNoticeShown = false; // "start a new chat" notice is shown once per session
-const CONTEXT_MESSAGE_LIMIT = 20;         // messages sent to the backend as context (older ones are dropped)
+const CONTEXT_MESSAGE_LIMIT = 40;         // messages sent to the backend as context (older ones are dropped)
 
 // Shell-style input history (Up/Down arrows recall previously sent
 // messages, like a terminal's command history). -1 means "not browsing" --
@@ -749,6 +749,7 @@ async function sendMessage() {
         // Read stream chunks until done
         let buffer = '';
         let chunkCount = 0;
+        let streamComplete = false;   // the server's closing {"done": true} frame arrived
         // Acted on after the stream closes, never during it -- clearing
         // mid-stream would pull the DOM out from under the writer still
         // appending to it.
@@ -791,6 +792,9 @@ async function sendMessage() {
                         if (parsed.action === 'clear_chat') {
                             clearRequested = true;
                         }
+                        if (parsed.done) {
+                            streamComplete = true;
+                        }
                         if (parsed.content) {
                             aiResponse += parsed.content;
                             contentDiv.innerHTML = formatBotMessage(aiResponse.trimStart());
@@ -813,6 +817,7 @@ async function sendMessage() {
                     if (parsed.table_data) capturedTableData = parsed.table_data;
                     else if (parsed.structured_data && !capturedTableData) capturedTableData = parsed.structured_data;
                     if (parsed.action === 'clear_chat') clearRequested = true;
+                    if (parsed.done) streamComplete = true;
                     if (parsed.content) {
                         aiResponse += parsed.content;
                         contentDiv.innerHTML = formatBotMessage(aiResponse.trimStart());
@@ -822,7 +827,14 @@ async function sendMessage() {
                 }
             }
         }
-        
+
+        // No closing frame means the reply was cut off. Warn, and don't save the fragment.
+        const interrupted = !!aiResponse && !streamComplete && !clearRequested;
+        if (interrupted) {
+            contentDiv.innerHTML += '<div style="color: orange; margin-top: 6px;">' +
+                '⚠️ This reply was cut off. Please ask again.</div>';
+        }
+
         // Check if we got any response
         if (!aiResponse && messageDiv && messageDiv.parentNode) {
             console.error('No content received from stream!');
@@ -853,7 +865,7 @@ async function sendMessage() {
         }
         
         // Save assistant response to localStorage
-        if (aiResponse) {
+        if (aiResponse && !interrupted) {
             if (window.chatStorage) {
                 // Persist the table payload too, so tables survive a page refresh
                 window.chatStorage.addMessage('assistant', aiResponse, 'auto', capturedTableData);
@@ -1546,6 +1558,16 @@ function maybeShowLongConversationNotice(text) {
     // Self-contained question — the dropped turns change nothing about the
     // answer, so there is nothing to warn about.
     if (!messageNeedsPriorContext(text)) return;
+
+    // Only warn when the thing being referred to is really out of reach: the
+    // last CONTEXT_MESSAGE_LIMIT messages the backend sees carry no application
+    // number, but the dropped older ones do. If the reference still resolves
+    // inside the window, the long conversation costs the officer nothing.
+    const appNo = /\b\d{4}\/\d{3,4}\/\d{2}\/\d{4,6}\b/;
+    const visible = stored.slice(-(CONTEXT_MESSAGE_LIMIT + 1), -1);
+    const older = stored.slice(0, -(CONTEXT_MESSAGE_LIMIT + 1));
+    if (visible.some(m => appNo.test(m.content || ''))) return;
+    if (!older.some(m => appNo.test(m.content || ''))) return;
 
     const userTurns = stored.filter(m => m.role === 'user').length;
     longConversationNoticeShown = true;

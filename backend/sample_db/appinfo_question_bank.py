@@ -1,7 +1,7 @@
 """
 Question bank for the NISD / ISD application-info extract columns
-(nisd_transfer_application_info / isd_transfer_application_info, and the
-overlapping urban_application_log columns).
+(full_field_patta_transfer_application_information_demo / sub_div_patta_transfer_application_information_urban_demo, and the
+overlapping appl_log_urban_demo columns).
 
 `build_app_tables.py` projects a subset of these into the ORM `applications` /
 `applicants` rows; the rest stay in layer 1 only and the chatbot has no data

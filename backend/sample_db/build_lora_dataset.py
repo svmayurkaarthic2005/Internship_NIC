@@ -426,7 +426,7 @@ async def main(out_path: Path, concurrency: int) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=Path, default=Path("lora_dataset.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("lora_training/lora_dataset.jsonl"))
     parser.add_argument("--concurrency", type=int, default=12)
     args = parser.parse_args()
     raise SystemExit(asyncio.run(main(args.out, args.concurrency)))

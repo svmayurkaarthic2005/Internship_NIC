@@ -71,12 +71,12 @@ What the projection maps:
 
 | Sample table | App table |
 | --- | --- |
-| `urban_parcel_register` | `districts` → `blocks`, `survey_numbers`, `sub_divisions` |
-| `urban_natham_chitta_owner` | `owners`, `survey_ownership` |
-| `urban_application_log` | `applications` (+ `applicants`, `application_documents`) |
-| `application_workflow_action` | `workflow_history`, `field_visits` |
-| `urban_temp_subdivision_parcel` | `application_sub_divisions` |
-| `nisd_/isd_transfer_urban_detail` | `patta_transfers` |
+| `uareg_demo` | `districts` → `blocks`, `survey_numbers`, `sub_divisions` |
+| `uchitta_natham_demo` | `owners`, `survey_ownership` |
+| `appl_log_urban_demo` | `applications` (+ `applicants`, `application_documents`) |
+| `application_workflow_demo` | `workflow_history`, `field_visits` |
+| `areg_temp_subdivclub_demo` | `application_sub_divisions` |
+| `nisd_/sub_div_patta_transfer_urban_demo` | `patta_transfers` |
 | workflow usernames at role 41 | `sis_officers`, `officer_jurisdictions` |
 
 Both sub-division numbers survive the projection. `application_sub_divisions`
@@ -105,26 +105,26 @@ CSV file → table name (the `_demo` suffix is dropped, names tightened):
 
 | CSV | Table | Rows |
 | --- | --- | --- |
-| `appl_log_urban_demo.csv` | `urban_application_log` | 1211 |
-| `application_workflow_demo.csv` | `application_workflow_action` | 288087 |
-| `areg_temp_subdivclub_demo.csv` | `urban_temp_subdivision_parcel` | 49 |
-| `chitta_temp_subdivclub_demo.csv` | `urban_temp_subdivision_owner` | 117 |
-| `full_field_patta_transfer_application_information_demo.csv` | `nisd_transfer_application_info` | 166 |
-| `full_field_patta_transfer_igrs_owner_demo.csv` | `nisd_transfer_igrs_owner` | 100 |
-| `full_field_patta_transfer_new_owner_demo.csv` | `nisd_transfer_new_owner` | 620 |
-| `full_field_patta_transfer_old_owner_demo.csv` | `nisd_transfer_old_owner` | 630 |
-| `full_field_patta_transfer_return_owner_demo.csv` | `nisd_transfer_return_owner` | 46 |
-| `full_field_patta_transfer_urban_demo.csv` | `nisd_transfer_urban_detail` | 229 |
-| `sub_div_patta_transfer_application_information_urban_demo.csv` | `isd_transfer_application_info` | 41 |
-| `sub_div_patta_transfer_urban_demo.csv` | `isd_transfer_urban_detail` | 50 |
-| `uareg_demo.csv` | `urban_parcel_register` | 1033 |
-| `uaregmap_ds_demo.csv` | `urban_parcel_signature` | 1036 |
-| `uchitta_natham_demo.csv` | `urban_natham_chitta_owner` | 551 |
-| `uchitta_nathammap_ds_demo.csv` | `urban_natham_chitta_signature` | 439 |
+| `appl_log_urban_demo.csv` | `appl_log_urban_demo` | 1211 |
+| `application_workflow_demo.csv` | `application_workflow_demo` | 288087 |
+| `areg_temp_subdivclub_demo.csv` | `areg_temp_subdivclub_demo` | 49 |
+| `chitta_temp_subdivclub_demo.csv` | `chitta_temp_subdivclub_demo` | 117 |
+| `full_field_patta_transfer_application_information_demo.csv` | `full_field_patta_transfer_application_information_demo` | 166 |
+| `full_field_patta_transfer_igrs_owner_demo.csv` | `full_field_patta_transfer_igrs_owner_demo` | 100 |
+| `full_field_patta_transfer_new_owner_demo.csv` | `full_field_patta_transfer_new_owner_demo` | 620 |
+| `full_field_patta_transfer_old_owner_demo.csv` | `full_field_patta_transfer_old_owner_demo` | 630 |
+| `full_field_patta_transfer_return_owner_demo.csv` | `full_field_patta_transfer_return_owner_demo` | 46 |
+| `full_field_patta_transfer_urban_demo.csv` | `full_field_patta_transfer_urban_demo` | 229 |
+| `sub_div_patta_transfer_application_information_urban_demo.csv` | `sub_div_patta_transfer_application_information_urban_demo` | 41 |
+| `sub_div_patta_transfer_urban_demo.csv` | `sub_div_patta_transfer_urban_demo` | 50 |
+| `uareg_demo.csv` | `uareg_demo` | 1033 |
+| `uaregmap_ds_demo.csv` | `uaregmap_ds_demo` | 1036 |
+| `uchitta_natham_demo.csv` | `uchitta_natham_demo` | 551 |
+| `uchitta_nathammap_ds_demo.csv` | `uchitta_nathammap_ds_demo` | 439 |
 
-`application_workflow_action` is a district-wide dump: most of its 288087 rows
+`application_workflow_demo` is a district-wide dump: most of its 288087 rows
 belong to settlement service codes (`0167` / `0169`, …) that never become an
-application. Only 4694 rows name an `application_id` that `urban_application_log`
+application. Only 4694 rows name an `application_id` that `appl_log_urban_demo`
 also carries, and 982 of those belong to the `0153` / `0154` / `0155` codes the
 chatbot works with.
 
@@ -158,8 +158,8 @@ the documented rejection reasons.
 ## Guarantees the verifier enforces
 
 1. Every table's columns equal its source CSV header, in order.
-2. No orphans: every `application_id` resolves to `urban_application_log`,
-   every `patta_number` to `urban_parcel_register`.
+2. No orphans: every `application_id` resolves to `appl_log_urban_demo`,
+   every `patta_number` to `uareg_demo`.
 3. NISD tables only carry `0153` applications; ISD and temp-subdivision tables
    only `0154`.
 4. Zero identity values reused verbatim from the CSVs.
@@ -226,7 +226,7 @@ recently submitted application simply has not reached the later desks yet.
 
 ## Statuses, roles and officers
 
-`urban_application_log.application_status` is a code. Cross-tabulating it against
+`appl_log_urban_demo.application_status` is a code. Cross-tabulating it against
 the wording the transfer extracts carry, and against how each workflow chain
 actually ends, settles what it means:
 
@@ -313,7 +313,7 @@ counter issued it -- 15 digits (the `133` series) for an CSC counter, 12
 for the TN portal -- but the length is not what decides the channel.
 
 **The submission channel** is derived from two columns of
-`urban_application_log`:
+`appl_log_urban_demo`:
 
 | channel | `source_name` | `camp_flag` | meaning | apps |
 | --- | --- | --- | --- | --- |

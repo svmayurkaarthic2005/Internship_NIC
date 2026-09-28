@@ -242,14 +242,14 @@ class Owner(Base):
     name = Column(String(200), nullable=False)
     name_tamil = Column(String(200))
     father_name = Column(String(200))  # relative_name_english, else relative_name_tamil
-    # urban_natham_chitta_owner.relationship_code -> s/o (5, மகன்) / w/o (4,
+    # uchitta_natham_demo.relationship_code -> s/o (5, மகன்) / w/o (4,
     # மனைவி) / d/o (6, மகள்); NULL for code 0, which the extract leaves
     # unspecified. Says how father_name relates to the owner.
     relationship_type = Column(String(50))
     aadhaar_last4 = Column(CHAR(4))
     mobile = Column(String(15))
     address = Column(Text)
-    gender = Column(String(10))  # urban_natham_chitta_owner.sex (M/F); blank in most extract rows
+    gender = Column(String(10))  # uchitta_natham_demo.sex (M/F); blank in most extract rows
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -390,9 +390,9 @@ class Application(Base):
     submission_channel = Column(String(20))                 # CSC, citizen, sub_registrar
     # What the channel was derived from, kept so the chatbot can show its
     # working when an officer asks "how do you know this is CSC?".
-    submission_source_name = Column(String(100))            # urban_application_log.source_name: operator/VLE code, or '-' for the unattended Sub-Registrar route
-    submission_ip = Column(String(50))                      # urban_application_log.ip_address: client IP the file was submitted from
-    submission_camp_flag = Column(String(5))                # urban_application_log.camp_flag: 'P' = special revenue camp (the citizen's own filing)
+    submission_source_name = Column(String(100))            # appl_log_urban_demo.source_name: operator/VLE code, or '-' for the unattended Sub-Registrar route
+    submission_ip = Column(String(50))                      # appl_log_urban_demo.ip_address: client IP the file was submitted from
+    submission_camp_flag = Column(String(5))                # appl_log_urban_demo.camp_flag: 'P' = special revenue camp (the citizen's own filing)
     submission_date = Column(Date, nullable=False)
     sale_deed_number = Column(String(100))
     sale_deed_registered = Column(Boolean, default=False)
@@ -489,7 +489,7 @@ class ApplicationSubDivision(Base):
 class ApplicationSubDivisionOwner(Base):
     """The new owner(s) of a proposed ISD sub-division.
 
-    Projected from urban_temp_subdivision_owner (one row per owner per proposed
+    Projected from chitta_temp_subdivclub_demo (one row per owner per proposed
     sub-division). Distinct from `owners`/`survey_ownership`, which describe the
     parcel's CURRENT ownership -- these are the owners the split will create.
     """
@@ -603,7 +603,7 @@ class PattaTransfer(Base):
     signed_by = Column(String(50))
     dsc_applied = Column(Boolean, default=False)
     status = Column(String(30), default='pending')
-    # ── Registration / transfer detail (nisd_/isd_transfer_urban_detail).
+    # ── Registration / transfer detail (nisd_/sub_div_patta_transfer_urban_demo).
     # The registered deed itself is on Application.sale_deed_number; these are
     # the rest of the detail an SIS officer verifies a mutation against.
     transfer_reason = Column(String(120))        # raw extract text ("Sale deed", "Legal heir", ...)

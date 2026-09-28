@@ -189,14 +189,20 @@ async def stream_chat_message(
                 detail="Invalid session_id format. Must be a valid UUID."
             )
             
+        async def _with_end_marker(chunks):
+            # Lets the page tell a finished reply from one cut off mid-stream.
+            async for chunk in chunks:
+                yield chunk
+            yield b'data: {"done": true}\n\n'
+
         return StreamingResponse(
-            process_chat_stream(
+            _with_end_marker(process_chat_stream(
                 message=request.message,
                 session_id=request.session_id,
                 officer=current_officer,
                 db=db,
                 chat_history=request.chat_history
-            ),
+            )),
             media_type="text/event-stream"
         )
         

@@ -64,7 +64,7 @@ SERVICE_TO_TYPE = {"0153": "NISD", "0154": "ISD", "0155": "MERGE"}
 # Tahsildar -- no visit is scheduled, so no visit date may be claimed for one.
 FIELD_VISIT_TYPES = {"ISD", "MERGE"}
 
-# What urban_application_log.application_status means. The transfer extracts
+# What appl_log_urban_demo.application_status means. The transfer extracts
 # spell the status out in words, so cross-tabulating the two settles it --
 #   01/C -> "Approved By ZDT/HQDT" (128), "Order Generated" (20)
 #   02/C -> "Rejected By ZDT/HQDT" (33), "Rejected" (13)
@@ -318,7 +318,7 @@ def main():
         # ---------- geography ----------
         rows = cx.execute(text("""
             SELECT DISTINCT district_code, taluk_code, town_code, ward_code, block_code
-            FROM urban_parcel_register ORDER BY 1,2,3,4,5""")).all()
+            FROM uareg_demo ORDER BY 1,2,3,4,5""")).all()
 
         district_id = {}
         taluk_id = {}
@@ -407,7 +407,7 @@ def main():
             SELECT district_code, taluk_code, town_code, ward_code, block_code,
                    survey_number, subdivision_number, patta_number,
                    land_type_code, extent_value_3, remarks
-            FROM urban_parcel_register""")).all()
+            FROM uareg_demo""")).all()
 
         by_survey = defaultdict(list)
         for p in parcels:
@@ -455,7 +455,7 @@ def main():
                    relative_name_english, relative_name_tamil,
                    aadhaar_number, ownership_share, own_num, address, sex,
                    relationship_code
-            FROM urban_natham_chitta_owner""")).all()
+            FROM uchitta_natham_demo""")).all()
         # relationship_code -> how father_name relates to the owner. Read off
         # the sibling extract chitta_temp_subdivclub_demo, which carries BOTH
         # the code and the Tamil word: 5=மகன் (son), 4=மனைவி (wife), 6=மகள்
@@ -515,7 +515,7 @@ def main():
         # The SIS officers are the usernames that open the workflow chain
         # (role 41).
         sis_users = [r[0] for r in cx.execute(text("""
-            SELECT DISTINCT updated_by_user FROM application_workflow_action
+            SELECT DISTINCT updated_by_user FROM application_workflow_demo
             WHERE action_from_role_id = '41' ORDER BY 1""")).all()]
         wards_sorted = sorted(ward_id.items(), key=lambda kv: kv[0][3])
 
@@ -527,7 +527,7 @@ def main():
         # carry applications are shared out, and an officer can hold more than
         # one when there are fewer officers than wards.
         app_wards = {r[0] for r in cx.execute(text("""
-            SELECT DISTINCT ward_code FROM urban_application_log
+            SELECT DISTINCT ward_code FROM appl_log_urban_demo
             WHERE service_code IN ('0153','0154','0155')""")).all()}
         covered = [kv for kv in wards_sorted if kv[0][3] in app_wards] or wards_sorted
         wards_of = defaultdict(list)
@@ -588,8 +588,8 @@ def main():
                       "mother_name", "date_of_birth", "gender",
                       "challan_number", "payment_mode", "payment_amount",
                       "igrs_form6_number"]
-        for table in ("nisd_transfer_application_info", "isd_transfer_application_info"):
-            is_isd = table == "isd_transfer_application_info"
+        for table in ("full_field_patta_transfer_application_information_demo", "sub_div_patta_transfer_application_information_urban_demo"):
+            is_isd = table == "sub_div_patta_transfer_application_information_urban_demo"
             cols = list(_INFO_COLS)
             if not is_isd:
                 cols.append("occupation")           # nisd_ only
@@ -611,7 +611,7 @@ def main():
         igrs_f6 = {}
         for r in cx.execute(text("""
             SELECT application_id, igrs_form6_number
-            FROM nisd_transfer_igrs_owner WHERE igrs_form6_number IS NOT NULL""")).all():
+            FROM full_field_patta_transfer_igrs_owner_demo WHERE igrs_form6_number IS NOT NULL""")).all():
             igrs_f6.setdefault(r[0], r[1])
 
         # The registration document and the reason for transfer live in the
@@ -619,7 +619,7 @@ def main():
         # declared_reason stayed NULL and the bot answered "I don't have that
         # information" for sale-deed and sub-registrar questions.
         deed = {}
-        for table in ("nisd_transfer_urban_detail", "isd_transfer_urban_detail"):
+        for table in ("full_field_patta_transfer_urban_demo", "sub_div_patta_transfer_urban_demo"):
             for r in cx.execute(text(f"""
                 SELECT application_id, registration_document_number, transfer_reason,
                        registration_place, registration_date
@@ -627,7 +627,7 @@ def main():
                 if r[1]:
                     deed[r[0]] = r
 
-        # An application that covers several parcels has one urban_application_log
+        # An application that covers several parcels has one appl_log_urban_demo
         # row per parcel (1211 rows over 1139 application_ids in the extracts),
         # and the rows can disagree on status as the file moves. `applications`
         # holds one row per application, so keep the most recently updated one --
@@ -640,7 +640,7 @@ def main():
                        application_date, application_status, can_number,
                        source_code, source_name, igrs_form6_number,
                        igrs_auto_mutation_flag, camp_flag, ip_address
-                FROM urban_application_log
+                FROM appl_log_urban_demo
                 WHERE service_code IN ('0153','0154','0155')
                 ORDER BY application_id,
                          last_updated_datetime DESC NULLS LAST,
@@ -655,7 +655,7 @@ def main():
         for r in cx.execute(text("""
             SELECT application_id, action_to_role_id, action_date, field_visit_date,
                    serial_number
-            FROM application_workflow_action ORDER BY application_id, serial_number""")).all():
+            FROM application_workflow_demo ORDER BY application_id, serial_number""")).all():
             last_action[r[0]] = r
             # The chain's closing row routes to role "0" -- an end marker, not a
             # desk. The last row that names a real role is the one that says
@@ -727,7 +727,7 @@ def main():
                 la = last_hop.get(app_id)
                 stage = ROLE_TO_STAGE.get(la[1], "SIS") if la else "SIS"
 
-            # application_workflow_action carries a field_visit_date on NISD rows
+            # application_workflow_demo carries a field_visit_date on NISD rows
             # too, but NISD has no field visit -- projecting it made 167 of 168
             # NISD applications report a scheduled visit that no field_visits row
             # backs, and the answer quoted a date the workflow never produced.
@@ -863,7 +863,7 @@ def main():
             SELECT application_id, temporary_subdivision_number,
                    new_subdivision_number, area_square_meter, existing_patta_number,
                    ward_code, survey_number, row_id
-            FROM urban_temp_subdivision_parcel
+            FROM areg_temp_subdivclub_demo
             ORDER BY application_id, row_id""")).all():
             app_id, tmp_no, new_no, area, patta, ward, survey, _rid = r
             if app_id not in app_uuid:
@@ -896,7 +896,7 @@ def main():
                 t=now))
         if unresolved:
             print(f"  WARNING: {len(unresolved)} temp sub-division parcels have no "
-                  f"parent parcel in urban_parcel_register: {unresolved[:5]}")
+                  f"parent parcel in uareg_demo: {unresolved[:5]}")
         if appsub_rows:
             cx.execute(text("""INSERT INTO application_sub_divisions
                 (id,application_id,sub_division_id,proposed_area_sqm,
@@ -906,7 +906,7 @@ def main():
         print(f"application_sub_divisions: {len(appsub_rows)}")
 
         # ---------- proposed sub-division owners (ISD) ----------
-        # urban_temp_subdivision_owner: the new owner(s) of each proposed
+        # chitta_temp_subdivclub_demo: the new owner(s) of each proposed
         # sub-division, linked by (application_id, temporary_subdivision_number).
         appsub_owner_rows = []
         for r in cx.execute(text("""
@@ -914,7 +914,7 @@ def main():
                    owner_name_english, owner_name_tamil, relationship,
                    relative_name_english, relative_name_tamil, ownership_share,
                    aadhaar_number, gender
-            FROM urban_temp_subdivision_owner
+            FROM chitta_temp_subdivclub_demo
             ORDER BY application_id, temporary_subdivision_number, owner_no""")).all():
             (app_id, tmp_no, own_no, name_en, name_ta, rel, rel_en, rel_ta,
              share, aadhaar, gender) = r
@@ -953,7 +953,7 @@ def main():
             SELECT application_id, action_from_role_id, action_to_role_id,
                    action_date, remarks, updated_by_user, recommendation_status,
                    last_updated_datetime, serial_number
-            FROM application_workflow_action ORDER BY application_id, serial_number""")).all():
+            FROM application_workflow_demo ORDER BY application_id, serial_number""")).all():
             if r[0] in app_uuid:
                 chains[r[0]].append(r)
 
@@ -1047,8 +1047,8 @@ def main():
         # table covers NISD, the parcel one ISD/settlement. verified_datetime /
         # username_verify / nic_dsign_flag are all NULL in the extracts.
         sig_by_app = {}
-        for tbl, user_col in (("urban_natham_chitta_signature", "signed_by_username"),
-                              ("urban_parcel_signature", "username")):
+        for tbl, user_col in (("uchitta_nathammap_ds_demo", "signed_by_username"),
+                              ("uaregmap_ds_demo", "username")):
             for sr in cx.execute(text(
                     f"SELECT form6_number, signed_datetime, {user_col} "
                     f"FROM {tbl} WHERE form6_number IS NOT NULL "
@@ -1060,9 +1060,9 @@ def main():
         # so those are selected as NULL for it.
         _clean = lambda v: (str(v).strip() or None) if v not in (None, "", "-") else None
         transfer_sources = [
-            ("nisd_transfer_urban_detail", "order_date",
+            ("full_field_patta_transfer_urban_demo", "order_date",
              "order_number, order_date, order_remarks, transfer_type, direct_transfer_flag"),
-            ("isd_transfer_urban_detail", "registration_date",
+            ("sub_div_patta_transfer_urban_demo", "registration_date",
              "NULL AS order_number, NULL AS order_date, NULL AS order_remarks, "
              "NULL AS transfer_type, NULL AS direct_transfer_flag"),
         ]

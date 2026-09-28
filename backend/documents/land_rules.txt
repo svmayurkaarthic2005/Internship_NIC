@@ -75,7 +75,7 @@ Rules that follow:
 === HOW THE SUBMISSION CHANNEL IS DECIDED ===
 
 Every application carries a submission channel - CSC, citizen or sub_registrar.
-It is read off two columns of urban_application_log, and nothing else:
+It is read off two columns of appl_log_urban_demo, and nothing else:
 
 - source_name is "-" (no operator account touched the file): the application
   came in unattended from the Sub-Registrar, where IGRS raised the mutation off
@@ -150,7 +150,7 @@ The channel is decided by source_name and camp_flag, as set out above.
   the registration_place (e.g. "Tuticorin Joint I", "Tuticorin Joint II").
 - IGRS Form 6 number is a 12-digit reference (sample "202223957844") linking the
   registered document to the mutation request. It appears on
-  urban_application_log, the NISD/ISD application-info rows and the IGRS owner
+  appl_log_urban_demo, the NISD/ISD application-info rows and the IGRS owner
   row.
 - Encumbrance Certificate must show a clear title for the preceding 13 years and
   be within 3 months of its issue date at the time of verification.

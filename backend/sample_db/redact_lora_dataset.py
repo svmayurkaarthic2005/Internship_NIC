@@ -79,6 +79,6 @@ def main(inputs: list[Path], out_path: Path) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("inputs", type=Path, nargs="+")
-    parser.add_argument("--out", type=Path, default=Path("lora_dataset_final.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("lora_training/lora_dataset_final.jsonl"))
     args = parser.parse_args()
     raise SystemExit(main(args.inputs, args.out))

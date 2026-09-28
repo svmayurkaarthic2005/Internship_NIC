@@ -24,8 +24,8 @@ processing. owners and survey_ownership represent ownership records.
 
 === SOURCE-EXTRACT TABLES ===
 
-urban_application_log is the CSV-shaped source for application details.
-application_workflow_action is the source for workflow hops. The sample
+appl_log_urban_demo is the CSV-shaped source for application details.
+application_workflow_demo is the source for workflow hops. The sample
 database projects these source tables into the application tables used by the
 chatbot. Database queries exclude rejected applications from operational lists.
 

@@ -35,9 +35,9 @@ from backend.sample_db.identifiers import CAN_LENGTHS, aadhaar_valid, can_valid
 
 # Every extract that carries an aadhaar_number column.
 AADHAAR_TABLES = [
-    "urban_natham_chitta_owner", "nisd_transfer_new_owner",
-    "nisd_transfer_old_owner", "nisd_transfer_return_owner",
-    "nisd_transfer_igrs_owner", "urban_temp_subdivision_owner",
+    "uchitta_natham_demo", "full_field_patta_transfer_new_owner_demo",
+    "full_field_patta_transfer_old_owner_demo", "full_field_patta_transfer_return_owner_demo",
+    "full_field_patta_transfer_igrs_owner_demo", "chitta_temp_subdivclub_demo",
 ]
 
 failures: list[str] = []

@@ -59,59 +59,59 @@ PERSON_NAME_COLUMNS = {
 }
 
 
-# application_workflow_action is deliberately NOT here: the extract is a
+# application_workflow_demo is deliberately NOT here: the extract is a
 # district-wide dump (288087 rows) and most of it belongs to settlement service
-# codes that urban_application_log does not carry. Orphans there are expected;
+# codes that appl_log_urban_demo does not carry. Orphans there are expected;
 # what must hold is the other direction, checked separately below -- every
 # logged application has at least one workflow row.
 REFERENCE_CHECKS = [
-    ("nisd_transfer_application_info -> urban_application_log",
-     "nisd_transfer_application_info w", "urban_application_log l",
+    ("full_field_patta_transfer_application_information_demo -> appl_log_urban_demo",
+     "full_field_patta_transfer_application_information_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("isd_transfer_application_info -> urban_application_log",
-     "isd_transfer_application_info w", "urban_application_log l",
+    ("sub_div_patta_transfer_application_information_urban_demo -> appl_log_urban_demo",
+     "sub_div_patta_transfer_application_information_urban_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("nisd_transfer_old_owner -> urban_application_log",
-     "nisd_transfer_old_owner w", "urban_application_log l",
+    ("full_field_patta_transfer_old_owner_demo -> appl_log_urban_demo",
+     "full_field_patta_transfer_old_owner_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("nisd_transfer_new_owner -> urban_application_log",
-     "nisd_transfer_new_owner w", "urban_application_log l",
+    ("full_field_patta_transfer_new_owner_demo -> appl_log_urban_demo",
+     "full_field_patta_transfer_new_owner_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("nisd_transfer_return_owner -> urban_application_log",
-     "nisd_transfer_return_owner w", "urban_application_log l",
+    ("full_field_patta_transfer_return_owner_demo -> appl_log_urban_demo",
+     "full_field_patta_transfer_return_owner_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("nisd_transfer_urban_detail -> urban_application_log",
-     "nisd_transfer_urban_detail w", "urban_application_log l",
+    ("full_field_patta_transfer_urban_demo -> appl_log_urban_demo",
+     "full_field_patta_transfer_urban_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("isd_transfer_urban_detail -> urban_application_log",
-     "isd_transfer_urban_detail w", "urban_application_log l",
+    ("sub_div_patta_transfer_urban_demo -> appl_log_urban_demo",
+     "sub_div_patta_transfer_urban_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("urban_temp_subdivision_parcel -> urban_application_log",
-     "urban_temp_subdivision_parcel w", "urban_application_log l",
+    ("areg_temp_subdivclub_demo -> appl_log_urban_demo",
+     "areg_temp_subdivclub_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("urban_temp_subdivision_owner -> urban_application_log",
-     "urban_temp_subdivision_owner w", "urban_application_log l",
+    ("chitta_temp_subdivclub_demo -> appl_log_urban_demo",
+     "chitta_temp_subdivclub_demo w", "appl_log_urban_demo l",
      "l.application_id = w.application_id"),
-    ("urban_natham_chitta_owner -> urban_parcel_register",
-     "urban_natham_chitta_owner w", "urban_parcel_register l",
+    ("uchitta_natham_demo -> uareg_demo",
+     "uchitta_natham_demo w", "uareg_demo l",
      "l.patta_number = w.patta_number"),
-    ("urban_parcel_signature -> urban_parcel_register",
-     "urban_parcel_signature w", "urban_parcel_register l",
+    ("uaregmap_ds_demo -> uareg_demo",
+     "uaregmap_ds_demo w", "uareg_demo l",
      "l.patta_number = w.patta_number"),
-    ("urban_natham_chitta_signature -> urban_parcel_register",
-     "urban_natham_chitta_signature w", "urban_parcel_register l",
+    ("uchitta_nathammap_ds_demo -> uareg_demo",
+     "uchitta_nathammap_ds_demo w", "uareg_demo l",
      "l.patta_number = w.patta_number"),
 ]
 
 # Each transfer table must only carry applications of its own service code
 # (0153 = NISD, 0154 = ISD -- see documents/tamilnilam_urban_services_and_districts.txt).
 SERVICE_CHECKS = [
-    ("nisd_transfer_application_info", "0153"),
-    ("nisd_transfer_urban_detail", "0153"),
-    ("isd_transfer_application_info", "0154"),
-    ("isd_transfer_urban_detail", "0154"),
-    ("urban_temp_subdivision_parcel", "0154"),
-    ("urban_temp_subdivision_owner", "0154"),
+    ("full_field_patta_transfer_application_information_demo", "0153"),
+    ("full_field_patta_transfer_urban_demo", "0153"),
+    ("sub_div_patta_transfer_application_information_urban_demo", "0154"),
+    ("sub_div_patta_transfer_urban_demo", "0154"),
+    ("areg_temp_subdivclub_demo", "0154"),
+    ("chitta_temp_subdivclub_demo", "0154"),
 ]
 
 
@@ -143,14 +143,14 @@ def check_references(cur) -> list[str]:
         if n:
             failures.append(f"{label}: {n} orphans")
     # the direction that must hold for the workflow dump
-    cur.execute("""SELECT count(*) FROM urban_application_log l
-                   WHERE NOT EXISTS (SELECT 1 FROM application_workflow_action w
+    cur.execute("""SELECT count(*) FROM appl_log_urban_demo l
+                   WHERE NOT EXISTS (SELECT 1 FROM application_workflow_demo w
                                      WHERE w.application_id = l.application_id)""")
     n = cur.fetchone()[0]
-    cur.execute("SELECT count(*) FROM application_workflow_action")
+    cur.execute("SELECT count(*) FROM application_workflow_demo")
     total = cur.fetchone()[0]
-    cur.execute("""SELECT count(*) FROM application_workflow_action w
-                   WHERE EXISTS (SELECT 1 FROM urban_application_log l
+    cur.execute("""SELECT count(*) FROM application_workflow_demo w
+                   WHERE EXISTS (SELECT 1 FROM appl_log_urban_demo l
                                  WHERE l.application_id = w.application_id)""")
     matched = cur.fetchone()[0]
     print(f"  {'ok ' if n == 0 else 'FAIL'} "
@@ -158,12 +158,12 @@ def check_references(cur) -> list[str]:
     print(f"  note {total - matched} of {total} workflow rows belong to applications "
           f"outside the log (district-wide extract)")
     if n:
-        failures.append(f"{n} applications in urban_application_log have no "
+        failures.append(f"{n} applications in appl_log_urban_demo have no "
                         f"workflow row")
 
     for table, service in SERVICE_CHECKS:
         cur.execute(f"SELECT count(*) FROM {table} t "
-                    f"JOIN urban_application_log l USING (application_id) "
+                    f"JOIN appl_log_urban_demo l USING (application_id) "
                     f"WHERE l.service_code <> %s", (service,))
         n = cur.fetchone()[0]
         print(f"  {'ok ' if n == 0 else 'FAIL'} {table + ' service=' + service:52s} wrong={n}")
@@ -228,9 +228,9 @@ def check_populated(cur) -> list[str]:
 # SignedData blob (wrapped at 76 chars), while `digital_signature_content` /
 # `signature_content` hold the JSON payload that was signed.
 SIGNATURE_TABLES = [
-    ("urban_parcel_signature", "document_hash", "digital_signature_content",
+    ("uaregmap_ds_demo", "document_hash", "digital_signature_content",
      "username"),
-    ("urban_natham_chitta_signature", "document_hash", "signature_content",
+    ("uchitta_nathammap_ds_demo", "document_hash", "signature_content",
      "signed_by_username"),
 ]
 

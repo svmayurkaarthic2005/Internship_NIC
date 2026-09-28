@@ -27,6 +27,7 @@ import calendar
 import re
 
 from backend.config import settings, DISTRICT_CODE_MAP, DISTRICT_NAME_MAP
+from backend.services import llm_gate
 from backend.services.pgvector_store import similarity_search
 from backend.utils.logger import get_logger
 from backend.utils.fuzzy import (
@@ -63,8 +64,15 @@ llm = ChatOllama(
     keep_alive=settings.LLM_KEEP_ALIVE,
     temperature=0.1,
     num_predict=settings.LLM_NUM_PREDICT,
-    num_ctx=settings.LLM_NUM_CTX
+    num_ctx=settings.LLM_NUM_CTX,
+    # Give up on a dead connection instead of waiting for ever.
+    client_kwargs={"timeout": settings.LLM_HTTP_READ_TIMEOUT},
 )
+
+_BUSY_TEXT = ("The assistant is busy answering other questions right now. "
+              "Please try again in a moment.")
+_STALLED_TEXT = ("The model stopped responding, so this reply was cut short. "
+                 "Please ask again.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1306,11 +1314,11 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
 
     extra_th = ""
     if req_name:
-        extra_th += f"<th>Applicant Name</th>"
+        extra_th += "<th>Applicant Name</th>"
     if req_mobile:
-        extra_th += f"<th>Mobile</th>"
+        extra_th += "<th>Mobile</th>"
     if req_address:
-        extra_th += f"<th>Address</th>"
+        extra_th += "<th>Address</th>"
     # Deliberately NOT part of extra_th: the field-visit tables below share
     # extra_th and emit no channel cell, and a header with no cell under it
     # shifts every column after it. Only the two application tables render it.
@@ -2612,7 +2620,7 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
                 "status": f"<td>{_status(fv.get('status'), lang)}{' ⚠️' if fv.get('is_overdue') else ''}</td>",
                 "sched": f"<td>{_e(fv.get('field_visit_date') or 'Not Scheduled')}</td>",
             }
-            rows += (f"<tr><td>{_e(fv.get('application_number'))}</td>{extra_td}"
+            rows += (f"<tr><td>{_app_link(fv.get('application_number'))}</td>{extra_td}"
                      + "".join(cells[k] for k in _fv_keep) + "</tr>")
 
         heads = {"survey": t['survey_no'], "subdiv": t['subdivisions'], "block": t['block'],
@@ -2799,7 +2807,7 @@ When application data IS provided:
     history_section = ""
     if chat_history and len(chat_history) > 0:
         history_lines = ["\n\nCONVERSATION HISTORY (for context):"]
-        for msg in chat_history[-10:]:  # Last 10 messages max
+        for msg in chat_history[-40:]:  # Last 40 messages max -- matches CONTEXT_MESSAGE_LIMIT in chat.js
             role = msg.get("role") or "user"
             content = msg.get("content", "") or ""
             if len(content) > 500:
@@ -2824,12 +2832,15 @@ async def call_llama(prompt: str) -> str:
     """Call Llama model via Ollama (non-streaming)."""
     try:
         logger.info("Calling Ollama LLM...")
-        response = await asyncio.wait_for(
-            llm.ainvoke(prompt), timeout=settings.LLM_TIMEOUT_SECONDS)
+        async with llm_gate.llm_slot():
+            response = await asyncio.wait_for(
+                llm.ainvoke(prompt), timeout=settings.LLM_TIMEOUT_SECONDS)
         response_text = response.content if hasattr(response, "content") else str(response)
         response_text = response_text.strip()
         logger.info(f"LLM response generated ({len(response_text)} chars)")
         return response_text
+    except llm_gate.LLMBusy:
+        return _BUSY_TEXT
     except asyncio.TimeoutError:
         logger.error(f"LLM call timed out after {settings.LLM_TIMEOUT_SECONDS}s")
         return ("This is taking longer than expected to answer. Please try again, "
@@ -2845,18 +2856,26 @@ async def call_llama_stream(prompt: str):
         logger.info("Calling Ollama LLM with streaming...")
         chunk_count = 0
         total_content = ""
-        async for chunk in llm.astream(prompt):
-            chunk_count += 1
-            content = chunk.content if hasattr(chunk, "content") else str(chunk)
-            if content:
-                total_content += content
-                yield content
-            if chunk_count % 10 == 0:
-                logger.debug(f"Streamed {chunk_count} chunks, {len(total_content)} chars so far")
+        # The slot is held for the whole stream and released when the stream ends, stalls, or
+        # the client goes away (cancellation); guarded_stream closes the connection either way.
+        async with llm_gate.llm_slot():
+            async for chunk in llm_gate.guarded_stream(lambda: llm.astream(prompt)):
+                chunk_count += 1
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if content:
+                    total_content += content
+                    yield content
+                if chunk_count % 10 == 0:
+                    logger.debug(f"Streamed {chunk_count} chunks, {len(total_content)} chars so far")
         logger.info(f"LLM streaming complete: {chunk_count} chunks, {len(total_content)} total chars")
         if not total_content:
             logger.error("WARNING: LLM returned empty response!")
             yield "I apologize, but I received an empty response. Please try again."
+    except llm_gate.LLMBusy:
+        yield _BUSY_TEXT
+    except llm_gate.LLMStalled as e:
+        logger.error(f"LLM stream stalled ({e}) after {len(total_content)} chars")
+        yield (" " if total_content else "") + _STALLED_TEXT
     except Exception as e:
         logger.error(f"Error in LLM stream: {e}", exc_info=True)
         yield "I apologize, but I encountered an error processing your request. Please try again."
@@ -3388,7 +3407,7 @@ def _classify_application_subtopic(message: str, prev_intent: str = None):
                                        "கூட்டுரிமை"))
     ):
         return None
-    # "group survey / sub-division / patta number" name the `urban_application_log`
+    # "group survey / sub-division / patta number" name the `appl_log_urban_demo`
     # group_* columns, which the ORM projection drops. Routed as survey_detail /
     # survey_owners the deterministic "not in register" handler never sees them
     # and the officer got "No records found". Fall back to application_status,
@@ -5406,7 +5425,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         "csc", "common service cent", "citizen",
     ])
     # Bare "source" is also half of "irrigation source" -- a real
-    # urban_parcel_register field name (_UNTRACKED_PARCEL_FIELDS) -- so "what
+    # uareg_demo field name (_UNTRACKED_PARCEL_FIELDS) -- so "what
     # is the irrigation source for <app>?" was swallowed whole into a channel
     # ("how did this application arrive") answer before the parcel-field
     # guard ever got a look at it. Excluded only in that one phrase; every

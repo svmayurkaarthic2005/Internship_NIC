@@ -142,8 +142,10 @@ nic_internship/
 ├── tools/                    # create_chatbot_test_fixtures.js
 ├── test_*.py / test_questions_*.txt   # Top-level suites and question sets (see Testing)
 ├── check_*.py, debug_*.py, trace_intent.py, query_channels.py   # One-off DB / routing probes
-├── train_qlora.py, colab_merge_and_gguf.py, kaggle_merge_and_gguf.py   # Fine-tune / GGUF export
-├── train*.jsonl, validation*.jsonl, lora_dataset*.jsonl, eval_*_results.jsonl   # Datasets + eval output
+├── lora_training/            # only what training actually uses (dataset-prep scripts
+│   ├── train_qlora.py        #   and their intermediate jsonl stages are done and gone)
+│   ├── train_augmented.jsonl, validation.jsonl   # what train_qlora.py reads
+│   └── eval_*_results.jsonl  # eval history, one file per model version
 ├── sis-qlora-adapter/        # Trained LoRA adapter (also on Google Drive)
 ├── serve_frontend.py, start_backend.ps1, quick_setup.py
 ├── *.md reports              # AGENTS.md, README.md, *_FINDINGS.md, *_SUMMARY.md, DISTRICT_HANDLING.md ...
@@ -164,10 +166,20 @@ fine-tuning and debugging passes, not part of the application.
 The chatbot still answers deterministic questions from PostgreSQL; the fine-tune only
 improves the LLM fallback and the Tamil / Tanglish phrasing of its answers.
 
+`lora_training/` holds only what the current model actually trained on --
+`train_qlora.py`, its `train_augmented.jsonl` + `validation.jsonl` inputs, and the
+`eval_*_results.jsonl` history. The dataset-build and cleaning scripts
+(`backend/sample_db/build_lora_dataset*.py` → `clean_lora_dataset.py` →
+`redact_lora_dataset.py` → `reinforce_glossary_facts.py`, plus a handful of one-off
+editing scripts) already ran; each wrote its output into `lora_training/` and, once
+the next stage consumed it, was removed rather than kept as a stale intermediate.
+Regenerating the dataset from scratch means rebuilding that chain from
+`build_lora_dataset*.py` again.
+
 ```
-build_lora_dataset*.py → clean / redact / validate / strip_* → finalize_train_data.py
-   → train_augmented.jsonl + validation.jsonl   (messages-only; meta stripped for training)
-   → train_qlora.py or SIS_QLoRA_Training.ipynb (Colab L4) → sis-qlora-adapter/
+build_lora_dataset*.py → clean / redact / reinforce_glossary_facts.py
+   → lora_training/train_augmented.jsonl + validation.jsonl   (messages-only; meta stripped for training)
+   → lora_training/train_qlora.py or SIS_QLoRA_Training.ipynb (Colab L4) → sis-qlora-adapter/
    → merge into an fp16 base → convert to GGUF → Q4_K_M → Ollama
 ```
 
@@ -190,7 +202,7 @@ build_lora_dataset*.py → clean / redact / validate / strip_* → finalize_trai
   `convert_hf_to_gguf.py` → `llama-quantize … Q4_K_M` (~4.6 GB). `llama-cli -p` runs raw
   completion, so judge answer quality through Ollama with the Llama-3 chat template.
 - **Evaluation**: `backend/sample_db/eval_set.jsonl` is held out; `run_eval_baseline.py`
-  records the un-tuned pipeline, and `eval_*_results.jsonl` hold each later model.
+  records the un-tuned pipeline, and `lora_training/eval_*_results.jsonl` hold each later model.
 - The project's model is this Tamil-base fine-tune. Point `LLM_MODEL` at the Ollama
   model created from the GGUF (Llama-3 chat template in the Modelfile); until then
   `config.py` still defaults to stock `llama3.1:8b`.
@@ -216,20 +228,20 @@ One PostgreSQL database holds **two layers**. Know which one you are touching be
 
 | Table | Rows | Table | Rows |
 |---|---|---|---|
-| `urban_application_log` | 1211 | `nisd_transfer_old_owner` | 630 |
-| `application_workflow_action` | 288087 | `nisd_transfer_return_owner` | 46 |
-| `urban_temp_subdivision_parcel` | 49 | `nisd_transfer_urban_detail` | 229 |
-| `urban_temp_subdivision_owner` | 117 | `isd_transfer_application_info` | 41 |
-| `nisd_transfer_application_info` | 166 | `isd_transfer_urban_detail` | 50 |
-| `nisd_transfer_igrs_owner` | 100 | `urban_parcel_register` | 1033 |
-| `nisd_transfer_new_owner` | 620 | `urban_parcel_signature` | 1036 |
-| `urban_natham_chitta_owner` | 551 | `urban_natham_chitta_signature` | 439 |
+| `appl_log_urban_demo` | 1211 | `full_field_patta_transfer_old_owner_demo` | 630 |
+| `application_workflow_demo` | 288087 | `full_field_patta_transfer_return_owner_demo` | 46 |
+| `areg_temp_subdivclub_demo` | 49 | `full_field_patta_transfer_urban_demo` | 229 |
+| `chitta_temp_subdivclub_demo` | 117 | `sub_div_patta_transfer_application_information_urban_demo` | 41 |
+| `full_field_patta_transfer_application_information_demo` | 166 | `sub_div_patta_transfer_urban_demo` | 50 |
+| `full_field_patta_transfer_igrs_owner_demo` | 100 | `uareg_demo` | 1033 |
+| `full_field_patta_transfer_new_owner_demo` | 620 | `uaregmap_ds_demo` | 1036 |
+| `uchitta_natham_demo` | 551 | `uchitta_nathammap_ds_demo` | 439 |
 
-`application_workflow_action` is a district-wide dump. Most of its 288087 rows
+`application_workflow_demo` is a district-wide dump. Most of its 288087 rows
 belong to settlement service codes (`0167` / `0169`, …) that never become an
-application: only 4694 name an `application_id` that `urban_application_log`
+application: only 4694 name an `application_id` that `appl_log_urban_demo`
 also carries, and 982 of those belong to the `0153` / `0154` / `0155` codes the
-chatbot works with. `urban_application_log`'s 1211 rows cover 1139 distinct
+chatbot works with. `appl_log_urban_demo`'s 1211 rows cover 1139 distinct
 application ids — an application spanning several parcels has one row per
 parcel.
 
@@ -237,12 +249,12 @@ parcel.
 
 | Sample table | App table |
 |---|---|
-| `urban_parcel_register` | `towns` → `wards` → `blocks`, `survey_numbers`, `sub_divisions` |
-| `urban_natham_chitta_owner` | `owners`, `survey_ownership` |
-| `urban_application_log` | `applications` (+ `applicants`, `application_documents`) |
-| `application_workflow_action` | `workflow_history`, `field_visits` |
-| `urban_temp_subdivision_parcel` | `application_sub_divisions` |
-| `nisd_/isd_transfer_urban_detail` | `patta_transfers` |
+| `uareg_demo` | `towns` → `wards` → `blocks`, `survey_numbers`, `sub_divisions` |
+| `uchitta_natham_demo` | `owners`, `survey_ownership` |
+| `appl_log_urban_demo` | `applications` (+ `applicants`, `application_documents`) |
+| `application_workflow_demo` | `workflow_history`, `field_visits` |
+| `areg_temp_subdivclub_demo` | `application_sub_divisions` |
+| `nisd_/sub_div_patta_transfer_urban_demo` | `patta_transfers` |
 | workflow usernames at role 41 | `sis_officers`, `officer_jurisdictions` |
 
 Rules that follow from this split:
@@ -461,7 +473,7 @@ the ORM projection:
 ### Submission channels
 
 `applications.submission_channel` is derived by `can_channel()` in
-`identifiers.py` from two columns of `urban_application_log`. **The rule (set by
+`identifiers.py` from two columns of `appl_log_urban_demo`. **The rule (set by
 the domain owner):**
 
 | channel | `source_name` | `camp_flag` | seeded apps |
@@ -492,7 +504,7 @@ and CSC rows; citizen rows are exempt from the CAN-series check, since a camp
 file carries whichever counter's number. Known artefact: `2023/0153/28/000327`
 has a placeholder CAN.
 
-`urban_application_log.source_code` carries no channel signal; do not use it.
+`appl_log_urban_demo.source_code` carries no channel signal; do not use it.
 
 ### Application Types
 - **ISD** (`0154`) — **Involving Sub-Division**: the parcel is split, so the file
@@ -520,7 +532,7 @@ CSV, both layers and the answers.
 ### Application Statuses
 `pending` → `in_progress` → `escalated` → `approved` / `rejected`
 
-What the extracts actually carry, via `urban_application_log.application_status`
+What the extracts actually carry, via `appl_log_urban_demo.application_status`
 cross-checked against the wording in the transfer extracts and against how each
 workflow chain ends:
 
@@ -563,7 +575,7 @@ application  (CSC operator / citizen portal / Sub-Registrar referral)
 **There is no FMB (Field Measurement Book) anywhere in this data**, so nothing
 in the code should mention one. Checked in both layers and in the extracts: no
 column, value or document carries an FMB book number, page number or sketch.
-The only thing that comes close is `isd_transfer_urban_detail.sketch_sent_date`
+The only thing that comes close is `sub_div_patta_transfer_urban_demo.sketch_sent_date`
 (31 of 50 rows) and `sketch_received_date` (**0** of 50) in layer 1 — a date the
 sub-division sketch went to the Senior Draughtsman, never a returned sketch, and
 neither column is projected into the ORM tables, so the chatbot cannot see even
@@ -572,7 +584,7 @@ that. The FMB references that used to sit in `workflow_guide.txt`,
 made the assistant discuss a record the department's data does not hold. Do not
 re-add FMB to the corpus or the prompts unless an extract starts carrying it.
 
-Each hop is a row in `application_workflow_action` (layer 1), projected into
+Each hop is a row in `application_workflow_demo` (layer 1), projected into
 `workflow_history` (layer 2) by `build_app_tables.py` through `ROLE_TO_STAGE`.
 `workflow_history.performed_at` comes from `last_updated_datetime`, not
 `action_date`: a file often clears three desks in one day, and dating the hops
@@ -600,7 +612,7 @@ sends every "when" and every "date" to `submission_date`.
 
 ### Workflow Roles
 
-The role ids in `application_workflow_action`, read off the data rather than
+The role ids in `application_workflow_demo`, read off the data rather than
 assumed — the applications whose wording says "Send to SIS" are sitting at role
 44 or 41, and 42 shares its actors with 44:
 
@@ -1078,7 +1090,7 @@ branch. `python test_owner_field_queries.py` (routing + answers, no LLM;
 `--routing` skips the DB).
 
 **The gap it closed.** `build_app_tables.py` projects only a handful of the
-`urban_natham_chitta_owner` / `nisd_transfer_igrs_owner` columns into `owners`
+`uchitta_natham_demo` / `full_field_patta_transfer_igrs_owner_demo` columns into `owners`
 / `survey_ownership` (name, Tamil name, relative/father name, **relationship
 type** — `relationship_code` mapped `5`→`s/o`, `4`→`w/o`, `6`→`d/o`, ~171 rows;
 `0` (380 rows) stays NULL — **gender** from `sex`, ~140 rows, `address`, Aadhaar
@@ -1107,7 +1119,7 @@ context), so a bare "what is a ration card" is left alone. Cues are specific —
 `applicant_gender`, …) are untouched.
 
 The same family also covers the transfer-owner extracts
-(`nisd_transfer_return_owner` / `_old_owner` / `_new_owner`, which feed nothing
+(`full_field_patta_transfer_return_owner_demo` / `_old_owner` / `_new_owner`, which feed nothing
 in layer 2): `owner_status`, `uds_details` (undivided share) and owner-scoped
 `extent` — all empty in the source, none projected.
 
@@ -1151,7 +1163,7 @@ survey-scoped, and skipped when an application number is in view (that sends the
 same words to `_UNTRACKED_SOURCE_FIELDS` on the field-lookup path instead).
 `python test_parcel_field_followups.py` (routing + classifier + answer, no LLM).
 
-**The gap.** `build_app_tables.py` carries a `urban_parcel_register` row's
+**The gap.** `build_app_tables.py` carries a `uareg_demo` row's
 geography, `survey_number`, `subdivision_number`, `patta_number`,
 `land_type_code` → `land_type` and `extent_value_3` → `total_area_sqm` into
 `survey_numbers` / `sub_divisions`, and drops the other ~35 columns. Unlike the
@@ -1168,7 +1180,7 @@ non-answer. As a bare follow-up ("what is the irrigation source?") it lost the
 survey reference and fell to the LLM.
 
 **The fix.** Same shape as `_UNTRACKED_OWNER_FIELDS`: a deterministic answer
-naming the field, saying it is in `urban_parcel_register` but not the
+naming the field, saying it is in `uareg_demo` but not the
 projection, and pointing at what *is* held for a survey number (patta, area
 sq.m, land type, sub-divisions, encroachment / litigation). Plus the bare
 follow-up cues in `followup_context._SINGULAR_FIELD_CUES` (`irrigation`,
@@ -1282,8 +1294,11 @@ exist. Original bytes are written under a server-generated `uuid4().hex` name
 inside `UPLOAD_STORAGE_DIR` (`var/attachments`, gitignored, outside anything
 served); the client filename never touches a path. Nothing logs document text.
 
-**Retention.** Rows carry `expires_at` (`UPLOAD_RETENTION_HOURS`, 72). A sweep
-runs at startup and on each upload. Because the store is PostgreSQL, a restart
+**Retention.** Rows carry `expires_at` (`UPLOAD_RETENTION_MINUTES`, 15). A sweep
+runs at startup, on each upload and every `UPLOAD_SWEEP_INTERVAL_SECONDS` (60); reads
+also ignore expired rows, and a question about a file that is gone is told to re-upload.
+The same bytes uploaded again in the same chat reuse the existing document (session +
+`content_hash`) and renew its window. Because the store is PostgreSQL, a restart
 loses nothing that has not expired — the exact failure the in-memory store had.
 
 **Still unsupported, deliberately:** scanned / image-only PDFs (recorded as

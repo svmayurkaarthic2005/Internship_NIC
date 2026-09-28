@@ -258,6 +258,23 @@ async def save_document(
         raise AttachmentAccessError("Invalid session or officer identifier.")
 
     now = datetime.now(timezone.utc)
+    digest = hashlib.sha256(raw).hexdigest()
+    # The same bytes uploaded again in the same chat are the same document: reuse
+    # it (and renew its window) instead of creating a second copy the officer would
+    # then be asked to choose between. Scoped to officer + session, never global.
+    existing = (await db.execute(
+        select(ChatAttachment).where(
+            ChatAttachment.officer_id == oid, ChatAttachment.session_id == sid,
+            ChatAttachment.content_hash == digest,
+            ChatAttachment.is_active.is_(True), ChatAttachment.expires_at > now)
+        .order_by(ChatAttachment.created_at.desc()).limit(1))).scalar_one_or_none()
+    if existing is not None:
+        existing.expires_at = now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES)
+        await db.commit()
+        await db.refresh(existing)
+        logger.info("chat attachment re-uploaded; reusing existing document")
+        return existing
+
     doc = ChatAttachment(
         officer_id=oid,
         session_id=sid,
@@ -274,7 +291,7 @@ async def save_document(
         csv_headers=extracted.csv_headers,
         csv_row_count=len(extracted.csv_rows) if extracted.csv_rows is not None else None,
         is_active=(extracted.status == doc_extract.STATUS_OK),
-        expires_at=now + timedelta(hours=settings.UPLOAD_RETENTION_HOURS),
+        expires_at=now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES),
     )
     db.add(doc)
     await db.flush()      # assigns doc.id
@@ -409,6 +426,18 @@ async def cleanup_expired(db: AsyncSession) -> int:
         _remove_raw(stored)
     logger.info(f"chat attachments expired and removed: {len(ids)}")
     return len(ids)
+
+
+async def cleanup_forever(session_factory) -> None:
+    """Sweep expired attachments on a timer, so retention holds without an upload."""
+    import asyncio
+    while True:
+        await asyncio.sleep(settings.UPLOAD_SWEEP_INTERVAL_SECONDS)
+        try:
+            async with session_factory() as db:
+                await cleanup_expired(db)
+        except Exception as exc:
+            logger.warning(f"attachment sweep failed: {exc}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
