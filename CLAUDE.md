@@ -240,10 +240,68 @@ One PostgreSQL database holds **two layers**. Know which one you are touching be
 `application_workflow_demo` is a district-wide dump. Most of its 288087 rows
 belong to settlement service codes (`0167` / `0169`, …) that never become an
 application: only 4694 name an `application_id` that `appl_log_urban_demo`
-also carries, and 982 of those belong to the `0153` / `0154` / `0155` codes the
+also carries, and 982 of those belong to the `0153` / `0154` codes the
 chatbot works with. `appl_log_urban_demo`'s 1211 rows cover 1139 distinct
 application ids — an application spanning several parcels has one row per
 parcel.
+
+**Every TAMILNILAM service code, not just ISD/NISD — `service_register_entries`
+(in progress, not yet committed).** `Application` (`ck_application_type`)
+admits only `0153`/`0154`, because a full ISD/NISD workflow/stage/field-visit
+machine is the only thing this register was originally built to run. But an
+SIS officer's jurisdiction sees applications under the other ~27 TAMILNILAM
+urban service codes too (`0158` Modification, `0159` Addition, `0160`
+Deletion, `0162` Street/Door Modification, `0164` ULC Subdivision, `0165` TSLR
+Owner Name Correction, `0169` Govt-to-Private, `0178` F-Line, …), and asking
+about one of them used to get silently folded into the ISD/NISD answer or
+pushed to the documents-only definition ("what is 0178?") with no way to see
+an actual F-Line application.
+
+This is now closed by a new `ServiceRegisterEntry` model (`backend/models.py`)
+— one flat row per `application_id` across every service code, read from the
+live `service_register_entries` table: application number, service code (+its
+official name from `SIS_URBAN_SERVICES`), survey/subdivision number, a coarse
+`status` (approved/pending/rejected — not the ISD/NISD state machine) and
+`stage` (`Open`/`Completed` only), submission channel and date, ward/block. No
+workflow history, no field-visit tracking, no applicant/owner detail — an
+officer wanting that level of detail on an actual ISD/NISD file still uses
+`Application`. `get_all_service_code_applications()` in `postgres.py` queries
+it (ward-scoped, with optional `service_code` / `submission_channel` / `status`
+filters); `rag.py` routes to it as the `all_service_code_applications` intent,
+with an explicit regex for "F-Line application(s)" (`0178`) alongside the
+general "applications of/across all service codes" phrasing; `chatbot.py`
+renders it as a flat table in both chat paths.
+
+**This whole feature is uncommitted, in-progress work** — `git status` shows
+large diffs against `HEAD` in `models.py`, `postgres.py`, `rag.py` and
+`chatbot.py`, plus an entirely new, untracked `backend/sample_db_new/`
+directory (its own CSVs including `f_line_service_urban_demo.csv`,
+`correction_modification_flow_demo.csv`, `uareg_modification_demo.csv`, …,
+`column_map.py`, `build_app_tables_new.py`, `load_sample_db_new.py`) that
+replaces the committed `backend/sample_db/build_app_tables.py` pipeline as the
+thing that actually populated the live database — the committed pipeline does
+not create or populate `service_register_entries` at all, and the live table
+names (`appl_log_urban`, not `appl_log_urban_demo`) and row counts no longer
+match the Layer 1 table above because they were loaded from
+`sample_db_new`, not `sample_db`. None of this — the new table, the model, the
+query function, the intent, the renderer, or the new build pipeline — is
+reflected anywhere else in this file yet, and `sample_db_new/` has no
+`verify_*` / `test_*` counterpart to the checks `sample_db/` has. Treat the
+Layer 1/Layer 2 tables below as the superseded pipeline's shape until
+`sample_db_new` is reconciled with (or replaces) `sample_db` and this file is
+updated accordingly.
+
+Three more live tables fit the same pattern — real data, no mention anywhere
+in this file, and no evident ORM/query/intent wiring found so far:
+`correction_modification_flow` (72 rows, a much longer multi-desk chain than
+documented — SIS → ZDT → SD → DIS → Tahsildar → RDO → Collector/DRO → COSS →
+CLA, none of which besides SIS/SD/DIS/Tahsildar appear elsewhere in this file),
+`uareg_modification` / `uchitta_natham_modification` (134 / 121 rows, modify
+operations `01`–`06` on the survey and natham-chitta registers), and
+`tslr_sketch_urban` / `chitta_temp_old_owner` / `sd_attachment` /
+`file_attachment`. Whether any of these already have handlers elsewhere in
+`chatbot.py` has not been checked; this note only records that they exist and
+are unexplained here.
 
 **Layer 2 — the app's ORM tables** (`backend/models.py`), a projection built from layer 1 by `build_app_tables.py`:
 
@@ -260,7 +318,7 @@ parcel.
 Rules that follow from this split:
 
 - **The chatbot queries only layer 2.** `backend/services/postgres.py` goes through the ORM models — never against the CSV-shaped tables directly.
-- Only service codes `0153` (NISD), `0154` (ISD) and `0155` (MERGE) become `applications` — `ck_application_type` admits no others, so settlement and govt-to-private rows (`0167`, `0169`, …) stay in layer 1 only.
+- Only service codes `0153` (NISD) and `0154` (ISD) become `applications` — `ck_application_type` admits no others, so settlement and govt-to-private rows (`0167`, `0169`, …) stay in layer 1 only.
 - Rebuilding the projection is idempotent: it truncates what it owns and re-derives. `knowledge_embeddings` is left alone.
 - `knowledge_embeddings` lives in the same database: 768-dim vectors (`nomic-embed-text`), HNSW index, cosine similarity.
 
@@ -358,7 +416,7 @@ POST /api/v1/chat/stream
 
 ### Intent Priority Order (in `rag.py`)
 
-`parse_intent(message, prev_intent=None)` resolves ~60 intents by exact token-boundary matching plus edit-distance typo matching (never arbitrary substrings). `prev_intent` disambiguates follow-up filter phrases like "in merge". Rough order:
+`parse_intent(message, prev_intent=None)` resolves ~60 intents by exact token-boundary matching plus edit-distance typo matching (never arbitrary substrings). `prev_intent` disambiguates follow-up filter phrases like "only isd". Rough order:
 
 1. `greeting` — "Hello", "hi there", "good morning", "வணக்கம்", and the
    sign-offs too: there is **no separate `farewell` intent**. Matching is
@@ -375,7 +433,7 @@ POST /api/v1/chat/stream
 2. Deterministic identifiers — `application_status` ("Status of 2025/0154/28/000001"), `survey_detail`, `can_number_info`
 3. `last_application` — "my previous application", "my last approved application", "is my last application rejected?", "what was the area of my last rejected application" (no number given; resolved from the officer's own history, most recent workflow action first). A status word is a filter before the noun ("my last APPROVED application") and a yes/no question after it ("is my last application APPROVED?"). One field asked in the same breath — area, applicant, mobile, address, fee, patta, CAN, sub-divisions, survey, deed, reason, submission date, channel — is answered from the record that lookup already returned.
 4. Per-application checks — `joint_owner_check`, `check_documents`, `check_sale_deed`, `is_nisd_or_isd`, `litigation_check`
-5. Workload / listing — `pending_applications`, `overdue_applications`, `officer_workload`, `isd_applications`, `nisd_applications`, `merge_applications`, `jurisdiction_summary`
+5. Workload / listing — `pending_applications`, `overdue_applications`, `officer_workload`, `isd_applications`, `nisd_applications`, `jurisdiction_summary`
 6. Field-visit family (`fv_*`) — scheduling, rescheduling, conflicts, overdue inspections, and `fv_visit_plan` for "which application should I field visit tomorrow / next week, and in which block?" (answers with the overdue visits first, then the applications with no visit booked, each with its ward and block — never just "nothing is scheduled")
 7. Sub-division desk family (`sd_*`) — sketch readiness, encroachment, forwarding, remarks
 8. Reference lookups — `service_code_lookup`, `service_code_guide`,
@@ -511,10 +569,8 @@ has a placeholder CAN.
   needs a field inspection and an SD sketch.
 - **NISD** (`0153`) — **Not Involving Sub-Division**: a straight patta transfer of
   the whole survey number, no new sub-division and no field visit.
-- **MERGE** (`0155`) — Merge application (several sub-divisions combined); follows
-  the ISD chain.
 
-An ISD/MERGE parcel carries two sub-division numbers, both projected into
+An ISD parcel carries two sub-division numbers, both projected into
 `application_sub_divisions`: the temporary `{subdiv}/T{seq}` one it runs under
 (`temporary_sub_division_no`, e.g. `3/T1`) and the final one assigned on
 approval (`proposed_sub_division_no`, e.g. `4` — it holds the temporary number
@@ -569,8 +625,6 @@ application  (CSC operator / citizen portal / Sub-Registrar referral)
    → Zonal Level Tahsildar  holds the DSC key; applies it to approve and generate
                             the patta transfer order   (role 16; `TAHSILDAR` stage)
 ```
-
-**MERGE** (`0155`) follows the ISD chain.
 
 **There is no FMB (Field Measurement Book) anywhere in this data**, so nothing
 in the code should mention one. Checked in both layers and in the extracts: no
@@ -652,7 +706,7 @@ So ISD in the seed = `SIS → SD → COMPLETED/REJECTED`. `workflow_history` nev
 carries `DIS`, and the `DIS` entry in `chatbot.py`'s `_stage_labels` is
 unreachable from data. To make ISD follow the full chain, `build_app_tables.py`
 would need to synthesise the missing `8 → 12` (SD→DIS) and `12 → 16`
-(DIS→Tahsildar) hops when projecting `workflow_history` for `0154` / `0155`.
+(DIS→Tahsildar) hops when projecting `workflow_history` for `0154`.
 
 **How the seeded NISD applications actually flow — they DO follow the chain
 above.** 168 NISD applications: 129 approved, 36 rejected, 2 in progress,
@@ -685,17 +739,15 @@ checks the code against `land_rules.txt` / `workflow_guide.txt` and every bounda
 
 | clock | rule | source |
 |---|---|---|
-| **Field-visit deadline** | an open ISD or MERGE file whose visit is not completed more than **15 working days** after submission is *overdue* (`applications.is_overdue`); a completed visit stops the clock; NISD has none | `workflow_guide.txt` |
-| **Service SLA** | NISD 15-20, ISD 30-35, MERGE 15 working days from submission to completion | `land_rules.txt` |
+| **Field-visit deadline** | an open ISD file whose visit is not completed more than **15 working days** after submission is *overdue* (`applications.is_overdue`); a completed visit stops the clock; NISD has none | `workflow_guide.txt` |
+| **Service SLA** | NISD 15-20, ISD 30-35 working days from submission to completion | `land_rules.txt` |
 
 The SLA is a **range**, so a file is *within* it up to the lower figure, *in the SLA
 window* between the two, and *past* it only after the UPPER figure -- no single point is
 invented. Working days are Monday-Friday; the register has no holiday calendar and the
 answer says so. `is_overdue` is re-derived by `overdue_refresh.py` at start-up and every
 6 hours (it used to be frozen on the build day). The answer to "how long has X been
-pending" names both limits and never a universal "15-day SLA". `survey_manual.txt` gives
-a MERGE total of 25-30 working days against `land_rules.txt`'s 15; the code follows
-`land_rules.txt` (the per-service-code table) -- reconcile the two documents if that is wrong.
+pending" names both limits and never a universal "15-day SLA". There is no MERGE service code (`0155`) in the register -- `appl_log_urban_demo` has no row carrying it, so `applications.application_type` admits only `ISD`/`NISD` (`ck_application_type`); a MERGE application number, listing or fee lookup was removed from the code, the documents and the LoRA question banks for that reason.
 
 ### Active applications per survey number
 
@@ -971,7 +1023,7 @@ TAMILNILAM urban codes are in `SIS_URBAN_SERVICES` with their names, so this is
 a table lookup and is now answered without the model.
 
 - **An exact code is explained in full.** For the three the register carries
-  (`0153` / `0154` / `0155`) that is the name, what it is, the workflow chain,
+  (`0153` / `0154`) that is the name, what it is, the workflow chain,
   the government + CSC fee and the SLA. For the other 27 it is the official
   name, whether the service needs a field visit, and the fact that **no
   application in the officer's register uses it** — the `applications` table
@@ -1811,7 +1863,7 @@ NISD applications" answered **1** to an officer holding 58. Two filters were
 stacked on the same question, at two layers:
 
 - `chatbot.py` defaulted `status_filter` to `"pending"` for any listing that
-  named no status. MERGE was already exempt; ISD and NISD were not.
+  named no status; neither type was exempt.
 - `get_pending_applications()` then re-applied `ACTIVE_STATUSES` whenever
   `status is None`. The exemption list there named `submission_channel` but not
   `application_type`.

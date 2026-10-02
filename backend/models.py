@@ -7,7 +7,7 @@ Fixes applied (2025-07):
   2. DateTime → TIMESTAMP(timezone=True) everywhere for consistency
   3. OfficerJurisdiction: CheckConstraint ensuring at least one location FK is set
   4. SurveyOwnership.ownership_share: String → Numeric(5,2)
-  5. Application: CheckConstraint on application_type ('ISD','NISD','MERGE')
+  5. Application: CheckConstraint on application_type ('ISD','NISD')
   6. ChatMessage: CheckConstraint on role ('user','assistant')
   7. OfficerJurisdiction: composite indexes on officer_id+block_id, officer_id+ward_id
   8. AuditLog: officer_employee_id String column to preserve identity after officer deletion
@@ -139,11 +139,12 @@ class Taluk(Base):
 
 class Town(Base):
     __tablename__ = "towns"
+    __table_args__ = (UniqueConstraint("taluk_id", "town_code"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     taluk_id = Column(UUID(as_uuid=True), ForeignKey("taluk.app_uid"), nullable=False)
     name = Column(String(100), nullable=False)
-    town_code = Column(String(10), nullable=False, unique=True)
+    town_code = Column(String(10), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -218,7 +219,7 @@ class SubDivision(Base):
     survey_number_id = Column(UUID(as_uuid=True), ForeignKey("survey_numbers.id"), nullable=False)
     sub_division_no = Column(String(50), nullable=False)    # e.g. "145/1A"
     area_sqm = Column(Numeric(12, 2), nullable=False)
-    status = Column(String(30), default='active')           # active, merged, deleted
+    status = Column(String(30), default='active')           # active, deleted
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -383,7 +384,7 @@ class Application(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     application_number = Column(String(30), nullable=False, unique=True)
-    application_type = Column(String(10), nullable=False)   # ISD, NISD, MERGE
+    application_type = Column(String(10), nullable=False)   # ISD, NISD
     applicant_id = Column(UUID(as_uuid=True), ForeignKey("applicants.id"), nullable=False)
     survey_number_id = Column(UUID(as_uuid=True), ForeignKey("survey_numbers.id"), nullable=False)
     assigned_officer_id = Column(UUID(as_uuid=True), ForeignKey("sis_officers.id"), nullable=False)
@@ -411,7 +412,7 @@ class Application(Base):
     payment_mode = Column(String(20))
     # IGRS Form 6 reference (Sub-Registrar mutation intimation) for NISD files.
     igrs_form6_number = Column(String(30))
-    # Parent application when this ISD file is one leg of a MERGE (0155) group.
+    # Lead application of the group of ISD files filed together for one large split.
     merged_application_id = Column(String(30))
     created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
@@ -427,7 +428,7 @@ class Application(Base):
         ),
         # FIX #5: enforce valid application types at DB level
         CheckConstraint(
-            "application_type IN ('ISD','NISD','MERGE')",
+            "application_type IN ('ISD','NISD')",
             name='ck_application_type'
         ),
         Index('idx_app_officer', 'assigned_officer_id'),
@@ -459,6 +460,52 @@ class Application(Base):
     field_visits = relationship("FieldVisit", back_populates="application", cascade="all, delete-orphan")
     patta_transfers = relationship("PattaTransfer", back_populates="application")
     notifications = relationship("Notification", back_populates="application")
+
+
+class ServiceRegisterEntry(Base):
+    """One row per application_id across EVERY TAMILNILAM service code --
+    not just the ISD/NISD ones `Application` tracks in full.
+
+    `Application` (ck_application_type) only ever admits service codes 0153/
+    0154, by design: an ISD/NISD patta transfer is the only service this
+    register runs a workflow/stage/field-visit machine for. The other
+    service codes (0158 Modification, 0159 Addition, 0160 Deletion, 0162
+    Street/Door Modification, 0164 ULC Subdivision, 0167 TSLR Settlement,
+    0169 Govt-to-Private, 0178 F-Line, ...) are real applications an SIS
+    officer's jurisdiction sees, but this register was never built to work
+    them the way it works a patta transfer -- so this table is deliberately
+    informational only: an application number, its service code, survey
+    number, a coarse status/stage, and where it sits. No multi-desk workflow
+    history, no field-visit tracking, no applicant/owner detail -- an officer
+    wanting that level of detail on an ISD/NISD file already has
+    `Application` for it. survey_no and subdivision_no ARE real here (every
+    service code carries them in the source extract, not just 0153/0154);
+    stage is a coarse Open/Completed read off the extract's own C/P workflow
+    marker, not a real desk-by-desk chain.
+    """
+    __tablename__ = "service_register_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_number = Column(String(30), nullable=False, unique=True)
+    service_code = Column(String(10), nullable=False)
+    survey_no = Column(String(50))
+    subdivision_no = Column(String(50))
+    status = Column(String(30))              # coarse: approved / rejected / pending -- the raw appl_status, not the ISD/NISD state machine
+    stage = Column(String(30))               # coarse: Open / Completed -- read off the extract's own workflow marker, not a real desk chain
+    submission_channel = Column(String(20))  # CSC / citizen / sub_registrar -- can_channel(), same rule as Application
+    submission_date = Column(Date)
+    ward_id = Column(UUID(as_uuid=True), ForeignKey("wards.id"), nullable=False)
+    block_id = Column(UUID(as_uuid=True), ForeignKey("blocks.id"))
+    created_at = Column(TIMESTAMP(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_service_register_ward', 'ward_id'),
+        Index('idx_service_register_service_code', 'service_code'),
+    )
+
+    ward = relationship("Ward")
+    block = relationship("Block")
 
 
 class ApplicationSubDivision(Base):

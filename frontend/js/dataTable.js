@@ -326,7 +326,7 @@ function createTableHTML(config) {
         columns.forEach(col => {
             const value = row[col] !== undefined && row[col] !== null ? row[col] : 'N/A';
             const strVal = String(value);
-            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD|MERGE)\/\w+\/\d+\/\d+$/i.test(strVal);
+            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD)\/\w+\/\d+\/\d+$/i.test(strVal);
             if (isAppNo && strVal !== 'N/A') {
                 tableHTML += `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
             } else {

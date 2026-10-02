@@ -2,7 +2,7 @@ URBAN LAND REGULATIONS REFERENCE FOR SIS OFFICERS (TAMIL NADU)
 
 This is sample reference material for the SIS chatbot knowledge base. It
 summarises the land rules an urban Sub Inspector Surveyor applies while
-verifying ISD (0154), NISD (0153) and MERGE (0155) applications in the
+verifying ISD (0154) and NISD (0153) applications in the
 TAMILNILAM urban workflow. Figures marked "sample" are illustrative and must be
 checked against the current Government Order before field use.
 
@@ -211,7 +211,7 @@ The channel is decided by source_name and camp_flag, as set out above.
 === SERVICE FEE AND SLA BY SERVICE CODE ===
 
 The fee an applicant pays and the time limit the office works to depend on the
-service code. These are the three codes the SIS handles:
+service code. These are the two codes the SIS handles:
 
 - 0153 (NISD, Not Involving Sub-Division): government fee Rs 100.00, plus a
   CSC counter charge of Rs 60.00 when filed through a counter.
@@ -219,8 +219,6 @@ service code. These are the three codes the SIS handles:
 - 0154 (ISD, Involving Sub-Division): government fee Rs 400.00, plus the
   Rs 60.00 CSC counter charge. SLA: 30-35 working days. The higher
   fee reflects the mandatory field inspection and the sub-division sketch.
-- 0155 (MERGE, merge of sub-divisions): no government fee (Rs 0.00); the
-  Rs 60.00 CSC counter charge still applies. SLA: 15 working days.
 
 The government fee is a challan payment; the CSC charge is the counter
 operator's service charge and is not levied when the citizen files on the

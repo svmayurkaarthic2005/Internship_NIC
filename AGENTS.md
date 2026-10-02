@@ -175,8 +175,6 @@ the ORM projection:
   needs a field inspection and an SD sketch.
 - **NISD** (`0153`) — **Not Involving Sub-Division**: a straight patta transfer of
   the whole survey number, no new sub-division and no field visit.
-- **MERGE** (`0155`) — Merge application (several sub-divisions combined); follows
-  the ISD chain.
 
 ### Officer Hierarchy
 - **Block SIS** → narrowest jurisdiction

@@ -28,8 +28,7 @@ class Question:
 
 
 # ── dimensions ───────────────────────────────────────────────────────────
-TYPES = [("ISD", "isd_applications"), ("NISD", "nisd_applications"),
-         ("merge", "merge_applications")]
+TYPES = [("ISD", "isd_applications"), ("NISD", "nisd_applications")]
 
 PERIODS = [
     "today", "yesterday", "this week", "last week", "this month", "last month",
@@ -83,7 +82,7 @@ NEGATIONS = [
     ("Which applications have no field visit scheduled?", "unscheduled visits"),
     ("List applications without a sale deed", "missing sale deed"),
     ("Which surveys have no owner recorded?", "surveys lacking ownership"),
-    ("Show me applications that are not ISD", "NISD or merge"),
+    ("Show me applications that are not ISD", "NISD only"),
     ("Which applications are still not approved?", "not yet approved"),
     ("Are there any applications with no documents uploaded?", "missing documents"),
     ("Which field visits have not been completed?", "incomplete visits"),
@@ -152,7 +151,6 @@ WORKFLOW_KNOWLEDGE = [
     "What is the sub-division numbering pattern?",
     "What is service code 0153?",
     "What is service code 0154?",
-    "What is service code 0155?",
     "Which service codes does an SIS officer handle?",
     "What is TSLR?",
     "What does an SIS officer do?",
@@ -221,7 +219,6 @@ def build_bank() -> list[Question]:
     # expected routing rather than general_query.
     _service_code_answers = {
         "What is service code 0153?", "What is service code 0154?",
-        "What is service code 0155?",
         "Which service codes does an SIS officer handle?",
     }
     for q in WORKFLOW_KNOWLEDGE:

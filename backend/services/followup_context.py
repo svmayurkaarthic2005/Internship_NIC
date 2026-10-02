@@ -58,6 +58,11 @@ ENTITY_APPLICATION = "application"
 ENTITY_APPLICATION_LIST = "application_list"
 ENTITY_FIELD_VISIT = "field_visit"
 ENTITY_SURVEY = "survey"
+# "what is ISD?" -> "explain more" / "explain briefly" -- a chain of definition
+# follow-ups about the same service code. Carries the code in `filters`
+# ("service_code") rather than a new field, the same way every other scalar
+# scope (status, type, ward...) is already carried.
+ENTITY_SERVICE_CODE = "service_code"
 
 # Version tag on the stored JSON. A context written by an older build that no
 # longer parses is ignored rather than half-read -- a stale reference is the
@@ -93,7 +98,7 @@ class FollowupContext:
             return None
         entity = raw.get("entity")
         if entity not in (ENTITY_APPLICATION, ENTITY_APPLICATION_LIST,
-                          ENTITY_FIELD_VISIT, ENTITY_SURVEY):
+                          ENTITY_FIELD_VISIT, ENTITY_SURVEY, ENTITY_SERVICE_CODE):
             return None
         try:
             return cls(
@@ -165,6 +170,20 @@ def build_context(intent: Optional[str],
             entity=ENTITY_APPLICATION_LIST,
             application_numbers=[],
             filters=filters,
+            query_type=sd.get("query_type"),
+            intent=intent,
+        )
+
+    # "what is ISD?" -> "explain briefly" -> "explain in detail" -- a chain of
+    # definition follow-ups. service_code_lookup names no application/survey,
+    # so without this a second "explain" in a row found no context of its own
+    # here and fell back to whatever application the officer had looked at
+    # earlier in the session -- answering a request to re-explain a service
+    # code with an unrelated application's detail card.
+    if sd.get("service_code_filter"):
+        return FollowupContext(
+            entity=ENTITY_SERVICE_CODE,
+            filters={**filters, "service_code": sd["service_code_filter"]},
             query_type=sd.get("query_type"),
             intent=intent,
         )
@@ -344,12 +363,12 @@ _OWN_SUBJECT_RE = re.compile(
     # own subject outright.
     #
     # Scoped to the "who/what is" shape specifically, not a bare mention of
-    # the acronym: "how many are ISD?" / "only merge" are real refine/
+    # the acronym: "how many are ISD?" / "only nisd" are real refine/
     # aggregate follow-ups over the carried list and must stay that way --
-    # broadening this to any bare "isd"/"nisd"/"merge" anywhere in the
+    # broadening this to any bare "isd"/"nisd" anywhere in the
     # message broke exactly those.
     r"|\b(?:who|what)\s+(?:is|are)\s+(?:a\s+|an\s+|the\s+)?"
-    r"(?:sis|tahsildar|dis|isd|nisd|merge)\b"
+    r"(?:sis|tahsildar|dis|isd|nisd)\b"
     # "who am I" / "what is my name" -- the officer asking about THEMSELVES,
     # not about a row in the carried list. Bare "who" is itself a
     # singular-field cue (it resolves "who is the applicant?"), so without
@@ -389,7 +408,7 @@ _OWN_SUBJECT_RE = re.compile(
     # Tamil: a plural "field visits", a survey / sub-division number, and a
     # service code + fee are subjects of their own. Matched as substrings.
     r"|கள\s*ஆய்வுகள்|கள\s*ஆய்வுகளை|(?:சர்வே|புல\s*எண்|உட்பிரிவு)\s*\d"
-    r"|(?:tslr|csc|isd|nisd|merge)\b.*கட்டண|கட்டண.*\b(?:tslr|csc|isd|nisd|merge)\b"
+    r"|(?:tslr|csc|isd|nisd)\b.*கட்டண|கட்டண.*\b(?:tslr|csc|isd|nisd)\b"
     # a NAMED district / taluk in a code question ("திருவள்ளூர் மாவட்ட குறியீடு");
     # a bare "மாவட்ட குறியீடு" or "அந்த மாவட்ட ..." still points back.
     r"|(?<!அந்த\s)(?<!இந்த\s)(?<!அதன்\s)\S{3,}\s+(?:மாவட்ட|வட்ட)\S*\s+(?:குறியீடு|taluk_code|district_code)"
@@ -660,7 +679,7 @@ def _build_vocab() -> frozenset:
         "know", "decide", "decided", "determine", "basis", "channel", "source", "registrar", "classify",
         "identify", "proof", "evidence", "reason", "makes", "these", "those", "there", "citizen", "how",
         # the nouns the deterministic handlers key on: a slip in one of them used to reroute the question
-        "merged", "merge", "action", "immediate", "proposed", "received", "total", "challan", "treasury",
+        "action", "immediate", "proposed", "received", "total", "challan", "treasury",
         "returned", "clarification", "camp", "deed", "patta", "encroachment", "litigation", "overdue",
         "priority", "remarks", "recommendation", "workflow", "jurisdiction", "documents", "surveyor",
         "application", "applications", "applicant", "submitted", "submission", "registered", "signature",
@@ -942,9 +961,9 @@ _AGGREGATE_RE = re.compile(
 
 _REFINE_RE = re.compile(
     r"\b(?:show|list|give|filter|keep)\s+(?:me\s+)?(?:only|just)\b"
-    r"|\bonly\s+(?:the\s+)?(?:isd|nisd|merge|approved|rejected|pending|overdue)\b"
-    r"|\bjust\s+(?:the\s+)?(?:isd|nisd|merge|approved|rejected|pending|overdue)\b"
-    r"|\bwhat\s+about\s+(?:the\s+)?(?:isd|nisd|merge)\b"
+    r"|\bonly\s+(?:the\s+)?(?:isd|nisd|approved|rejected|pending|overdue)\b"
+    r"|\bjust\s+(?:the\s+)?(?:isd|nisd|approved|rejected|pending|overdue)\b"
+    r"|\bwhat\s+about\s+(?:the\s+)?(?:isd|nisd)\b"
     # "show the pending one(s)" -- no "only"/"just", but "the <status>
     # one(s)" is the same request: filter the list just shown to that
     # status. Without this it matched nothing here, `_has_own_subject`
@@ -953,7 +972,7 @@ _REFINE_RE = re.compile(
     # re-ran the officer's WHOLE unscoped queue -- silently dropping the
     # channel/type scope of the list the officer was actually pointing at.
     r"|\b(?:show|list|give|find)\s+(?:me\s+)?the\s+"
-    r"(?:isd|nisd|merge|approved|rejected|pending|overdue)\s+one(?:s)?\b"
+    r"(?:isd|nisd|approved|rejected|pending|overdue)\s+one(?:s)?\b"
     r"|\bmattum\b|\bmattuma\b"
     r"|மட்டும்",
     re.IGNORECASE,
@@ -1694,7 +1713,7 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
         # empty table.
         return None
     result = [key for _pos, key in hits]
-    # A survey number on its own is ambiguous in this domain -- an ISD/MERGE
+    # A survey number on its own is ambiguous in this domain -- an ISD
     # application splits ONE survey number into several sub-divisions, so
     # "show application no with survey no" without also saying which
     # sub-division leaves out the part that actually identifies the row.
@@ -1966,7 +1985,7 @@ def classify(message: str) -> str:
 
     from backend.services.rag import extract_row_selection as _ers
     if (_ers(text) and not plural
-            and re.search(r"\b(?:isd|nisd|merge)\b|\bapplications\b|\bapps\b", lowered)):
+            and re.search(r"\b(?:isd|nisd)\b|\bapplications\b|\bapps\b", lowered)):
         return FOLLOWUP_NONE
     if nav_direction(text) or re.fullmatch(
             r"(?:and\s+|then\s+)?(?:the\s+)?(?:last|first|final)\s+(?:one|application|row|file)\s*[?.!]*", lowered.strip()):
@@ -2013,7 +2032,7 @@ def classify(message: str) -> str:
     from backend.services.rag import extract_row_selection
     if ((mentions_ordinal(message) or extract_row_selection(message)) and not plural
             and not mentions_slice(message)
-            and re.search(r"\b(?:isd|nisd|merge)\b|\bapplications\b|\bapps\b", lowered)):
+            and re.search(r"\b(?:isd|nisd)\b|\bapplications\b|\bapps\b", lowered)):
         return FOLLOWUP_NONE
     if mentions_ordinal(message) and not _AGGREGATE_RE.search(lowered):
         return FOLLOWUP_SINGULAR
@@ -2148,7 +2167,7 @@ def asks_about_visit(message: str) -> bool:
 
 
 # Refinements a stored list can be narrowed by, read off the fragment itself.
-_TYPE_WORDS = {"isd": "ISD", "nisd": "NISD", "merge": "MERGE"}
+_TYPE_WORDS = {"isd": "ISD", "nisd": "NISD"}
 _STATUS_WORDS = {
     "approved": "approved", "rejected": "rejected", "pending": "pending",
     "in progress": "in_progress", "in-progress": "in_progress",
@@ -2226,7 +2245,7 @@ _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
 
 
 def _carried_list_type(context: "FollowupContext") -> Optional[str]:
-    """The application type ("ISD"/"NISD"/"MERGE") the carried listing was
+    """The application type ("ISD"/"NISD") the carried listing was
     filtered to, if any -- from `filters` or the `query_type`
     ("Pending ISD Applications"). None for a mixed-type listing."""
     if not context:
@@ -2236,7 +2255,7 @@ def _carried_list_type(context: "FollowupContext") -> Optional[str]:
     if explicit:
         return str(explicit).upper()
     qt = (context.query_type or "").lower()
-    for w in ("nisd", "merge", "isd"):
+    for w in ("nisd", "isd"):
         if re.search(rf"\b{w}\b", qt):
             return w.upper()
     return None
@@ -2290,7 +2309,7 @@ _NEGATED_REFINEMENT_RE = re.compile(
 )
 
 
-_NEG_WORD = r"(?:rejected|approved|completed|pending|in[\s-]?progress|escalated|nisd|isd|merge)"
+_NEG_WORD = r"(?:rejected|approved|completed|pending|in[\s-]?progress|escalated|nisd|isd)"
 _NEG_VERB_RE = re.compile(
     rf"(?:\b(?:exclude|excluding|without|hide|skip|ignore|leave\s+out|remove|drop|except|other\s+than|apart\s+from|"
     rf"besides|minus|but\s+not|everything\s+but|all\s+but|anything\s+but|"
@@ -2345,7 +2364,7 @@ def refinement(message: str) -> Dict[str, Optional[str]]:
             if phrase in lowered:
                 out["status"] = value
                 break
-    for word in ("nisd", "merge", "isd"):
+    for word in ("nisd", "isd"):
         if re.search(rf"\b{word}\b", lowered):
             if re.search(rf"\b(?:not|except|excluding|other\s+than)\s+(?:the\s+)?{word}\b", lowered):
                 out["type_excluded"] = _TYPE_WORDS[word]
@@ -2544,6 +2563,17 @@ def resolve(message: str,
         # and the handlers below already ask for an application number when
         # they genuinely need one. Claiming ambiguity here turned working
         # questions into clarifications.
+        return Resolution()
+
+    if context.entity == ENTITY_SERVICE_CODE:
+        # A service-code explanation ("what is isd?") leaves no application,
+        # survey or list behind to resolve a field/ordinal follow-up against --
+        # every branch below this point expects one of those three entities and
+        # falls through to "which application do you mean?" for anything else,
+        # which is a question about a record that was never shown. The
+        # dedicated ENTITY_SERVICE_CODE check in chatbot.py's explain-routing
+        # (ahead of the generic intent parser) already re-explains the same
+        # code; standing aside here lets the message reach it unclaimed.
         return Resolution()
 
     if context.entity == ENTITY_APPLICATION_LIST and not context.application_numbers:
@@ -2885,15 +2915,21 @@ def resolve(message: str,
                 context=context,
             )
         shown = ", ".join(numbers[:3]) + ("…" if len(numbers) > 3 else "")
+        # "That answer covered 20 APPLICATIONS" to a field-visit table -- the
+        # same application/field-visit noun mix-up CLAUDE.md documents for the
+        # "explain" clarify is just as wrong here: the row the officer is
+        # being asked to point at is a visit, not an application.
+        _noun_en = "field visit" if about_visit else "application"
+        _noun_ta = "கள ஆய்வு" if about_visit else "விண்ணப்பம்"
         return Resolution(
             kind=kind,
             ambiguous=True,
             context=context,
             clarification=_clarify(
-                f"That answer covered {len(numbers)} applications ({shown}). "
+                f"That answer covered {len(numbers)} {_noun_en}s ({shown}). "
                 f"Which one do you mean? Give the application number, or say "
                 f"\"the first one\".",
-                f"அந்த பதிலில் {len(numbers)} விண்ணப்பங்கள் இருந்தன ({shown}). "
+                f"அந்த பதிலில் {len(numbers)} {_noun_ta}(கள்) இருந்தன ({shown}). "
                 f"எதைக் குறிப்பிடுகிறீர்கள்? விண்ணப்ப எண்ணைத் தரவும், அல்லது "
                 f"\"முதலாவது\" எனக் கூறவும்.",
                 language),

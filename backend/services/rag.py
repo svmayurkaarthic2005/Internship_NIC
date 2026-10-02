@@ -261,21 +261,9 @@ def format_structured_data_for_llm(structured_data: Dict[str, Any]) -> str:
         if key not in skip and not isinstance(value, (list, dict)):
             lines.append(f"{key}: {value}")
 
-    # Explicitly include merge-specific fields that the LLM needs for
-    # conversational answers about subdivision contents.
     if structured_data.get("survey_no"):
         if "survey_no" not in str(lines):   # avoid duplicate if already added above
             lines.append(f"survey_no: {structured_data['survey_no']}")
-
-    subdivisions = structured_data.get("subdivisions_being_merged") or []
-    if subdivisions:
-        lines.append(f"subdivisions_being_merged ({len(subdivisions)}):")
-        for sd in subdivisions:
-            area_str = f" — {sd['area_sqm']:.2f} sq.m" if sd.get("area_sqm") else ""
-            lines.append(f"  • {sd.get('sub_division_no', 'N/A')}{area_str}")
-        total = structured_data.get("total_merge_area_sqm")
-        if total:
-            lines.append(f"total_merge_area_sqm: {total:.2f}")
 
     if structured_data.get("message"):
         lines.append(f"Note: {structured_data['message']}")
@@ -486,6 +474,19 @@ def _get_projected_application_columns(user_query: str):
     uq = re.sub(r'\b(?:in|for|from|at|under)\s+(?:the\s+)?'
                 r'[a-z]+\s+(?:taluk|town|district)\b', ' ', uq)
 
+    # "show all applications ... with taluk" names one extra geography column
+    # to add to the officer's own default table -- build_html_response now
+    # adds it there (see loc_keys) the same way it already adds Applicant
+    # Name / Mobile / Address on request. Without stripping the bare word
+    # here first, it also counted as a column-projection cue below and
+    # collapsed the whole table to "Application No. | Taluk", losing Type,
+    # Survey No., Status, Stage and everything else. "only" / "alone" /
+    # "மட்டும்" is still a genuine request to reduce to just that column, so
+    # it is left alone here and reaches the projection logic untouched.
+    if not _proj_has(r'only|alone|மட்டும்', uq):
+        uq = re.sub(r'\bwith\s+(?:the\s+)?(?:taluk|district|town)\b(?!\s+code)', ' ', uq)
+        uq = re.sub(r'\b(?:taluk|district|town)\b(?!\s+code)(?=\s*$)', ' ', uq)
+
     # Strip channel and source filters
     uq = re.sub(
         r'\b(?:submitted|received|filed|created|made|sent|came in)?\s*'
@@ -494,7 +495,7 @@ def _get_projected_application_columns(user_query: str):
         ' ', uq)
     
     # Strip application type filters
-    uq = re.sub(r'\b(?:of\s+)?(?:type\s+)?(?:isd|nisd|merge)\b', ' ', uq)
+    uq = re.sub(r'\b(?:of\s+)?(?:type\s+)?(?:isd|nisd)\b', ' ', uq)
     
     # Strip status filters
     uq = re.sub(r'\b(?:with\s+)?(?:status\s+)?(?:pending|approved|rejected|in progress|completed|escalated)\b', ' ', uq)
@@ -523,7 +524,7 @@ def _get_projected_application_columns(user_query: str):
     has_only = _proj_has(r'only|alone|மட்டும்', uq)
     has_with_fields = _proj_has(r'with|having|along with|உடன்', uq)
     has_and_status = bool(re.search(r'\b(and|n|&|\+)\s+(status|type|date|name|stage|mobile|address|survey|block|ward|channel|source)\b', uq)) or "n n status" in uq
-    has_specific_fields = bool(re.search(r'\b(application no|app no)\s+(and|n|with)\s+(status|type|date|name|stage|isd|nisd|merge)\b', uq))
+    has_specific_fields = bool(re.search(r'\b(application no|app no)\s+(and|n|with)\s+(status|type|date|name|stage|isd|nisd)\b', uq))
 
     # Specific non-application field keywords (exclude generic app/no/number words)
     _specific_field_kws = [
@@ -573,13 +574,13 @@ def _get_projected_application_columns(user_query: str):
         cols.append("mobile")
     if _proj_has(r'address|addr|முகவரி', uq):
         cols.append("address")
-    if _proj_has(r'type|application type|types|isd|nisd|merge|வகை', uq):
+    if _proj_has(r'type|application type|types|isd|nisd|வகை', uq):
         cols.append("type")
     if _proj_has(r'survey|survey no|survey number|surveys|கணக்கெண்', uq):
         cols.append("survey_no")
     if _proj_has(r'subdivision|subdivisions|sub-division|sub-divisions|sub\s*division|sub\s*divisions|subdivision_number|current_subdivision_number|உட்பிரிவு', uq):
         cols.append("subdivisions")
-    if _proj_has(r'area|area sq|area sqm|total area|merge area|sqm|sq\.m|sq m|sq ft|square|பரப்பளவு|சதுர மீட்டர்', uq):
+    if _proj_has(r'area|area sq|area sqm|total area|sqm|sq\.m|sq m|sq ft|square|பரப்பளவு|சதுர மீட்டர்', uq):
         cols.append("area_sqm")
     if _proj_has(r'status|current status|statuses|நிலை', uq):
         cols.append("status")
@@ -659,7 +660,7 @@ def _get_projected_field_visit_columns(user_query: str):
         cols.append("survey_no")
     if _proj_has(r'block|தொகுதி', uq):
         cols.append("block")
-    if _proj_has(r'type|isd|nisd|merge|வகை', uq):
+    if _proj_has(r'type|isd|nisd|வகை', uq):
         cols.append("type")
     if _proj_has(r'status|நிலை', uq):
         cols.append("status")
@@ -851,7 +852,7 @@ _LIMIT_NOT_ROWS_RE = re.compile(
 # checked first in extract_result_limit, so they are never swallowed here.
 _MODIFIER_WORDS = (
     r"approved|rejected|completed|pending|in.progress|escalated|"
-    r"isd|nisd|merge|overdue|active|all|my|the|an?|new|old"
+    r"isd|nisd|overdue|active|all|my|the|an?|new|old"
 )
 _SINGULAR_TAIL_RE = re.compile(
     rf"{_LB}(?:newest|latest|most\s+recent|recent){_RB}"
@@ -913,7 +914,7 @@ def _ordinal_suffix(n: int) -> str:
 
 
 _POS_ORD = rf"(?:{_ORDINAL_NUM_RE}|\d{{1,3}}(?:st|nd|rd|th))"
-_POS_TYPEWORDS = r"(?:nisd|isd|merge|pending|approved|rejected|completed|overdue|open|csc|citizen|sro|sub\s*registrar|my|the|of)"
+_POS_TYPEWORDS = r"(?:nisd|isd|pending|approved|rejected|completed|overdue|open|csc|citizen|sro|sub\s*registrar|my|the|of)"
 _POS_NOUN = r"(?:row|rows|entry|entries|record|records|application|applications|app|apps|file|files)"
 _POS_ONE_RE = re.compile(
     rf"{_OLB}(?P<o>{_POS_ORD}){_ORB}\s+(?:{_POS_TYPEWORDS}\s+){{0,3}}{_POS_NOUN}\b", re.IGNORECASE)
@@ -1340,8 +1341,6 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             "sale_deed_number": "Sale Deed Number",
             "sale_deed_registered": "Sale Deed Registered",
             "declared_reason": "Declared Reason",
-            "subdivisions_being_merged": "Subdivisions Being Merged",
-            "total_merge_area": "Total Merge Area",
             "number_of_subdivisions": "Number of Subdivisions",
             "field_visit_status": "Field Visit Status",
             "scheduled_date": "Scheduled Date",
@@ -1349,7 +1348,6 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             "encroachment_found": "Encroachment Found",
             "area_verified": "Area Verified",
             "yes": "Yes", "no": "No", "found": "Found",
-            "merge_applications": "merge application(s)",
             "applications": "application(s)",
             "surveys": "survey number(s) in your jurisdiction",
             "no_records_found": "No records found",
@@ -1383,8 +1381,6 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             "sale_deed_number": "விற்பனை பத்திர எண்",
             "sale_deed_registered": "விற்பனை பத்திரம் பதிவு செய்யப்பட்டது",
             "declared_reason": "அறிவிக்கப்பட்ட காரணம்",
-            "subdivisions_being_merged": "இணைக்கப்படும் உட்பிரிவுகள்",
-            "total_merge_area": "மொத்த இணைப்பு பரப்பளவு",
             "number_of_subdivisions": "உட்பிரிவுகளின் எண்ணிக்கை",
             "field_visit_status": "கள ஆய்வு நிலை",
             "scheduled_date": "திட்டமிடப்பட்ட தேதி",
@@ -1392,7 +1388,6 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             "encroachment_found": "ஆக்கிரமிப்பு கண்டறியப்பட்டது",
             "area_verified": "பரப்பளவு சரிபார்க்கப்பட்டது",
             "yes": "ஆம்", "no": "இல்லை", "found": "கண்டறியப்பட்டது",
-            "merge_applications": "இணைப்பு விண்ணப்பங்கள்",
             "applications": "விண்ணப்பங்கள்",
             "surveys": "உங்கள் அதிகார வரம்பில் உள்ள கணக்கெண்கள்",
             "no_records_found": "பதிவுகள் எதுவும் இல்லை",
@@ -1795,7 +1790,7 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
               f"is counted here.</small></div>"
         )
 
-    # ── Service Codes Workflow & Fee Comparison (0153 / 0154 / 0155) ──
+    # ── Service Codes Workflow & Fee Comparison (0153 / 0154) ──
     if "service_codes" in structured_data and isinstance(structured_data["service_codes"], list):
         items = structured_data["service_codes"]
         rows = "".join(
@@ -1819,7 +1814,7 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             f"taken from the register and can be revised. Ask \"what is the fee for ISD\".</small></div>"
         )
 
-    # ── Applications (regular + merge) ──────────────────────────────
+    # ── Applications (regular) ──────────────────────────────
     if "applications" in structured_data and isinstance(structured_data["applications"], list):
         applications = structured_data["applications"]
         count = structured_data.get("count", len(applications))
@@ -1903,8 +1898,22 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
         else:
             loc_keys = ["block"]
 
+        # A geography word named explicitly ("show applications ... with taluk")
+        # adds that column to the officer's own default set instead of being
+        # read as "show ONLY the application number and taluk" -- the same
+        # add-a-column treatment req_name/req_mobile/req_address already get
+        # below. Without this, a ward-level officer (whose default table has
+        # no Taluk column) asking for one lost Type/Survey/Status/Stage too,
+        # via `_get_projected_application_columns`'s column-only projection.
+        _geo_words = {"taluk": r'\btaluk\b(?!\s+code)', "district": r'\bdistrict\b(?!\s+code)',
+                      "town": r'\btown\b(?!\s+code)'}
+        _loc_key_set = set(loc_keys)
+        for _k, _pat in _geo_words.items():
+            if re.search(_pat, user_query):
+                _loc_key_set.add(_k)
+        loc_keys = [k for k in ("district", "taluk", "town", "ward", "block") if k in _loc_key_set]
+
         loc_th = "".join(f"<th>{t[k]}</th>" for k in loc_keys)
-        is_merge = bool(applications) and all(app.get("type") == "MERGE" for app in applications)
         qtype_name = structured_data.get("query_type", "")
         is_overdue_query = "Overdue" in qtype_name and "Non-Overdue" not in qtype_name
         has_overdue_col = any(app.get("days_overdue") is not None for app in applications) or is_overdue_query
@@ -2038,10 +2047,9 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             for app in applications:
                 overdue = " ⚠️" if app.get("is_overdue") else ""
                 jur = app.get("jurisdiction", {})
-                subdivisions = app.get("subdivisions_being_merged", [])
-                subdiv_list = app.get("subdivisions") or app.get("sub_division_no") or (", ".join(sd["sub_division_no"] for sd in subdivisions) if subdivisions else "-")
-                raw_area = app.get('total_merge_area_sqm') or app.get('survey_total_area_sqm') or app.get('total_area_sqm') or app.get('area_sqm')
-                merge_area = f"{float(raw_area):.2f}" if raw_area is not None else 'N/A'
+                subdiv_list = app.get("subdivisions") or app.get("sub_division_no") or "-"
+                raw_area = app.get('survey_total_area_sqm') or app.get('total_area_sqm') or app.get('area_sqm')
+                area_txt = f"{float(raw_area):.2f}" if raw_area is not None else 'N/A'
                 def _loc(a, b): return a if (a and a != 'N/A') else (b or 'N/A')
                 loc_map = {
                     "district": _loc(jur.get('district'), app.get('district_name')),
@@ -2054,8 +2062,8 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
                 priority_val = "High" if app.get('priority_flag') else "Normal"
                 
                 # Derive service code from app type if missing
-                app_type = app.get('type') or ('MERGE' if is_merge else 'ISD')
-                srv_code = "0154" if app_type == "ISD" else ("0155" if app_type == "MERGE" else "0153")
+                app_type = app.get('type') or 'ISD'
+                srv_code = "0154" if app_type == "ISD" else "0153"
                 app_num = str(app.get('application_number') or '')
                 parts = app_num.split('/')
                 if len(parts) >= 2 and parts[1].isdigit():
@@ -2069,7 +2077,7 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
                     "type": _e(app_type),
                     "survey_no": _e(app.get('survey_no') or 'N/A'),
                     "subdivisions": _e(subdiv_list),
-                    "area_sqm": _e(merge_area),
+                    "area_sqm": _e(area_txt),
                     "status": f"{_status(app.get('status'), lang)}{overdue}",
                     "stage": _e(app.get('stage') or 'N/A'),
                     "overdue_days": f"<span style='color: #c53030; font-weight: bold;'>⚠️ {app.get('days_overdue')} days</span>" if app.get('days_overdue') is not None else "-",
@@ -2108,132 +2116,64 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
                 f"</table>"
             )
 
-        if is_merge:
-            rows = ""
-            for app in applications:
-                jur = app.get("jurisdiction", {})
-                subdivisions = app.get("subdivisions_being_merged", [])
-                logger.debug(f"App {app.get('application_number')}: {len(subdivisions)} subdivisions")
+        rows = ""
+        for app in applications:
+            overdue = " ⚠️" if app.get("is_overdue") else ""
+            jur = app.get("jurisdiction", {})
+            
+            def _loc(a, b): return a if (a and a != 'N/A') else (b or 'N/A')
+            loc_map = {
+                "district": _loc(jur.get('district'), app.get('district_name')),
+                "taluk": _loc(jur.get('taluk'), app.get('taluk_name')),
+                "town": _loc(jur.get('town'), app.get('town_name')),
+                "ward": _loc(jur.get('ward'), app.get('ward_number')),
+                "block": _loc(jur.get('block'), app.get('block_number'))
+            }
+            loc_td = "".join(f"<td>{_e(loc_map[k])}</td>" for k in loc_keys)
 
-                subdiv_list = ", ".join(sd["sub_division_no"] for sd in subdivisions) if subdivisions else "-"
-                subdiv_list = _e(subdiv_list)
+            overdue_td = ""
+            if has_overdue_col:
+                ov_days = app.get("days_overdue")
+                if ov_days is not None:
+                    overdue_td = f"<td><span style='color: #c53030; font-weight: bold;'>⚠️ {ov_days} days</span></td>"
+                else:
+                    overdue_td = "<td>-</td>"
 
-                merge_area = f"{app['total_merge_area_sqm']:.2f}" if app.get('total_merge_area_sqm') else 'N/A'
-                overdue = " ⚠️" if app.get("is_overdue") else ""
-                
-                def _loc(a, b): return a if (a and a != 'N/A') else (b or 'N/A')
-                loc_map = {
-                    "district": _loc(jur.get('district'), app.get('district_name')),
-                    "taluk": _loc(jur.get('taluk'), app.get('taluk_name')),
-                    "town": _loc(jur.get('town'), app.get('town_name')),
-                    "ward": _loc(jur.get('ward'), app.get('ward_number')),
-                    "block": _loc(jur.get('block'), app.get('block_number'))
-                }
-                loc_td = "".join(f"<td>{_e(loc_map[k])}</td>" for k in loc_keys)
-                
-                overdue_td = ""
-                if has_overdue_col:
-                    ov_days = app.get("days_overdue")
-                    if ov_days is not None:
-                        overdue_td = f"<td><span style='color: #c53030; font-weight: bold;'>⚠️ {ov_days} days</span></td>"
-                    else:
-                        overdue_td = "<td>-</td>"
+            extra_td = ""
+            if req_name:
+                extra_td += f"<td>{_e(app.get('applicant_name') or 'N/A')}</td>"
+            if req_mobile:
+                extra_td += f"<td>{_e(app.get('applicant_mobile') or 'N/A')}</td>"
+            if req_address:
+                extra_td += f"<td>{_e(app.get('applicant_address') or 'N/A')}</td>"
+            if req_channel:
+                extra_td += f"<td>{_e(_CHANNEL_CELL.get(app.get('submission_channel'), app.get('submission_channel') or 'N/A'))}</td>"
 
-                extra_td = ""
-                if req_name:
-                    extra_td += f"<td>{_e(app.get('applicant_name') or 'N/A')}</td>"
-                if req_mobile:
-                    extra_td += f"<td>{_e(app.get('applicant_mobile') or 'N/A')}</td>"
-                if req_address:
-                    extra_td += f"<td>{_e(app.get('applicant_address') or 'N/A')}</td>"
-                if req_channel:
-                    extra_td += f"<td>{_e(_CHANNEL_CELL.get(app.get('submission_channel'), app.get('submission_channel') or 'N/A'))}</td>"
-
-                rows += (
-                    f"<tr>"
-                    f"<td>{_app_link(app.get('application_number'))}</td>"
-                    f"{extra_td}"
-                    f"<td>{_e(app.get('type') or 'MERGE')}</td>"
-                    f"<td>{_e(app.get('survey_no'))}</td>"
-                    f"<td>{subdiv_list}</td>"
-                    f"<td>{merge_area}</td>"
-                    f"<td>{_status(app.get('status'), lang)}{overdue}</td>"
-                    f"<td>{_e(app.get('stage'))}</td>"
-                    f"{overdue_td}"
-                    f"<td>{_e(app.get('submission_date'))}</td>"
-                    f"{loc_td}"
-                    f"</tr>"
-                )
-            return (
-                f"<div class='table-intro'>{intro_msg}</div>"
-                f"<table class='data-table'>"
-                f"<thead><tr>"
-                f"<th>{t['application_no']}</th>{extra_th}{channel_th}<th>{t['type']}</th><th>{t['survey_no']}</th><th>{t['subdivisions']}</th>"
-                f"<th>{t['area_sqm']}</th><th>{t['status']}</th><th>{t['stage']}</th>{overdue_th}<th>{t['submitted']}</th>"
-                f"{loc_th}"
-                f"</tr></thead>"
-                f"<tbody>{rows}</tbody>"
-                f"</table>"
+            rows += (
+                f"<tr>"
+                f"<td>{_app_link(app.get('application_number'))}</td>"
+                f"{extra_td}"
+                f"<td>{_e(app.get('type'))}</td>"
+                f"<td>{_e(app.get('raw_survey_no') or app.get('survey_no') or 'N/A')}</td>"
+                f"<td>{_e(app.get('subdivisions') or app.get('sub_division_no') or app.get('included_subdivisions') or '-')}</td>"
+                f"<td>{_status(app.get('status'), lang)}{overdue}</td>"
+                f"<td>{_e(app.get('stage'))}</td>"
+                f"{overdue_td}"
+                f"<td>{_e(app.get('submission_date'))}</td>"
+                f"{loc_td}"
+                f"</tr>"
             )
-        else:
-            rows = ""
-            for app in applications:
-                overdue = " ⚠️" if app.get("is_overdue") else ""
-                jur = app.get("jurisdiction", {})
-                
-                def _loc(a, b): return a if (a and a != 'N/A') else (b or 'N/A')
-                loc_map = {
-                    "district": _loc(jur.get('district'), app.get('district_name')),
-                    "taluk": _loc(jur.get('taluk'), app.get('taluk_name')),
-                    "town": _loc(jur.get('town'), app.get('town_name')),
-                    "ward": _loc(jur.get('ward'), app.get('ward_number')),
-                    "block": _loc(jur.get('block'), app.get('block_number'))
-                }
-                loc_td = "".join(f"<td>{_e(loc_map[k])}</td>" for k in loc_keys)
-
-                overdue_td = ""
-                if has_overdue_col:
-                    ov_days = app.get("days_overdue")
-                    if ov_days is not None:
-                        overdue_td = f"<td><span style='color: #c53030; font-weight: bold;'>⚠️ {ov_days} days</span></td>"
-                    else:
-                        overdue_td = "<td>-</td>"
-
-                extra_td = ""
-                if req_name:
-                    extra_td += f"<td>{_e(app.get('applicant_name') or 'N/A')}</td>"
-                if req_mobile:
-                    extra_td += f"<td>{_e(app.get('applicant_mobile') or 'N/A')}</td>"
-                if req_address:
-                    extra_td += f"<td>{_e(app.get('applicant_address') or 'N/A')}</td>"
-                if req_channel:
-                    extra_td += f"<td>{_e(_CHANNEL_CELL.get(app.get('submission_channel'), app.get('submission_channel') or 'N/A'))}</td>"
-
-                rows += (
-                    f"<tr>"
-                    f"<td>{_app_link(app.get('application_number'))}</td>"
-                    f"{extra_td}"
-                    f"<td>{_e(app.get('type'))}</td>"
-                    f"<td>{_e(app.get('raw_survey_no') or app.get('survey_no') or 'N/A')}</td>"
-                    f"<td>{_e(app.get('subdivisions') or app.get('sub_division_no') or app.get('included_subdivisions') or '-')}</td>"
-                    f"<td>{_status(app.get('status'), lang)}{overdue}</td>"
-                    f"<td>{_e(app.get('stage'))}</td>"
-                    f"{overdue_td}"
-                    f"<td>{_e(app.get('submission_date'))}</td>"
-                    f"{loc_td}"
-                    f"</tr>"
-                )
-            return (
-                f"<div class='table-intro'>{intro_msg}</div>"
-                f"<table class='data-table'>"
-                f"<thead><tr>"
-                f"<th>{t['application_no']}</th>{extra_th}{channel_th}<th>{t['type']}</th><th>{t['survey_no']}</th><th>{t['subdivisions']}</th>"
-                f"<th>{t['status']}</th><th>{t['stage']}</th>{overdue_th}<th>{t['submitted']}</th>"
-                f"{loc_th}"
-                f"</tr></thead>"
-                f"<tbody>{rows}</tbody>"
-                f"</table>"
-            )
+        return (
+            f"<div class='table-intro'>{intro_msg}</div>"
+            f"<table class='data-table'>"
+            f"<thead><tr>"
+            f"<th>{t['application_no']}</th>{extra_th}{channel_th}<th>{t['type']}</th><th>{t['survey_no']}</th><th>{t['subdivisions']}</th>"
+            f"<th>{t['status']}</th><th>{t['stage']}</th>{overdue_th}<th>{t['submitted']}</th>"
+            f"{loc_th}"
+            f"</tr></thead>"
+            f"<tbody>{rows}</tbody>"
+            f"</table>"
+        )
 
     # ── Ward/Block surveys ───────────────────────────────────────────
     if "surveys_by_block" in structured_data:
@@ -2335,18 +2275,6 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
         overdue_flag = " ⚠️" if app.get("is_overdue") else ""
         priority_flag = " (High Priority)" if app.get("is_priority") else ""
 
-        merge_info_html = ""
-        if app.get("type") == "MERGE":
-            subdiv_list = ", ".join(sd["sub_division_no"] for sd in app.get("subdivisions_being_merged", [])) or "-"
-            total_merge_area = f"{app.get('total_merge_area_sqm'):.2f} sq.m" if app.get('total_merge_area_sqm') else "N/A"
-            num_subdivs = app.get("number_of_subdivisions", len(app.get("subdivisions_being_merged", [])))
-            merge_info_html = (
-                f"<tr><td><strong>{t['survey_number']}</strong></td><td>{_e(app.get('survey_no'))}</td></tr>"
-                f"<tr><td><strong>{t['subdivisions_being_merged']}</strong></td><td>{_e(subdiv_list)}</td></tr>"
-                f"<tr><td><strong>{t['number_of_subdivisions']}</strong></td><td>{num_subdivs}</td></tr>"
-                f"<tr><td><strong>{t['total_merge_area']}</strong></td><td>{total_merge_area}</td></tr>"
-            )
-
         # Optional extra fields (declared reason, sale deed, patta, land type, submitted via)
         optional_rows = ""
         if app.get("declared_reason"):
@@ -2386,37 +2314,21 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
                 field_visit_rows += f"<tr><td><strong>{t['encroachment_found']}</strong></td><td>{t['yes'] if fv.get('encroachment_found') else t['no']}</td></tr>"
                 field_visit_rows += f"<tr><td><strong>{t['area_verified']}</strong></td><td>{t['yes'] if fv.get('area_verified') else t['no']}</td></tr>"
 
-        # For MERGE apps put the merge block (survey + subdivisions) FIRST,
-        # then status/stage, then applicant contact, then optional rows.
-        # For non-MERGE apps keep the original order.
-        is_merge_app = app.get("type") == "MERGE"
-
-        if is_merge_app:
-            body_rows = (
-                f"{merge_info_html}"
-                f"<tr><td><strong>{t['type']}</strong></td><td>{_e(app.get('type'))}</td></tr>"
-                f"<tr><td><strong>{t['status']}</strong></td><td>{_status(app.get('status'), lang)}</td></tr>"
-                f"<tr><td><strong>{t['stage']}</strong></td><td>{_e(app.get('stage'))}</td></tr>"
-                f"<tr><td><strong>{t['submission_date']}</strong></td><td>{_e(app.get('submission_date'))}</td></tr>"
-                f"{optional_rows}"
-                f"{applicant_rows}"
-                f"{field_visit_rows}"
-            )
-        else:
-            survey_row = (
-                f"<tr><td><strong>{t['survey_number']}</strong></td><td>{_e(app.get('survey_no'))}</td></tr>"
-                if app.get("survey_no") else ""
-            )
-            body_rows = (
-                f"{applicant_rows}"
-                f"<tr><td><strong>{t['type']}</strong></td><td>{_e(app.get('type'))}</td></tr>"
-                f"<tr><td><strong>{t['status']}</strong></td><td>{_status(app.get('status'), lang)}</td></tr>"
-                f"<tr><td><strong>{t['stage']}</strong></td><td>{_e(app.get('stage'))}</td></tr>"
-                f"<tr><td><strong>{t['submission_date']}</strong></td><td>{_e(app.get('submission_date'))}</td></tr>"
-                f"{survey_row}"
-                f"{optional_rows}"
-                f"{field_visit_rows}"
-            )
+        
+        survey_row = (
+            f"<tr><td><strong>{t['survey_number']}</strong></td><td>{_e(app.get('survey_no'))}</td></tr>"
+            if app.get("survey_no") else ""
+        )
+        body_rows = (
+            f"{applicant_rows}"
+            f"<tr><td><strong>{t['type']}</strong></td><td>{_e(app.get('type'))}</td></tr>"
+            f"<tr><td><strong>{t['status']}</strong></td><td>{_status(app.get('status'), lang)}</td></tr>"
+            f"<tr><td><strong>{t['stage']}</strong></td><td>{_e(app.get('stage'))}</td></tr>"
+            f"<tr><td><strong>{t['submission_date']}</strong></td><td>{_e(app.get('submission_date'))}</td></tr>"
+            f"{survey_row}"
+            f"{optional_rows}"
+            f"{field_visit_rows}"
+        )
 
         return (
             f"<div class='table-intro'><strong>{t['application_details']}: {_e(app['application_number'])}</strong>{overdue_flag}{priority_flag}</div>"
@@ -2710,13 +2622,13 @@ structured data below, and if that data is missing, say you need the application
   A: "The applicant name for <application number> is <name>." / "<application number> விண்ணப்பதாரர் பெயர் <name>."
 
 - Q: "Which sub-divisions are included?"
-  A: "Merge application <application number> includes <n> sub-divisions: <list them with their areas>."
+  A: "ISD application <application number> includes <n> sub-divisions: <list them with their areas>."
 
 - Q: "What is the status?" / "நிலை என்ன?"
   A: "The application status is Pending." / "விண்ணப்பம் நிலுவையில் உள்ளது."
 
 Examples of BAD answers (do NOT do this):
-  "Here are the details for <application number>. Type: MERGE, Status: Approved, Applicant Name: John..."
+  "Here are the details for <application number>. Type: ISD, Status: Approved, Applicant Name: John..."
   — and NEVER copy a placeholder or an example value into an answer as if it were real data.
 """
 
@@ -2742,10 +2654,6 @@ CRITICAL APPLICATION TYPE DEFINITIONS:
    - Survey number and boundaries remain unchanged
    - Only patta holder name changes
    
-3. **MERGE**: Combines multiple sub-divisions or surveys into ONE survey number
-   - Example: 145/1 (300 sq.m) + 145/2 (400 sq.m) → Survey 145 (700 sq.m)
-   - Reduces the number of separate parcels
-   - Lists which sub-divisions are being merged together
 
 CONVERSATION CONTEXT:
 - You have access to previous messages in this conversation.
@@ -2760,7 +2668,7 @@ HANDLING DIFFERENT TYPES OF QUERIES:
    - Remind them of what you can help with
 2. **General questions about your capabilities**:
    - Explain what you can do clearly
-   - Mention surveys, applications (ISD/NISD/MERGE), field visits, workflow procedures
+   - Mention surveys, applications (ISD/NISD), field visits, workflow procedures
 3. **SIS-specific queries with no data found**:
    - Explain that you don't have that specific information
    - Suggest what they can ask about instead
@@ -2770,13 +2678,13 @@ HANDLING DIFFERENT TYPES OF QUERIES:
 
 STRICT DATA RULES:
 1. DO NOT generate example tables, field descriptions, or placeholder data.
-2. DO NOT explain what an ISD/NISD/MERGE application "contains" unless you have actual information.
+2. DO NOT explain what an ISD/NISD application "contains" unless you have actual information.
 3. DO NOT say "the following information is available for..." — only show actual data.
 4. DO NOT use markdown tables (| --- |) — only plain text or HTML <table> tags.
 5. If specific data is not available, acknowledge it naturally without mentioning technical systems.
 6. ALWAYS use the correct definitions and expansions: ISD = **Involving Sub-Division** (0154, creates new
-   sub-divisions), NISD = **Not Involving Sub-Division** (0153, transfer only, creates none), MERGE = 0155
-   (combines sub-divisions). ISD is NEVER "Individual Sub-Division" and NISD is NEVER "Non-Individual".
+   sub-divisions), NISD = **Not Involving Sub-Division** (0153, transfer only, creates none).
+   ISD is NEVER "Individual Sub-Division" and NISD is NEVER "Non-Individual".
 7. NEVER mention "RAG context", "database", "knowledge base", "system data" or any technical terms in responses to users.
 8. NEVER invent an application number, or describe/guess its format ("APP-2024-000001" and similar are all
    fabricated — the real format is YEAR/SERVICE_CODE/DISTRICT_CODE/SERIAL_NUMBER, e.g. 2026/0154/28/001167).
@@ -2826,6 +2734,39 @@ When application data IS provided:
         f"\n\nUSER QUESTION:\n{query}"
         f"\n\nASSISTANT RESPONSE:"
     )
+
+
+async def paraphrase_facts_naturally(fact_text: str, language: str = "en", timeout: float = 45.0) -> str:
+    """Rewrite an already fact-checked answer as natural prose, via the LLM.
+
+    For definitional content (service code lookups, workflow explanations)
+    the facts -- code, name, fee, SLA -- are never in question; only the
+    template around them reads the same every time. This asks the model to
+    restate exactly what it is given, in its own words, and explicitly
+    forbids adding, dropping or changing any fact, number, code or name. If
+    the model is slow, busy, or errors, `fact_text` is returned unchanged --
+    a paraphrase failure must never cost correctness or block the turn, and
+    the caller still verifies the numbers survived before using the result.
+    """
+    if not fact_text or not fact_text.strip():
+        return fact_text
+    lang_note = ("Reply in Tamil." if language == "ta" else
+                 "Reply in Tanglish (Tamil words in English script)." if language == "tanglish" else
+                 "Reply in English.")
+    prompt = (
+        "Rewrite the following facts as a short, natural, conversational answer for a "
+        "government survey officer. Do not add, remove, invent, summarise away or change "
+        "any fact, number, code, name, fee or date in it -- say exactly what is given, "
+        f"just in different words. {lang_note}\n\nFacts:\n{fact_text}"
+    )
+    try:
+        async with llm_gate.llm_slot():
+            response = await asyncio.wait_for(llm.ainvoke(prompt), timeout=timeout)
+        text = (response.content if hasattr(response, "content") else str(response)).strip()
+        return text or fact_text
+    except Exception as e:
+        logger.warning(f"paraphrase_facts_naturally failed, using deterministic text: {e}")
+        return fact_text
 
 
 async def call_llama(prompt: str) -> str:
@@ -2965,8 +2906,7 @@ _COMPARE_SUPERLATIVE_DOMAIN = (
 
 # The sides. A short code gets no typo budget (`_max_edits_for` gives 3-letter
 # targets 0 edits), which is exactly right: "isd" must never absorb "nisd".
-_COMPARE_TYPES = (("ISD", ("isd", "0154")), ("NISD", ("nisd", "0153")),
-                  ("MERGE", ("merge", "merges", "merged", "0155")))
+_COMPARE_TYPES = (("ISD", ("isd", "0154")), ("NISD", ("nisd", "0153")))
 _COMPARE_STATUSES = (("pending", ("pending",)),
                      ("approved", ("approved", "approve", "completed", "cleared")),
                      ("rejected", ("rejected", "reject", "refused", "cancelled", "cancel")),
@@ -3208,8 +3148,7 @@ def parse_comparison_query(message: str) -> Optional[dict]:
                                       ("channel", _COMPARE_CHANNELS, ())):
             sides = _compare_sides(tokens, msg, table, ta_table)
             if len(sides) >= 2 and has_cue:
-                # "ISD vs NISD vs MERGE" names three; reporting only the first
-                # two would silently drop the one the officer asked about last.
+                # every side named is kept, so none is silently dropped.
                 return {"kind": kind, "left": sides[0], "right": sides[1],
                         "sides": sides,
                         "aspect": "duration" if aspect == "duration" else "count"}
@@ -3355,7 +3294,7 @@ def parse_comparison_query(message: str) -> Optional[dict]:
 _APP_SUBTOPIC_INTENTS = {
     "check_documents", "check_sale_deed", "sale_deed_check", "is_nisd_or_isd",
     "submission_channel_check", "can_apply_check",
-    "merge_info", "isd_processing", "litigation_check", "rejection_info",
+    "isd_processing", "litigation_check", "rejection_info",
     "escalation_check", "joint_owner_check", "survey_owners",
     "field_visits", "fv_deadline_check", "fv_date_select", "fv_nearby_pending",
     "fv_reschedule_availability", "fv_change_date", "fv_scheduled_this_week",
@@ -3364,9 +3303,9 @@ _APP_SUBTOPIC_INTENTS = {
 }
 
 _APP_NUMBER_STRIP_RE = re.compile(
-    r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b'
-    r'|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b'
-    r'|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b'
+    r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b'
+    r'|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b'
+    r'|\b(?:ISD|NISD)/\w+/\d+/\d+\b'
     r'|\bAPP-\d+-\d+\b'
     r'|\b20\d{2}/[\w]+/[\w]+/\d+\b',
     re.IGNORECASE,
@@ -3423,7 +3362,7 @@ def _classify_application_subtopic(message: str, prev_intent: str = None):
 # here answers the same regardless of date, so inheriting it would be noise.
 DATE_SCOPED_INTENTS = frozenset({
     "pending_applications", "isd_applications", "nisd_applications",
-    "both_applications", "merge_applications", "overdue_applications",
+    "both_applications", "overdue_applications",
     "town_applications", "block_applications", "applications_by_block",
     "active_applications_taluks",
     "highest_priority_applications", "assigned_today", "immediate_action",
@@ -3632,7 +3571,7 @@ def parse_last_application_query(message: str):
 
     Returns None when the message is not one, else a dict with:
       status      -- status the officer named ('approved', 'rejected', ...) or None
-      app_type    -- 'ISD' / 'NISD' / 'MERGE' when named, else None
+      app_type    -- 'ISD' / 'NISD' when named, else None
       field       -- the one field asked for ('area', 'applicant', ...) or None
       yes_no      -- True when the status word is a question about the most recent
                      application rather than a filter over the officer's history
@@ -3671,8 +3610,6 @@ def parse_last_application_query(message: str):
         app_type = "NISD"
     elif re.search(r"(?<!\w)isd(?!\w)", msg):
         app_type = "ISD"
-    elif re.search(r"(?<!\w)merge[ds]?(?!\w)", msg):
-        app_type = "MERGE"
 
     field = next((name for name, pattern in _LAST_APP_FIELD_RES if pattern.search(msg)), None)
 
@@ -3710,7 +3647,7 @@ def parse_last_application_query(message: str):
 APP_SCOPED_INTENTS = {
     "application_status", "check_documents", "check_sale_deed", "sale_deed_check",
     "is_nisd_or_isd", "joint_owner_check", "litigation_check",
-    "isd_processing", "merge_info", "can_number_info", "last_application",
+    "isd_processing", "can_number_info", "last_application",
 }
 
 
@@ -3724,7 +3661,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     Args:
         message:     The current user message.
         prev_intent: Intent of the immediately preceding turn (used for context-aware
-                     disambiguation of follow-up filter phrases like "in merge").
+                     disambiguation of follow-up filter phrases like "only isd").
     """
     # Strip leading list-item prefixes like "1.", "2)", "a -" etc.
     #
@@ -3735,17 +3672,98 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     message = re.sub(r'^\s*[a-zA-Z][\.\)]\s*', '', message)
     message = re.sub(r'^\s*(?:\d+|[a-zA-Z])\s*-\s+', '', message)
 
+    # The official service names ("Involving Subdivision" / "Not Involving
+    # Subdivision", from tamilnilam_urban_services_and_districts.txt) are
+    # normalised to the ISD/NISD abbreviation here, once, so every one of the
+    # many literal isd/nisd checks below recognises them too -- an officer
+    # asking "show involving subdivision applications" by the full name
+    # matched none of those checks and fell back to the unscoped pending
+    # queue. The NISD (longer, "not involving...") substitution runs first:
+    # it contains "involving subdivision" as a literal substring, so it must
+    # be consumed before the bare ISD substitution runs, or every NISD-by-name
+    # question would ALSO read as ISD.
+    message = re.sub(r'\bnot\s+involving\s+sub[\s-]?division\b', 'nisd', message, flags=re.IGNORECASE)
+    message = re.sub(r'\binvolving\s+sub[\s-]?division\b', 'isd', message, flags=re.IGNORECASE)
+
     msg = normalize_text(message)
+
+    # "all applications", bare, means every TAMILNILAM service code (0158
+    # Modification, 0159 Addition, 0178 F-Line, ...), not just the ISD/NISD
+    # patta transfers `Application` tracks in full -- confirmed against a
+    # real officer's expectation, who read "all" as "every kind", not "every
+    # one of my (already narrow) ISD/NISD files". A phrase that ALSO names a
+    # status, type or channel ("all pending applications", "all my ISD
+    # applications", "all applications from CSC") stays scoped to the
+    # ISD/NISD register as before -- "all" there means "don't filter my
+    # queue further", the qualifier already says which register. Checked
+    # before anything else so a later, broader rule never claims it first.
+    # "new applications" / "recent applications" is the same "every kind, not
+    # just my ISD/NISD queue" reading as bare "all applications" above --
+    # equal treatment across every service code, not a bias toward the two
+    # this register happens to run a full workflow for. A phrase that also
+    # names a status, type or channel ("new pending applications", "new ISD
+    # applications") stays scoped to the ISD/NISD register, same carve-out as
+    # "all applications" gets.
+    if re.fullmatch(
+            r"\s*(?:show|list|give|display|get|find)?\s*(?:me\s+)?"
+            r"(?:all\s+|(?:the\s+)?(?:new|recent|latest)\s+)"
+            r"applications?\s*[?.!]*\s*", msg) or re.search(
+            r"\ball\s+service\s+(?:codes?|types?)\b"
+            r"|\bevery\s+service\s+(?:code|type)\b"
+            r"|\ball\s+types?\s+of\s+applications?\b"
+            r"|\bapplications?\s+(?:of|for|from|with|across)\s+all\s+service\s+codes?\b",
+            msg):
+        return "all_service_code_applications"
+
+    # "F-Line applications" -- 0178 (Urban Demarcation) is not ISD/NISD, so
+    # pending_applications (the ISD/NISD-only desk queue) can't answer it; it
+    # used to fall through to the qualifier guard, which read the stray "f"
+    # left after "f-line" partly matched a filler word as an unrecognised
+    # filter ("I don't know how to filter applications by 'f'"). Routed to
+    # the same all-service-code listing "all applications" uses above.
+    # Requires the word "application(s)" so a bare definition question
+    # ("what is f-line?") is left to the service_code_lookup rule below.
+    if re.search(r'(?<![a-z])f[\s\-]?line(?![a-z])', msg) and re.search(r'\bapplications?\b', msg):
+        return "all_service_code_applications"
+
+    # "citizen applications" / "CSC applications" / "Sub-Registrar
+    # applications" -- the department-wide count for that channel, equal
+    # treatment across every service code, not just ISD/NISD. "how many
+    # citizen applications are there" used to answer "1" from
+    # pending_applications's channel filter, which only ever sees ISD/NISD
+    # (0153/0154) -- the other 9 of the officer's 10 real citizen-channel
+    # applications are F-Line (0178) and invisible to it. "my CSC
+    # applications" (the officer's own ISD/NISD channel queue -- a real,
+    # separately documented question) and anything that also names a type
+    # keeps the existing pending_applications routing below, since ISD/NISD
+    # already have their own dedicated, fuller-detail intents.
+    #
+    # A plain status word (pending/approved/rejected) does NOT exclude this
+    # route any more -- get_all_service_code_applications() now takes a
+    # status filter too. "show all pending application from citizen" used to
+    # fall through to pending_applications on the word "pending" alone,
+    # which answered from ISD/NISD only and silently dropped the officer's
+    # pending F-Line rows on that same channel -- a table sitting one
+    # message above it in the transcript was visibly already showing them.
+    # overdue/escalated/in_progress still exclude it: this table has no
+    # overdue concept and collapses in_progress/escalated into "pending", so
+    # a question actually asking about those stays on the ISD/NISD-specific
+    # route that can answer it precisely.
+    if (re.search(r'\bapplications?\b', msg) and not re.search(r'\bmy\b', msg)
+            and not re.search(r'\b(?:isd|nisd|overdue|escalated|in.?progress)\b', msg)):
+        _chan_only = extract_submission_channels(msg)
+        if len(_chan_only) == 1:
+            return "all_service_code_applications"
 
     # "nisd table" / "display isd table" -- the type's applications, however the officer
     # names the view.
-    _tt = re.fullmatch(r"\s*(?:display|show|give|list|get)?\s*(?:me\s+)?(?:the\s+|all\s+)?(nisd|isd|merge)\s+(?:table|tabel|list|data|records?)\s*[?.!]*\s*", msg)
+    _tt = re.fullmatch(r"\s*(?:display|show|give|list|get)?\s*(?:me\s+)?(?:the\s+|all\s+)?(nisd|isd)\s+(?:table|tabel|list|data|records?)\s*[?.!]*\s*", msg)
     if _tt:
-        return {"nisd": "nisd_applications", "isd": "isd_applications", "merge": "merge_applications"}[_tt.group(1)]
+        return {"nisd": "nisd_applications", "isd": "isd_applications"}[_tt.group(1)]
 
-    _tc = re.search(r"\b(nisd|isd|merge)\b.*\b(?:evlo|evvalavu|ethana|ethanai|ethane)\b|\b(?:evlo|evvalavu|ethana|ethanai)\b.*\b(nisd|isd|merge)\b", msg)
+    _tc = re.search(r"\b(nisd|isd)\b.*\b(?:evlo|evvalavu|ethana|ethanai|ethane)\b|\b(?:evlo|evvalavu|ethana|ethanai)\b.*\b(nisd|isd)\b", msg)
     if _tc and not re.search(r"\bfee\b|\bsla\b|cost|price", msg):
-        return {"nisd": "nisd_applications", "isd": "isd_applications", "merge": "merge_applications"}[(_tc.group(1) or _tc.group(2))]
+        return {"nisd": "nisd_applications", "isd": "isd_applications"}[(_tc.group(1) or _tc.group(2))]
 
     if re.search(r"\b(?:what\s+(?:are|is)\s+my\s+priorit(?:y|ies)|my\s+priorit(?:y|ies)|which\s+(?:are|is)\s+my\s+(?:top|urgent)|top\s+priorit(?:y|ies))\b", msg):
         return "highest_priority_applications"
@@ -3786,6 +3804,13 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _VERB_TYPO_NEVER = frozenset({
         "last", "lost", "slow", "snow", "stow", "line", "live", "gate", "gave",
         "man",
+        # "govt" is 2 edits from "give" (o->i, t->e) -- a common domain
+        # abbreviation ("Govt to Private", "Govt to Govt Poramboke", from
+        # tamilnilam_urban_services_and_districts.txt), not a typo of the verb.
+        # Unguarded, "what is govt to private" silently became "what is give
+        # to private", which matches no service name and fell through to
+        # general_query for a question that has a real, deterministic answer.
+        "govt",
     })
     msg = " ".join(
         next((v for v, budget in _VERB_TYPO_TARGETS
@@ -3794,24 +3819,6 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         for w in msg.split()
     )
     words = extract_tokens(msg)
-
-    # "merge" is 5 letters, long enough for the project's standard 1-edit
-    # typo budget (`_max_edits_for`) -- unlike the 3-letter "isd", which
-    # CLAUDE.md keeps typo-free on purpose so it can't absorb "nisd". A plain
-    # `\bmerge?\b` regex caught a dropped trailing letter ("merg") but not a
-    # transposition like "mrge", so "shw mrge applicatons" fell all the way
-    # through to the slow LLM fallback instead of the deterministic listing.
-    # The literal service code counts too -- symmetric with `_has_isd_w` /
-    # `_has_nisd_w` a few hundred lines down, which both match `|0154` /
-    # `|0153` alongside the word. Without it, "show 0155 applications" (typed
-    # the same way "show 0154 applications" correctly works) fell through to
-    # the generic pending-queue listing, silently discarding the "0155".
-    # "erge" is a dropped LEADING letter, which the typo matcher's own
-    # first-character guard refuses to cross on its own.
-    _has_merge_token = any(
-        is_token_typo_match(w, "merge") or is_qwerty_first_letter_typo(w, "merge")
-        for w in words
-    ) or bool(re.search(r'\b0155\b', msg)) or "erge" in words
 
     def fuzzy_match(keyword: str, threshold: float = 0.75) -> bool:
         """
@@ -3935,8 +3942,6 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                       "விண்ணப்பத்தை", "விண்ணப்பத்தின்", "விண்ணப்பத்திற்கு", "விண்ணப்பங்களும்",
                       "ஆப்ளிகேஷன்", "ஆப்ளிகேஷன்ஸ்", "ஆப்ளிகேஷன்கள்", "அப்ளிகேஷன்", "அப்ளிகேஷன்ஸ்", "அப்ளிகேஷன்கள்", "ஆப்ளிகேஷனை", "ஆப்ளிகேஷன்களை",
                       "application", "applications", "aplications", "aplication", "app", "appl", "apps", "vinnappam", "vinnappangal"]
-    ta_merge       = ["இணைப்பு", "இணைக்க", "இணைக்கப்பட்ட", "இணைப்பு விண்ணப்பம்", "இணைப்பு விண்ணப்பங்கள்", "இணைத்தல்", "மெர்ஜ்", "மெர்ஜிங்",
-                      "merge", "merging", "merged", "merg"]
     ta_status      = ["நிலை", "தற்போதைய நிலை", "ஸ்டேட்டஸ்", "ஸ்டேடஸ்", "ஸ்டேட்ஸ்",
                       "status", "statuss", "staus", "stage", "nilai"]
     ta_area        = ["பரப்பளவு", "பரப்பு", "area", "arrea"]
@@ -4046,7 +4051,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             and not re.search(r"\d{4}/\d{3,4}/", msg)
             and not re.search(r"\b(?:show|list|my|count|how\s+many)\b", msg)):
         return "general_query"
-    _defn_types = [w for w in ("nisd", "isd", "merge") if re.search(
+    _defn_types = [w for w in ("nisd", "isd") if re.search(
         rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
     if (len(_defn_types) >= 2
             and re.search(r"\bdifference\b|\bdiffer\b|\bvs\.?\s+what\b"
@@ -4063,9 +4068,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # the lookup. It used to be read as the officer's own field-visit list. One
     # type word or code, a need/require cue, and none of the words that make it
     # a question about the officer's own files or schedule.
-    _fv_types = [w for w in ("nisd", "isd", "merge") if re.search(
+    _fv_types = [w for w in ("nisd", "isd") if re.search(
         rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
-    _fv_codes = re.findall(r"(?<!\d)015[345](?!\d)", msg)
+    _fv_codes = re.findall(r"(?<!\d)015[34](?!\d)", msg)
     if (len(_fv_types) + len(set(_fv_codes)) == 1
             and re.search(r"field\s*(visit|inspection)|கள\s*ஆய்வு|களஆய்வு", msg)
             and re.search(r"\b(need|needs|require|required|requires|mandatory|"
@@ -4084,7 +4089,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # and it fell all the way to general_query, where llama3.1:8b answered
     # *"NISD stands for Not Involving Sub-Division ... The application number
     # format is NISD/DISTRICT_CODE/YEAR"* — a format this register has never
-    # used. The three type words ARE service codes (0153 / 0154 / 0155) and
+    # used. The three type words ARE service codes (0153 / 0154) and
     # `SIS_URBAN_SERVICES` holds their official text, so this is a lookup for
     # the same reason "what is 0153?" is one.
     #
@@ -4099,7 +4104,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                      r"என்பது\s*என்ன|vidhiyasam|vithiyasam|"
                      r"\b(na|naa|nu|nnu|nna)\s+(enna|ennanu)\b|"
                      r"(ன்னா|னா)\s*என்ன|என்னன்னு)", msg))
-    _type_words = [w for w in ("nisd", "isd", "merge") if re.search(
+    _type_words = [w for w in ("nisd", "isd") if re.search(
         rf"(?<![a-z0-9]){w}(?![a-z0-9])", msg)]
     # "nisd" contains no "isd" under the boundary check above, so the two are
     # counted separately and "what is NISD" names exactly one.
@@ -4111,7 +4116,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             # definition only in the singular article form "what is AN ISD
             # application".
             and (not re.search(r"applic", msg)
-                 or re.search(r"\b(an?|the)\s+(isd|nisd|merge)\s+application\b", msg))
+                 or re.search(r"\b(an?|the)\s+(isd|nisd)\s+application\b", msg))
             # A fee / service-charge question belongs to the fee rule below,
             # which answers from the schedule table rather than the code's
             # description.
@@ -4317,10 +4322,10 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         "service", "govt", "government", "registration", "mutation",
         "survey", "patta", "sub registrar", "sub-registrar", "tahsildar",
         "draughtsman", "ward", "block", "officer", "jurisdiction",
-        "isd", "nisd", "merge", "0153", "0154", "0155", "subdivision", "sub-division",
+        "isd", "nisd", "0153", "0154", "subdivision", "sub-division",
         "விண்ணப்ப", "சேவை", "வார்டு",
     ])) or _fee_short_money or (
-        bool(re.search(r"\b(?:isd|nisd|merge|015[345])\b", msg))
+        bool(re.search(r"\b(?:isd|nisd|015[34])\b", msg))
         and bool(re.search(r"\b(?:rate|rates|amount|how\s+much|pay|paid|to\s+pay)\b", msg))
         and not re.search(r"\bhow\s+many\b", msg))
     _fee_word = _fee_word_strict or _fee_word_generic
@@ -4423,7 +4428,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _concept_terms = [
         "field visit", "field visits", "fieldvisit", "field-visit",
         "field inspection", "inspection", "site visit",
-        "sub-division", "subdivision", "sub division", "merge", "mutation",
+        "sub-division", "subdivision", "sub division", "mutation",
         "patta", "chitta", "natham", "tslr", "encroachment",
         "litigation", "escalation", "escalated", "sla", "adangal",
         "sale deed", "encumbrance certificate", "patta transfer",
@@ -4480,7 +4485,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # is TSLR extract with sketch" are exactly "what is 0188" / "what is 0156"
     # spelled with the code's own name instead of its number, and every urban
     # code has an official text in SIS_URBAN_SERVICES to answer from -- the
-    # same reasoning the (narrower, isd/nisd/merge-only) definition check above
+    # same reasoning the (narrower, isd/nisd-only) definition check above
     # already applies. Without this, "natham" and "tslr" being in
     # `_concept_terms` sent the question straight to the LLM before the
     # service-code lookup a few hundred lines down ever got a chance to see it.
@@ -4636,7 +4641,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             r'\d{4}/\d{3,4}/\d{1,3}/\d+', msg):
         return "general_query"
 
-    if (re.search(r"\b(?:isd|nisd|merge)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
+    if (re.search(r"\b(?:isd|nisd)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
             and not extract_application_number(message) and not re.search(r"\b(?:been|pending|my)\b", msg)):
         return "service_code_lookup"
     if re.fullmatch(r"\s*(?:what\s+is|what's|tell\s+me)\s+the\s+(?:sla|processing\s+time|time\s+limit|turnaround)\s*[?.!]*\s*", msg):
@@ -4713,39 +4718,48 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
 
     # ── Context-aware type-filter follow-up detection (PRODUCTION) ───────────
     # Handles short follow-up messages like:
-    #   "in merge", "only isd", "merge only", "isd n nisd", "both merge and isd"
+    #   "only isd", "isd only", "isd n nisd", "both nisd and isd"
     # These are NOT new application-list queries — they refine the previous result.
     #
     # Production rules (two independent paths, either is sufficient):
     #
     # PATH A — Structural pure-filter: message matches one of the canonical
     #   filter patterns regardless of previous intent.
-    #   Examples: "in merge", "only isd", "isd n nisd", "merge only"
+    #   Examples: "only isd", "isd n nisd", "nisd only"
     #
     # PATH B — Context-aware: prev_intent was a field-visit intent AND message
     #   contains a type keyword with NO strong application-query signal.
     #
     # All paths guard against strong application-query signals so that
-    # "show merge applications" / "list isd" still reach merge/isd_applications.
+    # "show nisd applications" / "list isd" still reach nisd/isd_applications.
     #
     # Word-boundary regex is used throughout to prevent substring false-positives
     # (e.g. "in" matches "n", "stands" matches "and").
 
-    _TYPE_RE  = re.compile(r'\b(isd|nisd|merge|merg|merger|merging)\b', re.IGNORECASE)
+    _TYPE_RE  = re.compile(r'\b(isd|nisd)\b', re.IGNORECASE)
     _JOINER_RE = re.compile(r'\b(and|n|or|&)\b', re.IGNORECASE)
     # "Strong application-query" signals — if any of these are present as whole
     # words we should NOT redirect to field_visits.
+    # The Tamil words are matched with `_TA_NB`/`_TA_NA` (not-preceded/not-
+    # followed by another Tamil character), never `\b` -- every one of them
+    # ends in a dependent vowel sign or a virama, neither of which is `\w`, so
+    # a trailing `\b` right after one is never a real boundary (the same trap
+    # CLAUDE.md documents for the comparison parser and the follow-up layer).
+    # Folded into this single `\b(...)\b` group as they used to be, none of
+    # them ever matched anything, so a Tamil application question that named
+    # no English keyword lost this "strong signal" and could be misread as a
+    # field-visit question instead.
     _STRONG_APP_RE = re.compile(
         r'\b(application|applications|app|apps|pending|show|list|display|fetch|give|'
-        r'get|find|all|view|detail|summary|count|total|how many|number of|'
-        r'காட்டு|காண்பி|பட்டியல்|விண்ணப்பம்|விண்ணப்பங்கள்)\b',
+        r'get|find|all|view|detail|summary|count|total|how many|number of)\b'
+        rf'|{_TA_NB}(?:காட்டு|காண்பி|பட்டியல்|விண்ணப்பம்|விண்ணப்பங்கள்){_TA_NA}',
         re.IGNORECASE
     )
     # Canonical filter patterns (anchor-to-end regex on normalized msg)
     _PURE_FILTER_RE = re.compile(
         r'^(?:in|only|for|filter|show only|just|of type|type)?\s*'
-        r'(?:isd|nisd|merge|merg|merger|merging)'
-        r'(?:\s+(?:and|n|or|&)\s+(?:isd|nisd|merge|merg|merger|merging))*'
+        r'(?:isd|nisd)'
+        r'(?:\s+(?:and|n|or|&)\s+(?:isd|nisd))*'
         r'\s*(?:only|type|types|applications?|apps?)?\s*$',
         re.IGNORECASE
     )
@@ -4767,7 +4781,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # Match if message contains field visit keywords (as phrase OR separate words)
 
     _has_app_pattern = bool(
-        re.search(r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b', message, re.IGNORECASE)
+        re.search(r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b', message, re.IGNORECASE)
         or re.search(r'\b20\d{2}/[\w]+/[\w]+/\d+\b', message)  # broad YYYY/A/B/N fallback
     )
 
@@ -5037,10 +5051,10 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
 
     if re.match(r"\s*(?:details\s+of\s+|show\s+|about\s+)?survey\s+(?:no|number)\.?\s*\d", msg) and not extract_application_number(message):
         return "survey_detail"
-    if (re.search(r"\b(?:isd|nisd|merge)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
+    if (re.search(r"\b(?:isd|nisd)\b", msg) and re.search(r"\bsla\b|\bhow\s+long\b.*\btakes?\b|\btime\s+(?:limit|taken)\b", msg)
             and not extract_application_number(message) and not re.search(r"\b(?:been|pending|my)\b", msg)):
         return "service_code_lookup"
-    if re.search(r"\b(?:isd|nisd|merge)\s+(?:meaning|means|full\s+form|expansion)\b|\b(?:meaning|full\s+form)\s+of\s+(?:isd|nisd|merge)\b", msg):
+    if re.search(r"\b(?:isd|nisd)\s+(?:meaning|means|full\s+form|expansion)\b|\b(?:meaning|full\s+form)\s+of\s+(?:isd|nisd)\b", msg):
         return "service_code_lookup"
     if re.search(r"\bmy\s+(?:wards?|blocks?)\b|\bhow\s+many\s+(?:wards?|blocks?)\s+(?:do\s+i|have\s+i)\b", msg):
         return "jurisdiction_summary"
@@ -5050,14 +5064,14 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     if (re.match(r"\s*(?:what|which|list|show|display|give)\b", msg) and not extract_application_number(message)
             and re.search(r"\bapplic\w*", msg)
             and re.search(r"\b(?:pres\w{2,4}|availab\w+|exist\w*|there|in\s+(?:the\s+)?sis|in\s+(?:my\s+)?queue|at\s+sis|with\s+sis)\b", msg)
-            and not re.search(r"\b(?:isd|nisd|merge|csc|sro|approved|rejected|overdue|pending|month|year|ward|block|survey|fee|how\s+many|count)\b|\d", msg)):
+            and not re.search(r"\b(?:isd|nisd|csc|sro|approved|rejected|overdue|pending|month|year|ward|block|survey|fee|how\s+many|count)\b|\d", msg)):
         return "pending_applications"
     if re.search(r"\bwhat\s+(?:should|do)\s+i\s+(?:do|need\s+to\s+do)\s+today\b|\bwhat\s+to\s+do\s+today\b|\bmy\s+tasks?\b"
                  r"|\btoday'?s\s+work\b", msg) or re.fullmatch(
             r"\s*(?:give\s+me\s+|show\s+me\s+)?(?:a\s+)?(?:summary|overview)(?:\s+of\s+my\s+(?:work|day|queue))?\s*[?.!]*", msg):
         return "officer_workload"
     if (re.search(r"\bhow\s+(?:many\s+days|long|much\s+time)\b.*\b(?:take|takes|for|does|will)\b", msg)
-            and re.search(r"\b(?:isd|nisd|merge)\b|\bit\s+take", msg) and not extract_application_number(message)
+            and re.search(r"\b(?:isd|nisd)\b|\bit\s+take", msg) and not extract_application_number(message)
             and not re.search(r"\b(?:pending|been)\b|\bmy\b", msg)):
         return "service_code_lookup"
     if re.fullmatch(r"\s*(?:what\s+is|what's)\s+the\s+(?:sla|processing\s+time|time\s+limit|turnaround)\s*[?.!]*\s*", msg):
@@ -5068,17 +5082,17 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
 
     # 1a2. Standalone Tamil application list — catch before FV outer block consumes காட்டு/பட்டியல்
     # "விண்ணப்பங்கள் பட்டியல் காட்டு" should be pending_applications not general_query
-    # Exclude merge queries: "இணைப்பு விண்ணப்பங்கள் காட்டு" should still go to merge_applications
+    # Exclude "இணைப்பு விண்ணப்பங்கள் காட்டு" (a filter nothing here knows): it must not become the generic list
     # ALSO exclude specific field queries: "விண்ணப்பதாரர் பெயர் என்ன" should go to application_status
     if any(w in msg for w in ["விண்ணப்பங்கள்", "விண்ணப்பங்களும்", "விண்ணப்பம்", "விண்ணப்பங்கள"]) and \
        any(w in msg for w in ["காட்டு", "பட்டியல்", "காண்பி", "list", "show"]) and \
        not any(w in msg for w in ["கள ஆய்வு", "களஆய்வு", "வருகை", "field", "visit",
-                                   "இணைப்பு", "இணைக்க", "merge",
+                                   "இணைப்பு", "இணைக்க",
                                    # a named type must reach its own handler:
                                    # "ISD விண்ணப்பங்களைக் காட்டு" was answered
                                    # as a generic pending list. "isd" also
                                    # covers "nisd" here, which is intended.
-                                   "isd", "0153", "0154", "0155"]) and \
+                                   "isd", "0153", "0154"]) and \
        not any(w in msg for w in ["பெயர்", "நாமாகும்", "நாமம்", "என்ன", "எது", "யார்", "எங்கே", "எப்போது",
                                    "தொலைபேசி", "மின்னஞ்சல்", "முகவரி", "நிலை", "கட்டம்"]) and \
        not any(w in msg for w in ["முன்னுரிமை", "முன்னதாய", "அதிக", "உயர்ந்த",
@@ -5159,27 +5173,41 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _svc_codes_named = _find_service_codes(_svc_msg_no_app)
     # A code found only by its NAME ("owner name" -> 0165) is a coincidence of
     # words when the message is about a record ("father name of the owner of
-    # survey 5"), not a service question.
-    if (_svc_codes_named and not re.search(r'\b\d{3,4}\b', _svc_msg_no_app)
+    # survey 5"), not a service question. But an explicit "what is" / "what
+    # does X mean" cue already says it IS a definition question -- without
+    # `not _svc_def_cue` this guard fired on that too, so "what is TSLR Owner
+    # Name Correction" (0165) and "what is TSLR Settlement - Owner Entry"
+    # (0167) -- genuine service-code questions whose OFFICIAL NAME happens to
+    # contain "owner" -- were cleared here and fell through to a record
+    # lookup instead of ever reaching the service-code answer below.
+    if (_svc_codes_named and not _svc_def_cue and not re.search(r'\b\d{3,4}\b', _svc_msg_no_app)
             and not re.search(r'\bservice\b|\bcode\b', _svc_msg_no_app)
             and re.search(r'\b(?:survey|owner|owners|applicant|father|husband|his|her|their|of\s+the|of\s+survey)\b', _svc_msg_no_app)):
         _svc_codes_named = []
     _svc_named_kw = any(w in msg for w in ("service code", "service codes",
                                           "service_code", "சேவை குறியீடு"))
 
-    # "show 0169 applications" / "show 0161 applications" -- an imperative,
-    # not a "what is" question, so `_svc_def_cue` is False and this used to
-    # fall straight through to the generic pending-queue listing, which
-    # ignores any code it doesn't recognise and silently returned the
-    # officer's whole desk under the "Pending Applications" label. Only
-    # 0153/0154/0155 admit real rows (`ck_application_type` in the schema),
-    # so a listing request naming any OTHER real code has the same honest
-    # answer as "what is 0169" -- there is no register to list, and that is
-    # a fact about the schema, the same rule CLAUDE.md already states for the
-    # question form. isd/nisd/merge listings (0154/0153/0155) are handled
-    # below and must not be caught here.
+    # "show 0169 applications" / "show 0161 applications" / "ulc applications"
+    # -- an imperative, not a "what is" question, so `_svc_def_cue` is False.
+    # `Application` (ck_application_type) admits only 0153/0154, but every
+    # other code's applications ARE listable, from service_register_entries
+    # via all_service_code_applications -- so a listing verb here means a
+    # real listing, not the "no register to list" lookup the older comment
+    # here used to give (back when service_register_entries did not exist).
+    # A bare code mention with no listing verb stays a definition lookup.
+    # isd/nisd listings (0154/0153) are handled below and must not be caught
+    # here.
     if (not _svc_def_cue and not _svc_app_no and _svc_codes_named
-            and all(c not in ("0153", "0154", "0155") for c in _svc_codes_named)):
+            and all(c not in ("0153", "0154") for c in _svc_codes_named)):
+        # "பட்டியல்"/"காட்டு" (list/show) both end in a virama or a dependent
+        # vowel sign, neither of which is `\w` -- `_TA_NB`/`_TA_NA` replace the
+        # `\b` that would otherwise never close right after them (the trap
+        # CLAUDE.md documents elsewhere). "0158 பட்டியல் காட்டு" ("list 0158")
+        # named a listing verb that this check could not see at all and fell
+        # to the single-definition answer instead of a listing.
+        if re.search(rf'\bapplications?\b|\bapps?\b|\bshow\b|\blist\b|\bdisplay\b'
+                     rf'|{_TA_NB}விண்ணப்ப|{_TA_NB}(?:பட்டியல்|காட்டு){_TA_NA}', msg):
+            return "all_service_code_applications"
         return "service_code_lookup"
 
     if _svc_def_cue and (_svc_codes_named or _svc_app_no or _svc_named_kw):
@@ -5235,7 +5263,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         return "service_code_lookup" if _find_service_codes(msg) else "unidentified_number"
 
     if (("service code" in msg or "service codes" in msg or "diff service" in msg or "different service" in msg or "service code handling" in msg) and 
-        any(w in msg for w in ["how", "handle", "handling", "diff", "different", "difference", "explain", "what are", "guide", "summary", "0153", "0154", "0155"])):
+        any(w in msg for w in ["how", "handle", "handling", "diff", "different", "difference", "explain", "what are", "guide", "summary", "0153", "0154"])):
         return "service_code_guide"
 
     # 1. Joint owner check - MUST come before application_status to catch ownership questions
@@ -5253,8 +5281,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         return "joint_owner_check"
 
     # 2. Application number pattern → application_status
-    # Strict known-format match (service codes 0153/0154/0155 explicitly present)
-    if re.search(r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b', message, re.IGNORECASE):
+    # Strict known-format match (service codes 0153/0154 explicitly present)
+    if re.search(r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b', message, re.IGNORECASE):
         # This early return used to swallow every specific question that happened
         # to quote its application number: "what documents are missing for X?" and
         # "what is the SLA deadline for X?" were flattened to a generic status
@@ -5289,7 +5317,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     if any(w in msg for w in ["முன்னுரிமை", "முன்னதாய", "அவசர", "அவசரமான"]) and any(w in msg for w in ["உயர்ந்த", "அதிக", "இந்த வாரம்", "காட்டு", "பட்டியல்", "விண்ணப்பம்", "விண்ணப்பங்கள்"]):
         return "highest_priority_applications"
 
-    # ── High Priority & List Queries (overdue, pending, merge, subdivision, survey, field visits) ──
+    # ── High Priority & List Queries (overdue, pending, subdivision, survey, field visits) ──
     # MUST come before generic single-field interrogative checks (like application_status)
     _is_negated_overdue = any(w in msg for w in [
         "not overdue", "non overdue", "non-overdue", "on time", "not late",
@@ -5338,13 +5366,12 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
 
     _has_nisd_w  = bool(re.search(r'\b(nisd|nsid|nisdd|niisd|nidsd|ninsd|0153)\b', msg))
     _has_isd_w   = bool(re.search(r'\b(isd|0154)\b', msg))
-    _has_merge_w = _has_merge_token
     _has_list_or_app = (
         has(ta_application) or has(ta_show) or
         any(w in msg for w in ["show", "list", "display", "view", "get", "fetch", "all", "application", "applications", "applic", "no", "number", "காட்டு", "பட்டியல்"])
     )
 
-    if sum([_has_nisd_w, _has_isd_w, _has_merge_w]) >= 2:
+    if sum([_has_nisd_w, _has_isd_w]) >= 2:
         # "is 2026/0154/28/000001 nisd or isd?" is a question about ONE named
         # application, not a request for both type lists. app_scoped means the
         # number was stripped before this re-parse, so the reference is real.
@@ -5354,9 +5381,6 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         if app_scoped or _APP_BACKREF_RE.search(msg):
             return "is_nisd_or_isd"
         return "both_applications"
-
-    if _has_merge_w and _has_list_or_app:
-        return "merge_applications"
 
     if _has_nisd_w and _has_list_or_app:
         return "nisd_applications"
@@ -5391,7 +5415,12 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         r'\b(?:this|that|the)\s+(?:one|parcel|land|patta)\b'
         r'|\b(?:first|second|third|fourth|fifth|last)\s+one\b'
         r'|\b(?:on|for|against)\s+(?:it|this|that)\b'
-        r'|\bஇந்த\s+(?:நிலம்|புலம்)\b',
+        # "நிலம்"/"புலம்" (land/parcel) both end in a virama-marked consonant,
+        # not a `\w` character -- a trailing `\b` right after one is never a
+        # real boundary (the trap CLAUDE.md documents elsewhere), so this
+        # never matched anything folded into the same group as the English
+        # alternatives above. `_TA_NA` replaces it correctly.
+        rf'|\bஇந்த\s+(?:நிலம்|புலம்){_TA_NA}',
         msg, re.IGNORECASE))
     if _apply_question and _survey_ref:
         return "can_apply_check"
@@ -5403,8 +5432,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # A channel question about a NAMED application gets a direct answer; the
     # count/list forms below are untouched.
     _app_ref_for_channel = bool(re.search(
-        r'\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+'
-        r'|APP-\d{4}-\d{6}|(?:ISD|NISD|MERGE)/\w+/\d+/\d+', msg, re.IGNORECASE
+        r'\d{4}/(?:0153|0154)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154)/\d+'
+        r'|APP-\d{4}-\d{6}|(?:ISD|NISD)/\w+/\d+/\d+', msg, re.IGNORECASE
     )) or app_scoped or bool(re.search(
         # Token-bounded, and SINGULAR. These were plain substrings, so "the
         # application" matched inside "the applicationS": "what are the
@@ -5513,8 +5542,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # specific one is a per-file question.
     _generic_application = bool(re.search(r"\ban?\s+application\b", msg)) \
         and not bool(re.search(
-            r"\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+"
-            r"|APP-\d{4}-\d{6}|(?:ISD|NISD|MERGE)/\w+/\d+/\d+"
+            r"\d{4}/(?:0153|0154)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154)/\d+"
+            r"|APP-\d{4}-\d{6}|(?:ISD|NISD)/\w+/\d+/\d+"
             r"|\bthis\s+app(?:lication)?\b|\bthat\s+app(?:lication)?\b"
             r"|\bsame\s+application\b|\bthe\s+application\b", msg, re.IGNORECASE))
     if (_channel_question and _channel_why and not _channel_listing
@@ -5621,9 +5650,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # field lookup.
     if (has_exact(["applications", "application", "app", "apps", "applicants", "applic", "விண்ணப்பங்கள்", "விண்ணப்பங்களை", "விண்ணப்பம்", "விண்ணப்பத்தை", "ஆப்ளிகேஷன்"]) \
             or _case_file_word or "applic" in msg) and not _is_singular_app_ref:
-        if _has_merge_w:
-            return "merge_applications"
-        elif _has_nisd_w:
+        if _has_nisd_w:
             return "nisd_applications"
         elif _has_isd_w:
             return "isd_applications"
@@ -5925,7 +5952,11 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         r'\bwhat\s+happens\b|\bwhat\s+comes\b|\bnext\s+stage\b|\bnext\s+step\b'
         r'|\bwho\s+(?:approves|signs|verifies|issues|sanctions)\b'
         r'|\bhow\s+does\s+the\s+\w+\s+work\b|\bwhat\s+is\s+the\s+(?:process|procedure|workflow)\b'
-        r'|\bஎன்ன\s+நடக்கும்\b|\bஅடுத்த\s+கட்டம்\b',
+        # "நடக்கும்"/"கட்டம்" both end in a virama-marked consonant -- not a
+        # `\w` character, so the trailing `\b` here (the trap CLAUDE.md
+        # documents elsewhere) was never a real boundary and this half of the
+        # pattern never matched. `_TA_NA` replaces it correctly.
+        rf'|\bஎன்ன\s+நடக்கும்{_TA_NA}|\bஅடுத்த\s+கட்டம்{_TA_NA}',
         msg, re.IGNORECASE,
     )) and not _has_app_pattern
     if _is_process_question:
@@ -5962,7 +5993,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _list_quality = (any(w in msg for w in (
         "how many", "which", "count", "list", "show", "any of",
         "எத்தனை", "எந்த", "பட்டியல்"))
-        or _event_word or bool(re.search(r"\b(?:isd|nisd|merge|overdue|pending)\b", msg)))
+        or _event_word or bool(re.search(r"\b(?:isd|nisd|overdue|pending)\b", msg)))
     if _plural_backref and _list_quality:
         return "pending_applications"
 
@@ -6038,7 +6069,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             "நாள் ஆச்சு", "நாட்கள் ஆச்சு", "நிலுவை காலம்"
         ]) or (
             has(ta_pending) and (
-                bool(re.search(r'(\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+|APP-\d{4}-\d{6}|(ISD|NISD|MERGE)/\w+/\d+/\d+|20\d{2}/[\w]+/[\w]+/\d+)', msg, re.IGNORECASE)) or
+                bool(re.search(r'(\d{4}/(?:0153|0154)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154)/\d+|APP-\d{4}-\d{6}|(ISD|NISD)/\w+/\d+/\d+|20\d{2}/[\w]+/[\w]+/\d+)', msg, re.IGNORECASE)) or
                 bool(re.search(r'\b(this|that|prev|previous|same|last|it)\b', msg, re.IGNORECASE))
             ) and any(w in msg for w in ["how long", "how many", "duration", "days", "since", "எவ்வளவு", "எத்தனை", "நாள்", "நாட்கள்"])
         )
@@ -6140,8 +6171,16 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         "what", "என்ன", "difference", "வேறுபாடு", "mean", "stand for",
         "explain", "விளக்கம்", "define", "definition", "meaning"
     ])
+    # காட்டு/காண்பி/பட்டியல் each end in a dependent vowel sign or a virama,
+    # neither of which is `\w` -- folded into the same `\b(...)\b` group as
+    # the English verbs (the trap CLAUDE.md documents elsewhere), the closing
+    # `\b` was never a real boundary right after any of them, so none of the
+    # three ever matched and a Tamil listing request ("0153 பட்டியல் காட்டு")
+    # was read as a bare definition question instead. `_TA_NB`/`_TA_NA`
+    # replace the boundary correctly.
     _has_explicit_list_action = bool(re.search(
-        r'\b(show|list|display|view|fetch|get|give|count|how many|காட்டு|காண்பி|பட்டியல்)\b',
+        r'\b(show|list|display|view|fetch|get|give|count|how many)\b'
+        rf'|{_TA_NB}(?:காட்டு|காண்பி|பட்டியல்){_TA_NA}',
         msg, re.IGNORECASE
     ))
     # Word-boundary match required here: a plain substring test on "isd" also
@@ -6149,7 +6188,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # jurisdiction" was being misread as an ISD definition question and routed
     # to general_query instead of jurisdiction_summary.
     if _has_def_kw and not _has_explicit_list_action and re.search(
-        r'\b(?:0153|0154|service[ _]code|nisd|isd|merge)\b', msg, re.IGNORECASE
+        r'\b(?:0153|0154|service[ _]code|nisd|isd)\b', msg, re.IGNORECASE
     ):
         return "general_query"  # Force RAG retrieval for definition queries
 
@@ -6167,8 +6206,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         # Use word-boundary regex so "nisd", "0153", "isd", "0154" match accurately
         _has_nisd_word  = bool(re.search(r'\b(nisd|0153)\b', msg))
         _has_isd_word   = bool(re.search(r'\b(isd|0154)\b', msg))
-        _has_merge_word = _has_merge_token
-        _type_count = sum([_has_nisd_word, _has_isd_word, _has_merge_word])
+        _type_count = sum([_has_nisd_word, _has_isd_word])
         if _type_count >= 2:
             # Multiple types requested — combined intent
             return "both_applications"
@@ -6176,8 +6214,6 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
             return "nisd_applications"
         if _has_isd_word:
             return "isd_applications"
-        if _has_merge_word:
-            return "merge_applications"
 
     # Catch prefix-based service code count/list queries BEFORE general_query fallback.
     # e.g. "how many service code in 161", "list codes starting with 015", "service codes in 016"
@@ -6196,7 +6232,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
 
     # is_nisd_or_isd only fires for queries about a SPECIFIC application (e.g. "is 2026/0153/31/000001 nisd or isd?")
     # Guard: requires explicit application number pattern or application reference words
-    _has_app_ref = bool(re.search(r'(\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+|APP-\d{4}-\d{6}|(ISD|NISD|MERGE)/\w+/\d+/\d+)', msg, re.IGNORECASE)) or any(
+    _has_app_ref = bool(re.search(r'(\d{4}/(?:0153|0154)/\d{1,3}/\d+|\d{4}/\d{1,3}/(?:0153|0154)/\d+|APP-\d{4}-\d{6}|(ISD|NISD)/\w+/\d+/\d+)', msg, re.IGNORECASE)) or any(
         p in msg for p in ["this app", "that app", "this application", "that application", "same application", "the application"]
     )
     if bool(re.search(r'\bnisd\b', msg)) and bool(re.search(r'\bisd\b', msg)):
@@ -6288,7 +6324,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                                    "ஒப்பிடு", "அசல்", "ஒப்பீடு"]) and any(w in msg for w in ["area", "பரப்பளவு"]):
             return "isd_processing"
 
-    # 22. Specific survey number + keyword ← after merge/isd checks
+    # 22. Specific survey number + keyword ← after the isd checks
     if re.search(r'\b\d{1,4}(?:/\d{1,4}[A-Za-z]*)?\b', msg) and (
         has(ta_survey) or has(ta_area) or has(ta_subdivision)
     ):
@@ -6309,7 +6345,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         return "all_surveys_in_jurisdiction"
 
     # 27. Typed application lists — check FIRST, before the generic pending catch-all
-    # "display nisd", "show isd", "list merge" should return typed intents, not pending_applications
+    # "display nisd", "show isd" should return typed intents, not pending_applications
     _action_words = ["show", "list", "display", "view", "count", "how many",
                      "காட்டு", "காண்பி", "பட்டியல்", "எத்தனை"]
     _has_action = any(w in msg for w in _action_words)
@@ -6329,8 +6365,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                                                    "between", "what is", "what are", "tell me about",
                                                    "என்றால்", "என்ன", "எது"])
     
-    if not is_explanation_query and not has(ta_merge):
-        is_type_query   = any(w in msg for w in ["isd", "nisd", "merge", "type"]) or bool(re.search(r'\b0\d{3}\b', msg))
+    if not is_explanation_query:
+        is_type_query   = any(w in msg for w in ["isd", "nisd", "type"]) or bool(re.search(r'\b0\d{3}\b', msg))
         is_app_query    = has(ta_application)
         is_year_query   = bool(re.search(r'\b(20\d{2})\b', msg))  # Check for year like 2025, 2026
         is_month_query  = any(w in msg for w in ["january", "february", "march", "april", "may", "june",
@@ -6386,14 +6422,6 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     # 31. Subdivision detail
     if has(ta_subdivision):
         return "survey_detail"
-
-    # 32. MERGE — detail check BEFORE list check to avoid false matches
-    if has(ta_merge) and (has(ta_survey + ta_subdivision + ta_detail) or has(ta_area)):
-        return "merge_info"
-    if has(ta_merge) and has(ta_show + ta_application):
-        return "merge_applications"
-    if has(ta_merge):
-        return "merge_info"
 
     # 33. Rejection
     if fuzzy_match("reject") or any(w in msg for w in ["நிராகரிப்பு", "நிராகரிக்கப்பட்டது",
@@ -6815,7 +6843,7 @@ def extract_application_number(message: str) -> Optional[str]:
     cleaned = clean_message(message)
     # 1. Strict known-format match (known service codes)
     app_match = re.search(
-        r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
+        r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
         cleaned, re.IGNORECASE
     )
     if app_match:
@@ -6833,7 +6861,7 @@ def extract_application_numbers(message: str) -> List[str]:
     cleaned = clean_message(message)
     # Strict known-format matches first
     matches = re.findall(
-        r'\b\d{4}/(?:0153|0154|0155)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154|0155)/\d+\b|\b(?:ISD|NISD|MERGE)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
+        r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
         cleaned, re.IGNORECASE
     )
     # Broader fallback: any YYYY/A/B/NNNN not already captured
@@ -6869,10 +6897,20 @@ def extract_taluk_name(message: str) -> Optional[str]:
         if val.lower() not in ["code", "name", "no", "number", "details", "info", "level"]:
             return val
 
-    match = re.search(r'([A-Za-z\s]+?)\s+taluk\b', cleaned, re.IGNORECASE)
+    # Bounded to the 1-2 words directly before "taluk" -- the old
+    # `[A-Za-z\s]+?` captured everything back to the start of the message, so
+    # "show all application with taluk" read "Show all application with" as
+    # the taluk name and built a listing titled after it (rendering "No
+    # applications found" for a taluk that was never named).
+    match = re.search(r'\b((?:[A-Za-z]+\s+){0,1}[A-Za-z]+)\s+taluk\b', cleaned, re.IGNORECASE)
     if match:
         val = match.group(1).strip().capitalize()
-        if val.lower() not in ["code", "name", "no", "number", "details", "info", "level"]:
+        _stopwords = {"code", "name", "no", "number", "details", "info", "level",
+                      "with", "all", "the", "show", "list", "give", "display",
+                      "get", "find", "any", "some", "this", "that", "my",
+                      "application", "applications", "an", "a", "of", "in", "for"}
+        last_word = val.lower().split()[-1] if val else ""
+        if val.lower() not in _stopwords and last_word not in _stopwords:
             return val
 
     return None

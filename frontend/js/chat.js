@@ -334,7 +334,7 @@ function renderWelcomeMessage() {
     const welcomeMessage = `வணக்கம்! I'm your SIS AI Assistant. I can help you with:
 
 • Survey numbers and sub-divisions
-• ISD, NISD, and Merge applications
+• ISD and NISD applications
 • Field visit scheduling
 • Application status tracking
 • Workflow questions
@@ -1088,7 +1088,7 @@ function formatBotMessage(text) {
     
     // Application number chips: ISD/…/…/…
     formatted = formatted.replace(
-        /\b((?:ISD|NISD|MERGE)\/\w+\/\d+\/\d+)\b/gi,
+        /\b((?:ISD|NISD)\/\w+\/\d+\/\d+)\b/gi,
         '<span class="suggestion-chip" data-app="$1" onclick="handleAppChipClick(this)" ' +
         'style="cursor:pointer;display:inline-block;margin:2px;">$1</span>'
     );
@@ -1524,13 +1524,13 @@ const BACK_REFERENCE_RE = new RegExp(
 /**
  * True when the message leans on the conversation instead of standing alone —
  * either an explicit back-reference ("what is its status") or a bare fragment
- * that only makes sense as a follow-up filter ("in merge", "only pending").
+ * that only makes sense as a follow-up filter ("only isd", "only pending").
  */
 function messageNeedsPriorContext(text) {
     const msg = (text || '').trim();
     if (!msg) return false;
     if (BACK_REFERENCE_RE.test(msg)) return true;
-    // A bare fragment like "in merge" / "only pending" is a follow-up filter on
+    // A bare fragment like "only isd" / "only pending" is a follow-up filter on
     // the previous answer. A short *question or command* ("show pending",
     // "list isd apps") stands on its own, so it is not one.
     const words = msg.split(/\s+/);

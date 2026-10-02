@@ -11,8 +11,8 @@ to the officer's assigned jurisdiction.
 
 === APPLICATION TABLES ===
 
-applications stores application_number, application_type (ISD, NISD, or
-MERGE), current_status, survey_number_id, applicant details, dates, and the
+applications stores application_number, application_type (ISD or
+NISD), current_status, survey_number_id, applicant details, dates, and the
 current workflow state. application_documents holds document type, document
 status and document metadata. application_sub_divisions holds proposed or
 created parcel divisions.

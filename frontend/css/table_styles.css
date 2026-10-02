@@ -168,6 +168,11 @@
 .status-sd { background: #EFF6FF; color: #1D4ED8; }
 .status-dis { background: #F5F3FF; color: #5B21B6; }
 .status-tahsildar { background: #FFF7ED; color: #9A3412; }
+.status-in-progress { background: #DBEAFE; color: #1E40AF; }
+.status-escalated { background: #FFEDD5; color: #9A3412; font-weight: 600; }
+.status-unscheduled { background: #F3F4F6; color: #6B7280; }
+.status-rescheduled { background: #EDE9FE; color: #5B21B6; }
+.status-cancelled { background: #F3F4F6; color: #6B7280; }
 
 /* --- PAGINATION --- */
 .data-table-footer {

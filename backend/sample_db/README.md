@@ -89,7 +89,7 @@ an earlier row of the same file, else from the survey: a big split is filed as
 several applications sharing one temporary series (survey 35's `2A/T1`..`2A/T8`
 is five files) and only the first of them carries the parent's patta.
 
-Only service codes `0153` (NISD), `0154` (ISD) and `0155` (MERGE) become
+Only service codes `0153` (NISD) and `0154` (ISD) become
 `applications` — the model's `ck_application_type` admits no others, so
 settlement and govt-to-private rows (`0167`, `0169`, …) stay in the CSV-shaped
 tables only.
@@ -125,7 +125,7 @@ CSV file → table name (the `_demo` suffix is dropped, names tightened):
 `application_workflow_demo` is a district-wide dump: most of its 288087 rows
 belong to settlement service codes (`0167` / `0169`, …) that never become an
 application. Only 4694 rows name an `application_id` that `appl_log_urban_demo`
-also carries, and 982 of those belong to the `0153` / `0154` / `0155` codes the
+also carries, and 982 of those belong to the `0153` / `0154` codes the
 chatbot works with.
 
 Each table gets a `row_id BIGSERIAL PRIMARY KEY` on top of the CSV columns —

@@ -2,7 +2,7 @@
 Production-Grade Deterministic Token & Typo Matching Utility
 
 Used STRICTLY for:
-- Deterministic identifiers (e.g. ISD, NISD, MERGE)
+- Deterministic identifiers (e.g. ISD, NISD)
 - Form fields & exact filter codes
 - Month extraction & date tokens
 - Token-level spelling typo correction (Damerau-Levenshtein / OSA distance)
@@ -378,7 +378,7 @@ def resolve_unique_match(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Deterministic identifier codes (ISD / NISD / MERGE …)
+# Deterministic identifier codes (ISD / NISD …)
 # ─────────────────────────────────────────────────────────────────────────────
 def _confusable_keys(code_map: Dict[str, str]) -> frozenset:
     """
@@ -406,7 +406,7 @@ def match_deterministic_code(text: Any, code_map: Dict[str, str]) -> Optional[st
     Args:
         text: User query string
         code_map: Dictionary mapping variations/lowercase tokens to normalized code string.
-                 e.g. {"isd": "ISD", "nisd": "NISD", "merge": "MERGE"}
+                 e.g. {"isd": "ISD", "nisd": "NISD"}
 
     Returns:
         The matched code string, or None when nothing matches confidently.
@@ -479,7 +479,7 @@ _DOMAIN_STOPWORDS = frozenset({
     "app", "appl", "apps", "application", "applications", "applicant", "applicants",
     "survey", "surveys", "subdivision", "subdivisions", "block", "blocks",
     "ward", "wards", "town", "towns", "taluk", "taluks", "district", "districts",
-    "merge", "merged", "merging", "isd", "nisd", "status", "pending", "approved",
+    "isd", "nisd", "status", "pending", "approved",
     "rejected", "escalated", "owner", "owners", "detail", "details",
 })
 

@@ -20,7 +20,7 @@ from backend.models import (
     Application, SISOfficer, SurveyNumber, SubDivision,
     Owner, SurveyOwnership, FieldVisit, WorkflowHistory,
     ApplicationSubDivision, Block, Ward, Town, Taluk, District,
-    OfficerJurisdiction, PattaTransfer, Applicant
+    OfficerJurisdiction, PattaTransfer, Applicant, ServiceRegisterEntry
 )
 from backend.schemas import OfficerContext
 from backend.utils.logger import get_logger
@@ -134,6 +134,102 @@ async def get_jurisdiction_filter(db: AsyncSession, officer: OfficerContext):
     except Exception as e:
         logger.error(f"Error building jurisdiction filter: {e}")
         return []
+
+
+async def get_all_service_code_applications(db: AsyncSession, officer: OfficerContext,
+                                            service_code: Optional[str] = None,
+                                            submission_channel: Optional[str] = None,
+                                            status: Optional[Any] = None) -> Dict[str, Any]:
+    """Every application across every TAMILNILAM service code in the officer's
+    wards -- not just the ISD/NISD ones `Application` tracks in full.
+
+    "Show all applications" answered from `get_officer_applications()` alone
+    means "all of my ISD/NISD patta transfers", because that is the only
+    service this register runs a workflow for (`ck_application_type` admits
+    nothing else). An officer asking across every service code (0158
+    Modification, 0159 Addition, 0178 F-Line, ...) was getting that same
+    narrower answer with no indication anything was left out. This reads the
+    flat `service_register_entries` table instead: no workflow stage, no
+    field-visit tracking, no applicant detail -- just application number,
+    service code (with its official name), a coarse status, and the
+    submission date. An ISD/NISD row appears here too, so this is a superset
+    of the officer's own patta-transfer queue, not a separate list.
+    """
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    try:
+        if not officer or not officer.jurisdiction_ids:
+            return {"count": 0, "applications": [], "query_type": "All Service Code Applications",
+                    "error": "Invalid officer context"}
+
+        _where = [ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids)]
+        if service_code:
+            _where.append(ServiceRegisterEntry.service_code == service_code)
+        if submission_channel:
+            _where.append(ServiceRegisterEntry.submission_channel == submission_channel)
+        if status:
+            # This table's status is coarse (approved/pending/rejected only --
+            # no in_progress/escalated split), unlike Application's state machine.
+            _where.append(ServiceRegisterEntry.status.in_(status) if isinstance(status, list)
+                           else ServiceRegisterEntry.status == status)
+        result = await db.execute(
+            select(ServiceRegisterEntry)
+            .options(selectinload(ServiceRegisterEntry.ward),
+                     selectinload(ServiceRegisterEntry.block))
+            .where(and_(*_where))
+            .order_by(ServiceRegisterEntry.submission_date.asc(),
+                      ServiceRegisterEntry.application_number.asc())
+        )
+        rows = result.scalars().all()
+
+        apps = []
+        by_service: Dict[str, int] = {}
+        by_channel: Dict[str, int] = {}
+        for r in rows:
+            info = SIS_URBAN_SERVICES.get(r.service_code, {})
+            apps.append({
+                "application_number": r.application_number,
+                "service_code": r.service_code,
+                "service_name": info.get("name", "Unknown service"),
+                "survey_no": r.survey_no,
+                "subdivision_no": r.subdivision_no,
+                "status": r.status,
+                "stage": r.stage,
+                "submission_channel": r.submission_channel,
+                "submission_date": r.submission_date.isoformat() if r.submission_date else None,
+                "ward_number": r.ward.ward_number if r.ward else "N/A",
+                "ward_name": (r.ward.ward_name if r.ward else None) or "N/A",
+                "block_number": r.block.block_number if r.block else "N/A",
+                "block_name": (r.block.block_name if r.block else None) or "N/A",
+            })
+            by_service[r.service_code] = by_service.get(r.service_code, 0) + 1
+            if r.submission_channel:
+                by_channel[r.submission_channel] = by_channel.get(r.submission_channel, 0) + 1
+
+        _svc_name = SIS_URBAN_SERVICES.get(service_code, {}).get("name") if service_code else None
+        _chan_label = {"CSC": "CSC", "citizen": "citizen portal", "sub_registrar": "Sub-Registrar"}
+        _chan_name = _chan_label.get(submission_channel, submission_channel) if submission_channel else None
+        _qtype = (f"{service_code} {_svc_name} Applications" if _svc_name
+                  else f"{_chan_name} Applications" if _chan_name
+                  else "All Service Code Applications")
+        _empty_what = _svc_name or service_code or _chan_name
+        return {
+            "count": len(apps),
+            "applications": apps,
+            "by_service_code": by_service,
+            "by_channel": by_channel,
+            "query_type": _qtype,
+            "service_code_filter": service_code,
+            "channel_filter": submission_channel,
+            "status_filter": status,
+            "empty_note": (None if apps else (
+                f"No {_empty_what} applications found in your jurisdiction."
+                if _empty_what else
+                "No applications of any service code found in your jurisdiction.")),
+        }
+    except Exception as e:
+        logger.error(f"Error in get_all_service_code_applications: {e}")
+        return {"count": 0, "applications": [], "query_type": "All Service Code Applications",
+                "error": str(e)}
 
 
 def split_survey_reference(value: Optional[str]) -> Tuple[str, Optional[str]]:
@@ -499,86 +595,37 @@ async def get_officer_applications(
             base_survey_no = sn.survey_no if sn else "N/A"
             subdivisions_str = format_survey_with_subdivisions(base_survey_no, subdiv_list)
 
-            # Build merge-specific fields if this is a MERGE application
-            if app.application_type == "MERGE":
-                subdivisions_being_merged = []
-                total_area = 0.0
-                for assoc in app.application_sub_divisions:
-                    sd = assoc.sub_division
-                    if sd:
-                        raw_area = assoc.proposed_area_sqm or sd.area_sqm
-                        area = float(raw_area) if raw_area else None
-                        if area:
-                            total_area += area
-                        subdivisions_being_merged.append({
-                            "sub_division_no": sd.sub_division_no,
-                            "area_sqm": area
-                        })
-                
-                app_rows.append({
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
-                    "last_updated_date": last_updated_date,
-                    "is_overdue": app.is_overdue,
-                    "submission_channel": app.submission_channel,
-                    # Carried so a listing that shows a CAN or IGRS column has
-                    # something to put in it. Without these the renderer read
-                    # a key that was never set and printed "N/A" for every
-                    # row -- a false statement about data that is on record,
-                    # which is worse than leaving the column out.
-                    "can_number": app.can_number,
-                    "igrs_form6_number": app.igrs_form6_number,
-                    "survey_no": base_survey_no,
-                    "raw_survey_no": base_survey_no,
-                    "subdivisions": subdivisions_str,
-                    "sub_division_no": subdivisions_str,
-                    "subdivisions_being_merged": subdivisions_being_merged,
-                    "total_merge_area_sqm": total_area if total_area > 0 else None,
-                    "district_name": jur_dict["district"],
-                    "taluk_name":    jur_dict["taluk"],
-                    "town_name":     jur_dict["town"],
-                    "ward_number":   ward.ward_number if ward else "N/A",
-                    "block_number":  block.block_number if block else "N/A",
-                    "jurisdiction": jur_dict,
-                    "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_mobile": applicant.mobile if applicant else "N/A",
-                    "applicant_address": applicant.address if applicant else "N/A"
-                })
-            else:
-                app_rows.append({
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
-                    "last_updated_date": last_updated_date,
-                    "is_overdue": app.is_overdue,
-                    "submission_channel": app.submission_channel,
-                    # Carried so a listing that shows a CAN or IGRS column has
-                    # something to put in it. Without these the renderer read
-                    # a key that was never set and printed "N/A" for every
-                    # row -- a false statement about data that is on record,
-                    # which is worse than leaving the column out.
-                    "can_number": app.can_number,
-                    "igrs_form6_number": app.igrs_form6_number,
-                    "survey_no": base_survey_no,
-                    "raw_survey_no": base_survey_no,
-                    "subdivisions": subdivisions_str,
-                    "sub_division_no": subdivisions_str,
-                    "district_name": jur_dict["district"],
-                    "taluk_name":    jur_dict["taluk"],
-                    "town_name":     jur_dict["town"],
-                    "ward_number":   ward.ward_number if ward else "N/A",
-                    "block_number":  block.block_number if block else "N/A",
-                    "jurisdiction": jur_dict,
-                    "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_mobile": applicant.mobile if applicant else "N/A",
-                    "applicant_address": applicant.address if applicant else "N/A",
-                    "included_subdivisions": ", ".join(subdiv_list) or "None"
-                })
+            app_rows.append({
+                "application_number": app.application_number,
+                "type": app.application_type,
+                "status": app.current_status,
+                "stage": app.current_stage,
+                "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                "last_updated_date": last_updated_date,
+                "is_overdue": app.is_overdue,
+                "submission_channel": app.submission_channel,
+                # Carried so a listing that shows a CAN or IGRS column has
+                # something to put in it. Without these the renderer read
+                # a key that was never set and printed "N/A" for every
+                # row -- a false statement about data that is on record,
+                # which is worse than leaving the column out.
+                "can_number": app.can_number,
+                "igrs_form6_number": app.igrs_form6_number,
+                "survey_no": base_survey_no,
+                "raw_survey_no": base_survey_no,
+                "subdivisions": subdivisions_str,
+                "sub_division_no": subdivisions_str,
+                "district_name": jur_dict["district"],
+                "taluk_name":    jur_dict["taluk"],
+                "town_name":     jur_dict["town"],
+                "ward_number":   ward.ward_number if ward else "N/A",
+                "block_number":  block.block_number if block else "N/A",
+                "jurisdiction": jur_dict,
+                "applicant_name": applicant.name if applicant else "N/A",
+                "applicant_mobile": applicant.mobile if applicant else "N/A",
+                "applicant_address": applicant.address if applicant else "N/A",
+                "included_subdivisions": ", ".join(subdiv_list) or "None"
+            })
         
         # Optional geography post-filtering
         if taluk_name:
@@ -1044,7 +1091,7 @@ async def get_overdue_applications(
         
         if application_type:
             if application_type == "ISD":
-                query = query.where(Application.application_type.in_(["ISD", "MERGE"]))
+                query = query.where(Application.application_type.in_(["ISD"]))
             else:
                 query = query.where(Application.application_type == application_type)
         if start_date:
@@ -1085,69 +1132,29 @@ async def get_overdue_applications(
             base_survey_no = sn.survey_no if sn else "N/A"
             subdivisions_str = format_survey_with_subdivisions(base_survey_no, subdiv_list)
 
-            if app.application_type == "MERGE":
-                subdivisions_being_merged = []
-                total_area = 0.0
-                for assoc in app.application_sub_divisions:
-                    sd = assoc.sub_division
-                    if sd:
-                        raw_area = assoc.proposed_area_sqm or sd.area_sqm
-                        area = float(raw_area) if raw_area else None
-                        if area:
-                            total_area += area
-                        subdivisions_being_merged.append({
-                            "sub_division_no": sd.sub_division_no,
-                            "area_sqm": area
-                        })
-
-                app_rows.append({
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
-                    "days_overdue": calc_days_overdue,
-                    "is_overdue": True,
-                    "survey_no": base_survey_no,
-                    "raw_survey_no": base_survey_no,
-                    "subdivisions": subdivisions_str,
-                    "sub_division_no": subdivisions_str,
-                    "subdivisions_being_merged": subdivisions_being_merged,
-                    "total_merge_area_sqm": total_area if total_area > 0 else None,
-                    "district_name": jur_dict["district"],
-                    "taluk_name":    jur_dict["taluk"],
-                    "town_name":     jur_dict["town"],
-                    "ward_number":   ward.ward_number if ward else "N/A",
-                    "block_number":  block.block_number if block else "N/A",
-                    "jurisdiction": jur_dict,
-                    "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_mobile": applicant.mobile if applicant else "N/A",
-                    "applicant_address": applicant.address if applicant else "N/A"
-                })
-            else:
-                app_rows.append({
-                    "application_number": app.application_number,
-                    "type": app.application_type,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat() if app.submission_date else None,
-                    "days_overdue": calc_days_overdue,
-                    "is_overdue": True,
-                    "survey_no": base_survey_no,
-                    "raw_survey_no": base_survey_no,
-                    "subdivisions": subdivisions_str,
-                    "sub_division_no": subdivisions_str,
-                    "district_name": jur_dict["district"],
-                    "taluk_name":    jur_dict["taluk"],
-                    "town_name":     jur_dict["town"],
-                    "ward_number":   ward.ward_number if ward else "N/A",
-                    "block_number":  block.block_number if block else "N/A",
-                    "jurisdiction": jur_dict,
-                    "applicant_name": applicant.name if applicant else "N/A",
-                    "applicant_mobile": applicant.mobile if applicant else "N/A",
-                    "applicant_address": applicant.address if applicant else "N/A",
-                    "included_subdivisions": ", ".join(subdiv_list) or "None"
-                })
+            app_rows.append({
+                "application_number": app.application_number,
+                "type": app.application_type,
+                "status": app.current_status,
+                "stage": app.current_stage,
+                "submission_date": app.submission_date.isoformat() if app.submission_date else None,
+                "days_overdue": calc_days_overdue,
+                "is_overdue": True,
+                "survey_no": base_survey_no,
+                "raw_survey_no": base_survey_no,
+                "subdivisions": subdivisions_str,
+                "sub_division_no": subdivisions_str,
+                "district_name": jur_dict["district"],
+                "taluk_name":    jur_dict["taluk"],
+                "town_name":     jur_dict["town"],
+                "ward_number":   ward.ward_number if ward else "N/A",
+                "block_number":  block.block_number if block else "N/A",
+                "jurisdiction": jur_dict,
+                "applicant_name": applicant.name if applicant else "N/A",
+                "applicant_mobile": applicant.mobile if applicant else "N/A",
+                "applicant_address": applicant.address if applicant else "N/A",
+                "included_subdivisions": ", ".join(subdiv_list) or "None"
+            })
 
         # Geography narrowing, matched the same loose way as the listing
         # queries so "block 15" finds block "0015".
@@ -1217,7 +1224,7 @@ async def get_highest_priority_applications(
         
         if application_type:
             if application_type == "ISD":
-                query = query.where(Application.application_type.in_(["ISD", "MERGE"]))
+                query = query.where(Application.application_type.in_(["ISD"]))
             else:
                 query = query.where(Application.application_type == application_type)
             
@@ -1274,7 +1281,7 @@ async def get_officer_workload(
         jurisdiction_filters = await get_jurisdiction_filter(db, officer)
         
         if not jurisdiction_filters:
-            return {"total_active": 0, "ISD": 0, "NISD": 0, "MERGE": 0, "overdue": 0, "message": "No jurisdiction assigned"}
+            return {"total_active": 0, "ISD": 0, "NISD": 0, "overdue": 0, "message": "No jurisdiction assigned"}
         
         # Get the officer's stage
         officer_stage = officer.officer_stage
@@ -1318,15 +1325,6 @@ async def get_officer_workload(
             )
         )
         
-        merge_count = await db.execute(
-            base_query.where(
-                and_(
-                    Application.application_type == "MERGE",
-                    Application.current_status.in_(ACTIVE_STATUSES)
-                )
-            )
-        )
-        
         overdue_count = await db.execute(
             base_query.where(
                 and_(
@@ -1348,15 +1346,13 @@ async def get_officer_workload(
         
         isd_val = isd_count.scalar() or 0
         nisd_val = nisd_count.scalar() or 0
-        merge_val = merge_count.scalar() or 0
         overdue_val = overdue_count.scalar() or 0
         unscheduled_val = unscheduled_count.scalar() or 0
         
         return {
-            "total_active": isd_val + nisd_val + merge_val,
+            "total_active": isd_val + nisd_val,
             "ISD": isd_val,
             "NISD": nisd_val,
-            "MERGE": merge_val,
             "overdue": overdue_val,
             "unscheduled_visits": unscheduled_val
         }
@@ -1744,23 +1740,6 @@ async def get_application_detail(
             if areas:
                 proposed_total_area = sum(areas)
 
-        # MERGE: build subdivisions_being_merged list
-        subdivisions_being_merged = []
-        total_merge_area = 0.0
-        if app.application_type == "MERGE" and app.application_sub_divisions:
-            for app_subdiv in app.application_sub_divisions:
-                if app_subdiv.sub_division:
-                    area = float(app_subdiv.sub_division.area_sqm) if app_subdiv.sub_division.area_sqm else None
-                    subdivisions_being_merged.append({
-                        "sub_division_no": app_subdiv.sub_division.sub_division_no,
-                        "area_sqm": area,
-                        "proposed_sub_division_no": app_subdiv.proposed_sub_division_no,
-                        "temporary_sub_division_no": app_subdiv.temporary_sub_division_no,
-                        "status": app_subdiv.status
-                    })
-                    if area:
-                        total_merge_area += area
-
         # Field visit: most recent entry from FieldVisit table
         # "Last updated" for an application = the timestamp of its most recent
         # workflow hop (build_app_tables.py stamps updated_at once at build time,
@@ -1872,9 +1851,6 @@ async def get_application_detail(
             "included_subdivisions": ", ".join(sub_divisions_list) if sub_divisions_list else None,
             "proposed_sub_divisions": proposed_sub_divisions,
             "proposed_sub_divisions_count": len(proposed_sub_divisions),
-            # MERGE-specific
-            "subdivisions_being_merged": subdivisions_being_merged,
-            "total_merge_area_sqm": total_merge_area if subdivisions_being_merged else None,
             # Patta transfers
             "patta_transfers_count": len(patta_transfers),
             "patta_transfers": [
@@ -1934,7 +1910,7 @@ async def get_application_detail(
             # not on the application row. Answers "what is the land type of X".
             "land_type": (app.survey_number.land_type
                           if app.survey_number and app.survey_number.land_type else None),
-            "subdivision_number": ", ".join(sub_divisions_list) if sub_divisions_list else (subdivisions_being_merged[0]["sub_division_no"] if (subdivisions_being_merged and isinstance(subdivisions_being_merged[0], dict)) else None),
+            "subdivision_number": ", ".join(sub_divisions_list) if sub_divisions_list else None,
             "current_subdivision_number": (proposed_sub_divisions[0]["proposed_sub_division_no"] if (proposed_sub_divisions and isinstance(proposed_sub_divisions[0], dict)) else (sub_divisions_list[0] if sub_divisions_list else None)),
             "temporary_subdivision_number": ", ".join(
                 s["temporary_sub_division_no"] for s in proposed_sub_divisions
@@ -1961,7 +1937,7 @@ async def get_application_detail(
                 f"{app.assigned_officer.employee_id}) — currently at the "
                 f"{app.current_stage or 'SIS'} desk"
                 if app.assigned_officer else None),
-            "service_code": app.application_number.split('/')[1] if '/' in app.application_number else ("0154" if app.application_type == "ISD" else ("0153" if app.application_type == "NISD" else "0155")),
+            "service_code": app.application_number.split('/')[1] if '/' in app.application_number else ("0154" if app.application_type == "ISD" else "0153"),
             "district_code": district.district_code if (district and hasattr(district, 'district_code') and district.district_code) else (app.application_number.split('/')[2] if '/' in app.application_number else None),
             "taluk_code": taluk.taluk_code if (taluk and hasattr(taluk, 'taluk_code') and taluk.taluk_code) else None,
             # Urban jurisdiction: the extracts carry a town/urban-unit code, not a village code.
@@ -1989,7 +1965,7 @@ async def get_application_detail(
             "source_name": "Common Service Center (CSC)" if app.submission_channel == "CSC" else ("Citizen Portal" if app.submission_channel == "citizen" else ("Sub Registrar Office (IGRS)" if app.submission_channel == "sub_registrar" else None)),
             "survey_total_area_sqm": survey_total_area,
             "proposed_total_area_sqm": proposed_total_area,
-            "area_sqm": total_merge_area if total_merge_area else (proposed_total_area if proposed_total_area else survey_total_area),
+            "area_sqm": proposed_total_area if proposed_total_area else survey_total_area,
             "area_match": abs(survey_total_area - proposed_total_area) < 1.0 if (survey_total_area and proposed_total_area) else None,
             # Application details
             "declared_reason": app.declared_reason,
@@ -2303,7 +2279,7 @@ async def get_unscheduled_visits(
         ).where(
             and_(
                 or_(*jurisdiction_filters),
-                Application.application_type.in_(["ISD", "MERGE"]),
+                Application.application_type.in_(["ISD"]),
                 Application.field_visit_scheduled == False,
                 # No current_stage pin — the jurisdiction filter already scopes
                 # the result. The stage pin caused 0 results whenever ISD files
@@ -2756,199 +2732,6 @@ async def get_ward_surveys(
         return {"found": False, "error": str(e)}
 
 
-
-async def get_merge_application_detail(
-    db: AsyncSession,
-    application_number: str = None,
-    officer: OfficerContext = None
-) -> Dict[str, Any]:
-    """
-    Get detailed information about merge applications including survey numbers and areas.
-    If application_number is not provided, returns all active merge applications in officer's jurisdiction.
-    
-    Args:
-        db: Database session
-        application_number: Optional specific merge application number
-        officer: Officer context for jurisdiction validation
-        
-    Returns:
-        Dictionary with merge application details including survey areas
-    """
-    try:
-        # Base query for merge applications
-        query = select(
-            Application,
-            SurveyNumber,
-            Block,
-            Ward,
-            Town,
-            Taluk,
-            District
-        ).join(
-            SurveyNumber, Application.survey_number_id == SurveyNumber.id
-        ).join(
-            Block, SurveyNumber.block_id == Block.id
-        ).join(
-            Ward, Block.ward_id == Ward.id
-        ).join(
-            Town, Ward.town_id == Town.id
-        ).join(
-            Taluk, Town.taluk_id == Taluk.id
-        ).join(
-            District, Taluk.district_id == District.id
-        ).where(
-            Application.application_type == "MERGE"
-        )
-        
-        # Filter by specific application number if provided
-        if application_number:
-            query = query.where(Application.application_number == application_number)
-        
-        # If officer provided, verify jurisdiction access
-        if officer:
-            jurisdiction_filters = await get_jurisdiction_filter(db, officer)
-            if jurisdiction_filters:
-                query = query.where(or_(*jurisdiction_filters))
-            
-            # Also filter by active status if not searching specific application
-            if not application_number:
-                query = query.where(
-                    Application.current_status.in_(ACTIVE_STATUSES)
-                )
-        
-        result = await db.execute(query)
-        rows = result.all()
-        
-        if not rows:
-            message = f"No merge applications found"
-            if application_number:
-                # "not found or not accessible" reads like a wrong number or a
-                # jurisdiction refusal -- misleading for the far more common
-                # case of a real, visible application that simply isn't a
-                # MERGE (0155) one. A second, unfiltered-by-type lookup (still
-                # jurisdiction-scoped) tells the two apart so the officer is
-                # told what the file actually is instead of a dead end.
-                other_query = select(Application.application_type).where(
-                    Application.application_number == application_number)
-                if officer:
-                    jurisdiction_filters = await get_jurisdiction_filter(db, officer)
-                    if jurisdiction_filters:
-                        other_query = other_query.where(or_(*jurisdiction_filters))
-                other_type = (await db.execute(other_query)).scalar_one_or_none()
-                if other_type:
-                    message = (f"Application {application_number} is {other_type}, "
-                              f"not a MERGE (0155) application.")
-                else:
-                    message = f"Merge application {application_number} not found or not accessible"
-            return {"found": False, "count": 0, "applications": [], "message": message}
-        
-        # Collect survey IDs and application sub-divisions
-        survey_ids = set()
-        app_subdiv_map = {}
-        
-        for app, survey, _, _, _, _, _ in rows:
-            survey_ids.add(survey.id)
-            if app.id not in app_subdiv_map:
-                app_subdiv_map[app.id] = {
-                    "app": app,
-                    "survey": survey,
-                    "subdivisions": []
-                }
-        
-        # Get all sub-divisions involved in these merge applications
-        logger.info(f"=== MERGE SUBDIVISION DEBUG ===")
-        logger.info(f"Looking for subdivisions for {len(app_subdiv_map)} application(s)")
-        logger.info(f"Application IDs: {list(app_subdiv_map.keys())}")
-        
-        # First check if ApplicationSubDivision records exist at all
-        check_query = select(ApplicationSubDivision).where(
-            ApplicationSubDivision.application_id.in_(app_subdiv_map.keys())
-        )
-        check_result = await db.execute(check_query)
-        check_app_subdivs = check_result.scalars().all()
-        logger.info(f"Found {len(check_app_subdivs)} ApplicationSubDivision records (before join)")
-        
-        for asd in check_app_subdivs:
-            logger.info(f"  ApplicationSubDivision: app_id={asd.application_id}, subdiv_id={asd.sub_division_id}")
-        
-        # Now try the join query
-        subdiv_query = select(
-            ApplicationSubDivision,
-            SubDivision
-        ).join(
-            SubDivision, ApplicationSubDivision.sub_division_id == SubDivision.id
-        ).where(
-            ApplicationSubDivision.application_id.in_(app_subdiv_map.keys())
-        )
-        
-        subdiv_result = await db.execute(subdiv_query)
-        app_subdivisions = subdiv_result.all()
-        
-        logger.info(f"Found {len(app_subdivisions)} ApplicationSubDivision records (after join)")
-        
-        # Map subdivisions to applications
-        for app_subdiv, subdiv in app_subdivisions:
-            logger.info(f"  App {app_subdiv.application_id} -> Subdiv {subdiv.sub_division_no} ({subdiv.area_sqm} sq.m)")
-            if app_subdiv.application_id in app_subdiv_map:
-                area = float(subdiv.area_sqm) if subdiv.area_sqm else None
-                app_subdiv_map[app_subdiv.application_id]["subdivisions"].append({
-                    "sub_division_no": subdiv.sub_division_no,
-                    "area_sqm": area,
-                    "proposed_sub_division_no": app_subdiv.proposed_sub_division_no,
-                    "temporary_sub_division_no": app_subdiv.temporary_sub_division_no,
-                    "status": app_subdiv.status
-                })
-        
-        # Log final counts
-        for app_id, data in app_subdiv_map.items():
-            logger.info(f"Application {data['app'].application_number}: {len(data['subdivisions'])} subdivisions")
-        
-        # Build response
-        applications = []
-        for app_data in app_subdiv_map.values():
-            app = app_data["app"]
-            survey = app_data["survey"]
-            subdivisions = app_data["subdivisions"]
-            
-            # Get jurisdiction for this application
-            app_row = next((row for row in rows if row[0].id == app.id), None)
-            if app_row:
-                _, _, block, ward, town, taluk, district = app_row
-                
-                total_area = sum(sd["area_sqm"] for sd in subdivisions if sd.get("area_sqm"))
-                
-                applications.append({
-                    "application_number": app.application_number,
-                    "status": app.current_status,
-                    "stage": app.current_stage,
-                    "submission_date": app.submission_date.isoformat(),
-                    "survey_no": survey.survey_no,
-                    "survey_total_area_sqm": float(survey.total_area_sqm),
-                    "subdivisions_being_merged": subdivisions,
-                    "subdivision_count": len(subdivisions),
-                    "total_merge_area_sqm": total_area,
-                    "jurisdiction": {
-                        "district": district.name,
-                        "taluk": taluk.name,
-                        "town": town.name,
-                        "ward": ward.ward_name or f"Ward {ward.ward_number}",
-                        "block": block.block_name or f"Block {block.block_number}"
-                    },
-                    "field_visit_scheduled": app.field_visit_scheduled,
-                    "field_visit_date": app.field_visit_date.isoformat() if app.field_visit_date else None,
-                    "is_overdue": app.is_overdue
-                })
-        
-        return {
-            "found": True,
-            "count": len(applications),
-            "applications": applications,
-            "query_type": "Merge Application Details"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting merge application detail: {e}", exc_info=True)
-        return {"found": False, "count": 0, "applications": [], "error": str(e)}
 
 
 async def get_all_surveys_in_jurisdiction(
@@ -3768,8 +3551,8 @@ async def get_applications_by_numbers(
                 "payment_mode": app.payment_mode,
                 "survey_no": base_survey_no,
                 "raw_survey_no": base_survey_no,
-                "subdivisions": ", ".join(subdiv_list) or "None",
-                "sub_division_no": ", ".join(subdiv_list) or "None",
+                "subdivisions": ", ".join(subdiv_list) or "-",
+                "sub_division_no": ", ".join(subdiv_list) or "-",
                 "district_name": (district.name if district else None) or _district_name_from_app_number(app.application_number) or "N/A",
                 "taluk_name":    taluk.name if taluk else "N/A",
                 "town_name":     town.name  if town  else "N/A",
@@ -3778,7 +3561,7 @@ async def get_applications_by_numbers(
                 "applicant_name": applicant.name if applicant else "N/A",
                 "applicant_mobile": applicant.mobile if applicant else "N/A",
                 "applicant_address": applicant.address if applicant else "N/A",
-                "included_subdivisions": ", ".join(subdiv_list) or "None",
+                "included_subdivisions": ", ".join(subdiv_list) or "-",
             })
             _dec_ts = _decided.get(app.id)
             app_rows[-1]["decision_date"] = (
@@ -3852,7 +3635,7 @@ async def get_last_application(
     falling back to its submission date when it carries no workflow rows.
 
     `status` ("approved" / "rejected" / ...) and `application_type`
-    ("ISD" / "NISD" / "MERGE") narrow the search; with neither, the single most
+    ("ISD" / "NISD") narrow the search; with neither, the single most
     recent application of any kind is returned. The result is the full
     `get_application_detail` payload plus `last_action_at` and the filters that
     produced it, so follow-up questions about that application have everything
@@ -3964,7 +3747,7 @@ async def get_visit_plan(
       * `scheduled`  -- visits already booked inside the window asked about;
       * `overdue`    -- visits whose scheduled date has passed and that were
                         never completed, which outrank anything new;
-      * `awaiting`   -- active ISD / MERGE applications on the officer's desk
+      * `awaiting`   -- active ISD applications on the officer's desk
                         with no visit booked at all, oldest first, since those
                         are what the free day should be spent on.
 
@@ -4047,7 +3830,7 @@ async def get_visit_plan(
         scheduled.sort(key=lambda e: e["scheduled_date"] or "")
         overdue.sort(key=lambda e: e["days_late"] or 0, reverse=True)
 
-        # Awaiting: an ISD/MERGE file still on the officer's desk with no visit
+        # Awaiting: an ISD file still on the officer's desk with no visit
         # booked. field_visit_scheduled is the application's own flag; a visit
         # row left 'unscheduled' means the same thing, so neither is trusted
         # alone.
@@ -4060,7 +3843,7 @@ async def get_visit_plan(
         }
         awaiting_rows = (await db.execute(
             geography.where(and_(
-                Application.application_type.in_(["ISD", "MERGE"]),
+                Application.application_type.in_(["ISD"]),
                 Application.current_status.in_(ACTIVE_STATUSES),
             ))
         )).all()

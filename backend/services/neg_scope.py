@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Set, Tuple
 EXCLUDE: contextvars.ContextVar = contextvars.ContextVar("app_exclude", default=None)
 
 _TA = "[஀-௿]"
-_TERM = (rf"(?:nisd|nsid|isd|merge|pending|approved|completed|rejected|in[\s-]?progress|escalated|"
+_TERM = (rf"(?:nisd|nsid|isd|pending|approved|accepted|completed|rejected|in[\s-]?progress|escalated|"
          rf"csc|citizen|sub[\s-]?registrar|sro|ward\s*\d{{1,3}}|வார்டு\s*\d{{1,3}}|"
          rf"அங்கீகரி{_TA}*|ஒப்புத{_TA}*|நிராகரி{_TA}*|மறுக்கப்{_TA}*|நிலுவை{_TA}*|செயல்பாட்டில்)")
 # these cues negate every item in the list that follows ("except A and B", "neither A nor B")
@@ -28,9 +28,15 @@ _CUE_ALL = (r"(?:except|excluding|exclude|without|other\s+than|apart\s+from|besi
 _CUE_ONE = r"(?:but\s+not|not|non[\s-]|(?:^|[,;]\s*)no(?!\.|\s+of\b))"
 _ITEM = (rf"(?:the\s+|any\s+|all\s+|from\s+|via\s+|through\s+|in\s+|under\s+)*(?:{_TERM})"
          rf"(?:\s+(?:ones?|applications?|apps?|files|cases))*")
+# "n" alongside "and"/"or"/etc -- officers type it constantly as shorthand
+# ("not nisd n citizen", "pending n not pending n rejected"). Without it, only
+# the FIRST excluded item was ever read: "not from nisd n citizen" excluded
+# NISD and silently dropped "n citizen" as unparsed leftover text, instead of
+# also excluding the citizen channel.
+_JOIN = r"(?:,|and|or|nor|&|/|\bn\b)"
 _GROUP = re.compile(
     rf"(?<!\w)(?:(?P<all>{_CUE_ALL})|(?P<one>{_CUE_ONE}))\s*(?P<first>{_ITEM})"
-    rf"(?P<rest>(?:\s*(?:,|and|or|nor|&|/)\s*(?:(?:{_CUE_ALL}|{_CUE_ONE})\s*)?{_ITEM})*)", re.IGNORECASE)
+    rf"(?P<rest>(?:\s*{_JOIN}\s*(?:(?:{_CUE_ALL}|{_CUE_ONE})\s*)?{_ITEM})*)", re.IGNORECASE)
 _SUFFIX = re.compile(
     rf"(?<!\w)(?P<t>{_TERM})(?:\s+(?:ones?|applications?|apps?))*\s*"
     rf"(?:-?\s*(?:um|யும்|ம்)\s*)?"
@@ -40,8 +46,8 @@ _SEP = re.compile(r"\s*(,|and|or|nor|&|/)\s*(?:(?:" + _CUE_ALL + "|" + _CUE_ONE 
 
 _STATUS_TA = (("அங்கீகரி", "approved"), ("ஒப்புத", "approved"), ("நிராகரி", "rejected"),
               ("மறுக்கப்", "rejected"), ("நிலுவை", "pending"), ("செயல்பாட்டில்", "in_progress"))
-_STATUS_EN = {"pending": "pending", "approved": "approved", "completed": "approved", "rejected": "rejected",
-              "escalated": "escalated"}
+_STATUS_EN = {"pending": "pending", "approved": "approved", "accepted": "approved", "completed": "approved",
+              "rejected": "rejected", "escalated": "escalated"}
 _LABEL_TA = {"pending": "நிலுவையில் உள்ள", "approved": "அங்கீகரிக்கப்பட்ட", "rejected": "நிராகரிக்கப்பட்ட",
              "in_progress": "செயல்பாட்டில் உள்ள", "escalated": "உயர்நிலைக்கு அனுப்பப்பட்ட",
              "CSC": "CSC", "citizen": "குடிமகன்", "sub_registrar": "சார்-பதிவாளர்"}
@@ -69,8 +75,8 @@ def _classify(term: str) -> Optional[Tuple[str, str]]:
     t = re.sub(r"\s+", " ", term.lower().replace("-", " ")).strip()
     if t in ("nisd", "nsid"):
         return "type", "NISD"
-    if t in ("isd", "merge"):
-        return "type", t.upper()
+    if t == "isd":
+        return "type", "ISD"
     if t in _STATUS_EN:
         return "status", _STATUS_EN[t]
     if t.replace(" ", "") == "inprogress":
@@ -112,7 +118,7 @@ def parse(text: str) -> Tuple[Dict[str, Set[str]], str]:
         _take(_terms(m.group("first")))
         kept, rest = [], m.group("rest") or ""
         # split the tail into "<sep> [cue] item" pieces
-        for piece in re.finditer(rf"(\s*(?:,|and|or|nor|&|/)\s*)((?:(?:{_CUE_ALL}|{_CUE_ONE})\s*)?)({_ITEM})", rest, re.IGNORECASE):
+        for piece in re.finditer(rf"(\s*{_JOIN}\s*)((?:(?:{_CUE_ALL}|{_CUE_ONE})\s*)?)({_ITEM})", rest, re.IGNORECASE):
             sep, cue, item = piece.group(1).strip().lower(), piece.group(2), piece.group(3)
             if inherit or cue.strip() or sep in ("or", "nor"):
                 _take(_terms(item))

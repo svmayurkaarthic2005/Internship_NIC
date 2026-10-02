@@ -195,7 +195,7 @@ def bare_scope_terms(message: str) -> List[Tuple[str, str]]:
     return terms if not re.search(r"[A-Za-z\u0B80-\u0BFF]{2,}", rest) else []
 
 
-_TYPE_CODE = {"ISD": "0154", "NISD": "0153", "MERGE": "0155"}
+_TYPE_CODE = {"ISD": "0154", "NISD": "0153"}
 
 
 def bare_scope_answer(terms: List[Tuple[str, str]], rows_view: List[dict], ta: bool) -> Optional[str]:
@@ -222,12 +222,16 @@ def bare_scope_answer(terms: List[Tuple[str, str]], rows_view: List[dict], ta: b
     total = len(rows_view)
     what = " ".join(_name(k, v, ta) for k, v in _uniform(rows_view, terms))
     if ta:
-        return (f"அந்த {total} {what + ' ' if what else ''}விண்ணப்பங்களில் {n} {name}." if n
+        return (f"அந்த {total} {what + ' ' if what else ''}விண்ணப்பங்களில் {n} {name} — கீழே." if n
                 else f"அந்த {total} {what + ' ' if what else ''}விண்ணப்பங்களில் {name} எதுவும் இல்லை.")
     sub = f"{what + ' ' if what else ''}applications"
     if n == 0:
         return f"None of those {total} {sub} are {name}." if kind == "status" else f"None of those {total} {sub} are {name}."
-    return f"{n} of those {total} {sub} {'is' if n == 1 else 'are'} {name}. Say \"show only {name}\" to list {'it' if n == 1 else 'them'}."
+    # The caller (chatbot.py's `_number_turn`) attaches the table of exactly
+    # these {n} rows whenever this branch returns a non-zero count, so the
+    # answer says so instead of asking the officer to repeat the question in
+    # a different shape to see what is already about to be shown.
+    return f"{n} of those {total} {sub} {'is' if n == 1 else 'are'} {name} — shown below."
 
 
 _ALLOWED = frozenset("""
@@ -237,7 +241,7 @@ proportion share ratio applications application aplications aplication apps app 
 per each every wise only just also then now please pls kindly still yet already left remaining rest others other than more less most
 least between year years month months week weeks day days by type types status statuses channel channels ward wards
 evlo evvalavu enna athula ithula idhula athil ithil iruku irukku irukka ah aa um la ku kku ellam ella elam yaar edhu ethu
-pending approved rejected completed complete overdue escalated progress inprogress isd nisd merge csc sro citizen registrar sub portal
+pending approved rejected completed complete overdue escalated progress inprogress isd nisd csc sro citizen registrar sub portal
 january february march april may june july august september october november december
 jan feb mar apr jun jul aug sep sept oct nov dec hw mny r u hav hve
 """.split())

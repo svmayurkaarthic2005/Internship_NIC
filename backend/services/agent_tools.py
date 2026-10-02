@@ -32,6 +32,7 @@ hold for every tool in this module, and the tests in
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -245,6 +246,20 @@ def _is_absent(value: Any) -> bool:
 #                and invisible, so these are clamped.
 _CLAMPED_ARGS = frozenset({("search_documents", "max_results")})
 
+# A real application number always opens with a 4-digit year and a slash
+# ("2026/0154/28/001280"). llama3.1:8b sometimes passes an UNRESOLVED pronoun
+# ("it", "that one") straight through as the value instead of recognising it
+# has nothing to resolve it to (a fresh chat, or a turn that named no
+# application). Read literally that produced a well-formed-looking
+# {"found": false, "reason": "no_such_application"} tool result, which the
+# model then narrated back to the officer almost verbatim -- "the application
+# number 'it' does not exist ... reason 'no_such_application'" -- exposing the
+# tool's internal result shape instead of asking which application was meant.
+# Caught here, before the query ever runs, so it comes back as the same
+# internal_error shape as any other malformed argument, which the answer
+# prompt already knows never to describe.
+_APP_NUMBER_SHAPE_RE = re.compile(r"^\d{4}/")
+
 
 def _coerce(tool: str, key: str, value: Any, prop: Dict[str, Any]) -> Any:
     want = prop.get("type", "string")
@@ -280,6 +295,11 @@ def _coerce(tool: str, key: str, value: Any, prop: Dict[str, Any]) -> Any:
         raise ToolArgumentError(f"{tool}: '{key}' must be true or false, got {value!r}.")
 
     text = str(value).strip()
+    if key == "application_number" and not _APP_NUMBER_SHAPE_RE.match(text):
+        raise ToolArgumentError(
+            f"{tool}: '{key}' does not look like an application number, got {value!r}. "
+            f"If this was meant to resolve a pronoun ('it', 'that one') to an "
+            f"application, no such application is named in this conversation.")
     if enum:
         # Case-insensitive, because llama3.1 writes "isd" and "Pending" freely.
         for option in enum:
@@ -492,7 +512,7 @@ TOOLS: List[ToolSpec] = [
         name="list_applications",
         description=(
             "List the signed-in officer's applications from the register, optionally "
-            "filtered by status, type (ISD/NISD/MERGE), submission channel, ward, "
+            "filtered by status, type (ISD/NISD), submission channel, ward, "
             "block, or submission month/year. Use for 'show me...', 'which "
             "applications...'. Returns real rows; never invent application numbers. "
             "Called with NO filter it returns only what is live at this officer's "
@@ -563,7 +583,7 @@ TOOLS: List[ToolSpec] = [
         description=(
             "Summary of the signed-in officer's CURRENT OPEN workload: how many "
             "applications are live at their desk right now, split by "
-            "ISD/NISD/MERGE, plus how many are overdue and how many await a "
+            "ISD/NISD, plus how many are overdue and how many await a "
             "field visit. These are OPEN files only -- it does NOT count "
             "approved, rejected or otherwise decided applications, so never use "
             "it to answer 'how many approved/rejected'. For a count by status, "

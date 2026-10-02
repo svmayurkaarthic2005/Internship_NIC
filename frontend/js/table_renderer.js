@@ -301,17 +301,15 @@ function prepareApplicationsTable(data, isTamil = false) {
         // happens to have one row).
 
         // === Show as wide table ===
-        // Only show Temp/Final Sub Div columns when at least one ISD/MERGE app is present.
-        const hasIsdOrMerge = apps.some(a => a.application_type === 'ISD' || a.application_type === 'MERGE'
-                                           || a.type === 'ISD' || a.type === 'MERGE');
+        // Only show Temp/Final Sub Div columns when at least one ISD app is present.
+        const hasIsd = apps.some(a => a.application_type === 'ISD' || a.type === 'ISD');
         const baseEngCols = ['App No', 'Applicant', 'Survey No'];
-        if (hasIsdOrMerge) baseEngCols.push('Temp Sub Div', 'Final Sub Div');
+        if (hasIsd) baseEngCols.push('Temp Sub Div', 'Final Sub Div');
         baseEngCols.push('Town', 'Ward', 'Block', 'Stage', 'Status', 'Days Pending', 'Priority');
         const engCols = baseEngCols;
         const tamCols = _translateCols(engCols, isTamil);
         const rows = apps.map(app => {
-            const isIsd = app.application_type === 'ISD' || app.application_type === 'MERGE'
-                       || app.type === 'ISD' || app.type === 'MERGE';
+            const isIsd = app.application_type === 'ISD' || app.type === 'ISD';
             const r = {
                 'App No':         app.application_number || 'N/A',
                 'Applicant':      app.applicant_name     || 'N/A',
@@ -324,7 +322,7 @@ function prepareApplicationsTable(data, isTamil = false) {
                 'Days Pending':   app.days_pending ?? 'N/A',
                 'Priority':       app.priority || 'Normal'
             };
-            if (hasIsdOrMerge) {
+            if (hasIsd) {
                 r['Temp Sub Div']  = isIsd ? (app.sis_temp_sub_div  || 'Not assigned') : '-';
                 r['Final Sub Div'] = isIsd ? (app.dis_fixed_sub_div || 'Not assigned') : '-';
             }
@@ -760,6 +758,19 @@ function cellClass(col, strVal) {
     return (WRAP_COLUMNS.has(col) || strVal.length > 28) ? ' class="cell-wrap"' : '';
 }
 
+// Backend enum values (pending / in_progress / approved / ...) arrive as-is
+// in the 'Status' column -- this is the "status-badge logic" the comment
+// above refers to, turning e.g. "in_progress" into a styled "In Progress" pill
+// instead of the raw enum string. table_styles.css has a .status-<key> class
+// for every value STATUS_LABELS_EN in rag.py can produce.
+function statusBadge(strVal) {
+    if (!strVal || strVal === 'N/A' || strVal === '-') return escapeHtml(strVal || 'N/A');
+    const key = strVal.trim().toLowerCase().replace(/\s+/g, '_');
+    const cssKey = key.replace(/_/g, '-');
+    const label = strVal.trim().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return `<span class="status-badge status-${cssKey}">${escapeHtml(label)}</span>`;
+}
+
 function createTableHTML(config) {
     const { title, columns, rows, icon, disablePagination } = config;
 
@@ -801,9 +812,12 @@ function createTableHTML(config) {
         let cells = columns.map(col => {
             const val = row[col];
             const strVal = String(val !== undefined && val !== null ? val : 'N/A');
-            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD|MERGE)\/\w+\/\d+\/\d+$/i.test(strVal);
+            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD)\/\w+\/\d+\/\d+$/i.test(strVal);
             if (isAppNo && strVal !== 'N/A') {
                 return `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
+            }
+            if (col === 'Status') {
+                return `<td>${statusBadge(strVal)}</td>`;
             }
             return `<td${cellClass(col, strVal)}>${escapeHtml(strVal)}</td>`;
         }).join('');

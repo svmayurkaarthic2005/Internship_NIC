@@ -33,7 +33,7 @@ please pls kindly also only just even ever again still already yet now then toda
 application applications aplication aplications app apps file files case cases record records entry entries item items
 pending approved rejected completed complete incomplete open closed active overdue escalated progress inprogress
 new old older oldest newer newest latest recent recently earliest first last next previous top bottom highest lowest
-isd nisd merge type types status stage stages channel channels source sources csc sro citizen portal registrar sub
+isd nisd type types status stage stages channel channels source sources csc sro citizen portal registrar sub
 ward wards block blocks taluk town district survey surveys number numbers no date dates day days week weeks month months
 year years total count counts summary details detail info information report list lists table rows row column columns
 name names applicant applicants owner owners mobile phone address fee fees area amount sq sqm
@@ -48,7 +48,7 @@ along along add include including exclude excluding except other others rest rem
 up down out off off around about approx approximately
 one ones both can code codes row rows second third fourth fifth sixth seventh eighth ninth tenth half
 ftom frm fom fro hav hve hv per
-aana ana enaku enakku iruku irukku irukka iruka evalo pathi patri la irunthu irundhu oda ku kku ellam ella elam vandha vantha venum pannu panni sollunga kaattunga thevai mattum ah um
+aana ana en enoda ennoda enaku enakku iruku irukku irukka iruka evalo pathi patri la irunthu irundhu oda ku kku ellam ella elam vandha vantha venum pannu panni sollunga kaattunga thevai mattum ah um
 igrs tahsildar dsc zdt hqdt patta chitta deed sketch remarks litigation encroachment
 here kaattu kaami kaatu sollu enna evlo evvalavu edhu ethu yaar eppo epdi
 """.split())
@@ -122,7 +122,7 @@ between from to and before after since until till in on of the for during within
 week weeks month months year years today yesterday tomorrow day days recent recently
 january february march april may june july august september october november december
 jan feb mar apr jun jul aug sep sept oct nov dec
-pending approved rejected completed overdue escalated progress inprogress isd nisd merge csc sro citizen registrar sub portal
+pending approved rejected completed overdue escalated progress inprogress isd nisd csc sro citizen registrar sub portal
 """.split())
 
 

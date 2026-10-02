@@ -6,7 +6,7 @@ absent from "show overdue applications". Overdue is a fact about TODAY, so it is
 re-derived here -- at start-up and on a timer -- outside any chat turn (a chat turn is
 read-only, see readonly_guard).
 
-Rule (workflow_guide.txt), implemented in backend/utils/sla.py: an open ISD or MERGE
+Rule (workflow_guide.txt), implemented in backend/utils/sla.py: an open ISD
 application whose field visit has not been completed is overdue once more than 15 working
 days have passed since submission. A completed visit stops the clock at the visit date.
 This is the FIELD-VISIT deadline; the service SLA (ISD 30-35, NISD 15-20) is a separate

@@ -137,7 +137,7 @@ class OfficerProfileResponse(BaseModel):
 
 class ApplicationBase(BaseModel):
     application_number: str
-    application_type: str  # ISD, NISD, MERGE
+    application_type: str  # ISD, NISD
     submission_channel: Optional[str] = None
     submission_date: date
     declared_reason: Optional[str] = None

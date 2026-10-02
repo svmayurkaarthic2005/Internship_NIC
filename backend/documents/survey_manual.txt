@@ -7,7 +7,7 @@ Survey Number Structure:
 - Format: Numeric (e.g., 145, 267, 1023) or Alphanumeric (e.g., 145A, 267B)
 - Each survey number belongs to exactly one block
 - Survey numbers cannot be duplicated within the same block
-- Survey numbers are permanent and do not change unless merged
+- Survey numbers are permanent
 
 Survey Number Components:
 - Base Number: Primary identifier (e.g., 145)
@@ -98,7 +98,7 @@ Examples from real applications:
   number; the rest are identified by the survey and the temporary number.
 
 Key rules:
-- Temporary numbers are only assigned to ISD (0154) and MERGE (0155) applications
+- Temporary numbers are only assigned to ISD (0154) applications
 - The first temporary parcel (T1) usually retains the existing subdivision number
 - Subsequent parcels (T2, T3, ...) receive new sequential numbers
 - Temporary numbers become final only after DIS approval
@@ -129,7 +129,7 @@ Area Measurement Standards:
 - Minimum measurable area: 1 sq.m
 - Maximum precision: 2 decimal places (e.g., 456.75 sq.m)
 - Survey measurements must be verified in field
-- GPS coordinates mandatory for area verification
+
 
 Area Calculation Tolerance:
 - Allowed variance: ±0.5% for survey measurements
@@ -156,7 +156,6 @@ Types of Encroachment:
 
 1. Boundary Encroachment
    - Building or fence extends beyond survey boundary
-   - Detected during field visit with GPS measurement
    - Requires boundary stone verification
 
 2. Full Encroachment
@@ -182,8 +181,8 @@ Step 1: Document Review
 - Check for litigation history
 
 Step 2: Physical Verification
-- Visit survey location with GPS device
-- Mark survey corners using GPS coordinates
+- Visit survey location with device
+- Mark survey corners using  coordinates
 - Measure actual boundaries
 
 Step 3: Boundary Stone Check
@@ -198,7 +197,7 @@ Step 4: Neighbor Verification
 
 Step 5: Documentation
 - Take photographs from all angles
-- Record GPS coordinates of all corners
+- Record coordinates of all corners
 - Measure encroached area
 - Identify encroaching party (if known)
 
@@ -295,114 +294,3 @@ Timeline Impact:
 - Application resumes after litigation clearance
 - Fresh field visit may be required after clearance
 
-=== MERGE RULES: WHICH SUB-DIVISIONS CAN BE MERGED ===
-
-Survey Number Merging:
-- Combines multiple survey numbers or sub-divisions into single survey number
-- Used when adjacent land parcels are purchased by same owner
-- Simplifies land records and patta management
-
-Merge Eligibility Criteria:
-
-1. Common Ownership
-   - All survey numbers must have same owner
-   - Ownership must be sole (not joint) or all joint owners must agree
-   - Patta holder name must match across all surveys
-
-2. Geographic Adjacency
-   - Survey numbers must share common boundary
-   - Non-adjacent surveys cannot be merged
-   - At least one common boundary point required
-
-3. Same Jurisdiction
-   - All surveys must belong to same block
-   - Surveys from different blocks cannot be merged
-   - Surveys must be in same ward and town
-
-4. Same Land Classification
-   - All surveys must have same land type (agricultural, residential, commercial)
-   - Mixed land types cannot be merged
-   - Requires reclassification before merging
-
-5. No Encumbrance
-   - No mortgage, loan, or charge on any survey
-   - No litigation pending on any survey
-   - No encroachment on any survey
-
-6. Clear Title
-   - Encumbrance Certificate must be clear for all surveys
-   - No disputes or claims on any survey
-   - Revenue arrears must be cleared
-
-Merge Process:
-
-Step 1: Merge Application Submission
-- Application type: MERGE
-- List all survey numbers to be merged
-- Provide ownership proof for all surveys
-- Submit EC for all surveys
-
-Step 2: SIS Officer Verification
-- Verify common ownership
-- Check physical adjacency in field
-- Verify all surveys belong to same block
-- Check for any encumbrance or litigation
-- Prepare merge sketch showing combined area
-
-Step 3: Area Calculation
-- Calculate total area of merged survey
-- New Survey Area = Sum of all individual survey areas
-- Example: Survey 145 (500 sq.m) + Survey 146 (600 sq.m) = Merged Survey 145M (1100 sq.m)
-
-Step 4: New Survey Number Assignment
-- Merged survey gets new survey number
-- Usually based on lowest original survey number with 'M' suffix
-- Example: 145 + 146 + 147 → 145M
-- Alternative: Retain lowest number, mark others as "merged into 145"
-
-Step 5: DIS Approval
-- DIS reviews merge application
-- Verifies compliance with merge rules
-- Approves new survey number and area
-
-Step 6: Revenue Records Update
-- Old survey numbers marked as "Merged"
-- New survey number created in system
-- Single patta issued for merged survey
-- Property tax records consolidated
-
-Sub-Division Merge Examples:
-
-Example 1: Simple Sub-Division Merge
-Sub-Divisions: 145/1 (300 sq.m) + 145/2 (400 sq.m)
-Result: Reverts to Survey 145 (700 sq.m)
-Sub-divisions 145/1 and 145/2 marked as "Merged back to parent"
-
-Example 2: Multiple Sub-Division Merge
-Sub-Divisions: 267/1A (200 sq.m) + 267/1B (250 sq.m)
-Result: Reverts to Survey 267/1 (450 sq.m)
-Sub-divisions 267/1A and 267/1B marked as "Merged"
-
-Example 3: Cross-Survey Merge Not Allowed
-Sub-Divisions: 145/1 (300 sq.m) + 267/1 (400 sq.m)
-Result: NOT ALLOWED - Different parent survey numbers
-Recommendation: First merge back to parent, then merge parent surveys
-
-Merge Restrictions:
-
-Cannot Merge:
-1. Surveys with different owners
-2. Non-adjacent surveys
-3. Surveys from different blocks
-4. Surveys with pending litigation
-5. Surveys with active mortgages
-6. Surveys with different land classification
-7. Surveys with encroachment issues
-8. Surveys where one has sub-divisions still active
-
-Timeline for Merge Application:
-- SIS Verification: 10 working days
-- Field Visit: Mandatory within 15 days
-- DIS Approval: 5 working days
-- Revenue Update: 3 working days
-- Total: Approximately 25-30 working days

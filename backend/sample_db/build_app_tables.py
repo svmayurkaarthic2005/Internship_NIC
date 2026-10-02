@@ -57,12 +57,12 @@ DEFAULT_PASSWORD = "Test@1234"
 # service_code -> application_type. The Application model only admits these
 # three (ck_application_type), so other services stay in the CSV-shaped tables
 # and are not projected.
-SERVICE_TO_TYPE = {"0153": "NISD", "0154": "ISD", "0155": "MERGE"}
+SERVICE_TO_TYPE = {"0153": "NISD", "0154": "ISD"}
 
 # Only the sub-division chain includes a mandatory field inspection. NISD is
 # document verification at the SIS desk and then straight to the Zonal Level
 # Tahsildar -- no visit is scheduled, so no visit date may be claimed for one.
-FIELD_VISIT_TYPES = {"ISD", "MERGE"}
+FIELD_VISIT_TYPES = {"ISD"}
 
 # What appl_log_urban_demo.application_status means. The transfer extracts
 # spell the status out in words, so cross-tabulating the two settles it --
@@ -126,7 +126,6 @@ REQUIRED_DOCS = {
     "ISD": ["Sale Deed", "Encumbrance Certificate", "Survey Sketch",
             "Photo ID", "Photographs"],
     "NISD": ["Sale Deed", "Encumbrance Certificate", "Photo ID", "Patta Copy"],
-    "MERGE": ["Sale Deed", "Survey Sketch", "Photo ID"],
 }
 
 # The ORM tables this script owns -- rebuilt from scratch on every run.
@@ -292,6 +291,10 @@ def main():
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS submission_camp_flag VARCHAR(5)",
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS submission_ip VARCHAR(50)",
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS merged_application_id VARCHAR(30)",
+            # MERGE (0155) was removed: no extract row carries it.
+            "ALTER TABLE applications DROP CONSTRAINT IF EXISTS ck_application_type",
+            "ALTER TABLE applications ADD CONSTRAINT ck_application_type "
+            "CHECK (application_type IN ('ISD','NISD'))",
             "ALTER TABLE patta_transfers ADD COLUMN IF NOT EXISTS new_patta_number VARCHAR(50)",
             "ALTER TABLE patta_transfers ADD COLUMN IF NOT EXISTS signed_by VARCHAR(50)",
             "ALTER TABLE patta_transfers ADD COLUMN IF NOT EXISTS transfer_reason VARCHAR(120)",
@@ -528,7 +531,7 @@ def main():
         # one when there are fewer officers than wards.
         app_wards = {r[0] for r in cx.execute(text("""
             SELECT DISTINCT ward_code FROM appl_log_urban_demo
-            WHERE service_code IN ('0153','0154','0155')""")).all()}
+            WHERE service_code IN ('0153','0154')""")).all()}
         covered = [kv for kv in wards_sorted if kv[0][3] in app_wards] or wards_sorted
         wards_of = defaultdict(list)
         for n, kv in enumerate(covered):
@@ -641,7 +644,7 @@ def main():
                        source_code, source_name, igrs_form6_number,
                        igrs_auto_mutation_flag, camp_flag, ip_address
                 FROM appl_log_urban_demo
-                WHERE service_code IN ('0153','0154','0155')
+                WHERE service_code IN ('0153','0154')
                 ORDER BY application_id,
                          last_updated_datetime DESC NULLS LAST,
                          application_date DESC

@@ -78,7 +78,6 @@ TAMIL_NADU_DISTRICTS = {
 SIS_URBAN_SERVICES = {
     "0153": {"name": "Not Involving Subdivision",                     "short": "NISD",             "category": "Urban", "requires_field_visit": False},
     "0154": {"name": "Involving Subdivision",                         "short": "ISD",              "category": "Urban", "requires_field_visit": True},
-    "0155": {"name": "Merge Subdivisions",                            "short": "MERGE",            "category": "Urban", "requires_field_visit": True},
     "0156": {"name": "TSLR Extract with Sketch",                      "short": "TSLR_SKETCH",      "category": "Urban", "requires_field_visit": False},
     "0157": {"name": "TSLR Extract Only",                             "short": "TSLR_EXTRACT",     "category": "Urban", "requires_field_visit": False},
     "0158": {"name": "Modification / Anadeenam",                      "short": "MODIFICATION",     "category": "Urban", "requires_field_visit": True},
@@ -112,8 +111,8 @@ SIS_URBAN_SERVICES = {
 # ========== ESSENTIAL TABLE FIELDS REQUIRED FOR SIS WORKFLOW ==========
 SIS_REQUIRED_COLUMNS = [
     "application_id",             # Application Number (e.g. 2026/0154/02/000001)
-    "service_code",               # Urban Service Code (0154, 0153, 0155, 0156, etc.)
-    "application_type",           # ISD, NISD, MERGE
+    "service_code",               # Urban Service Code (0154, 0153, 0156, etc.)
+    "application_type",           # ISD, NISD
     "district_code",              # District Code (e.g. 02 for Chennai)
     "taluk_code",                 # Taluk Code (e.g. CHN-AMB)
     "urban_unit_code",            # Town / Urban Unit Code
@@ -157,8 +156,6 @@ def generate_application_number(application_type: str = "NISD", district_code: s
         app_t = str(application_type).upper()
         if app_t == "ISD":
             service_code = "0154"
-        elif app_t == "MERGE":
-            service_code = "0155"
         elif app_t == "NISD":
             service_code = "0153"
         elif app_t in SIS_URBAN_SERVICES:
@@ -247,33 +244,10 @@ SIS_SERVICE_CODE_DETAIL = {
         "workflow_ta": "குடிமகன் / CSC / சார்-பதிவாளர் → SIS (கட்டாய கள ஆய்வு) → "
                        "மூத்த வரைவாளர் (SD வரைபடம்) → DIS → தாசில்தார் (DSC)",
     },
-    "0155": {
-        "meaning": 'MERGE = combining sub-divisions. Several sub-divisions of one survey number are joined back into one',
-        "meaning_ta": 'MERGE = உட்பிரிவு இணைப்பு. ஒரு சர்வே எண்ணின் பல உட்பிரிவுகள் மீண்டும் ஒன்றாக இணைக்கப்படுகின்றன',
-        "example": 'Example: sub-divisions 24/3 and 24/4, now owned by one person, are merged into a single record',
-        "example_ta": 'எ.கா.: ஒருவருக்கே சொந்தமான 24/3, 24/4 உட்பிரிவுகள் ஒரே பதிவாக இணைக்கப்படுகின்றன',
-        "outcome": 'Outcome: one merged sub-division record and the patta updated to it',
-        "outcome_ta": 'விளைவு: ஒரு இணைந்த உட்பிரிவுப் பதிவு; பட்டா அதற்கு மாற்றப்படும்',
-        "versus": 'It follows the ISD chain (field visit, SD sketch, DIS, Tahsildar)',
-        "versus_ta": 'இது ISD வரிசையைப் பின்பற்றும் (கள ஆய்வு, SD வரைபடம், DIS, தாசில்தார்)',
-        "tamil_name": "உட்பிரிவு இணைப்பு பட்டா மாறுதல்",
-        "summary": "several sub-divisions of a survey number combined into one; "
-                   "it follows the ISD chain",
-        "summary_ta": "ஒரு கணக்கெண்ணின் பல உட்பிரிவுகள் ஒன்றாக இணைக்கப்படுகின்றன; "
-                      "இது ISD வரிசையைப் பின்பற்றுகிறது",
-        "govt_fee": "₹0.00",
-        "csc_fee": "₹60.00",
-        "sla_days": "15 working days",
-        "sla_days_ta": "15 வேலை நாட்கள்",
-        "workflow": "Citizen / CSC / Sub-Registrar → SIS (boundary and merged-area verification, field visit) "
-                    "→ Senior Draughtsman (SD sketch) → DIS → Tahsildar (DSC)",
-        "workflow_ta": "குடிமகன் / CSC / சார்-பதிவாளர் → SIS (எல்லை மற்றும் இணைந்த பரப்பு "
-                       "சரிபார்ப்பு, கள ஆய்வு) → மூத்த வரைவாளர் (SD வரைபடம்) → DIS → தாசில்தார் (DSC)",
-    },
 }
 
 # Codes the chatbot's `applications` table admits (ck_application_type).
-SIS_HANDLED_SERVICE_CODES = ("0153", "0154", "0155")
+SIS_HANDLED_SERVICE_CODES = ("0153", "0154")
 
 
 def normalize_service_code(token: str) -> Optional[str]:
@@ -300,6 +274,37 @@ def _svc_name_keywords(name: str) -> frozenset:
     return frozenset(w for w in words if w not in _SVC_NAME_STOPWORDS)
 
 
+# A code whose common colloquial name isn't just its official-name words
+# minus stopwords. "F-Line (Urban Demarcation)" -> {"line", "urban",
+# "demarcation"} per _svc_name_keywords, so an officer typing "f-line" (the
+# term this department actually uses -- "F" is explicitly dropped as noise,
+# and "line" alone is below the 2-distinct-words threshold the keyword index
+# requires) matched nothing at all: "what is f-line?" and "show f-line
+# applications" both fell through to the LLM / a generic filter-word error
+# instead of the deterministic 0178 lookup. Same gap, same fix, for every
+# other code this department refers to by a standard abbreviation that is
+# only ONE of its official name's several distinctive words: ULC (0164 "ULC
+# Land Subdivision" -- land/subdivision/ulc, 1 of 3) and TSR (0184 "TSR
+# Preparation Subdivision" -- preparation/subdivision/tsr, 1 of 3). TSLR is
+# deliberately NOT aliased here: it is shared by five different codes
+# (0156/0157/0165/0167/0170), so a bare "what is TSLR" is genuinely
+# ambiguous -- picking one of the five would be a guess, not a lookup.
+_SVC_NAME_ALIASES = {
+    "0178": ("f-line", "f line", "fline"),
+    "0164": ("ulc",),
+    "0184": ("tsr",),
+}
+
+
+def _svc_name_alias_match(text: str) -> Optional[str]:
+    low = str(text or "").lower()
+    for code, aliases in _SVC_NAME_ALIASES.items():
+        for alias in aliases:
+            if re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low):
+                return code
+    return None
+
+
 _SVC_NAME_INDEX = {
     code: _svc_name_keywords(info["name"])
     for code, info in SIS_URBAN_SERVICES.items()
@@ -322,6 +327,9 @@ def find_service_code_by_name(text: str) -> Optional[str]:
     guessed, the same rule `followup_context._correct_typos` uses for an
     ambiguous spelling fix.
     """
+    alias_hit = _svc_name_alias_match(text)
+    if alias_hit:
+        return alias_hit
     from backend.utils.fuzzy import is_token_typo_match, is_qwerty_first_letter_typo
     tokens = re.findall(r"[a-z]{2,}", str(text or "").lower())
     if not tokens:
@@ -375,8 +383,13 @@ def find_service_codes(text: str) -> List[str]:
     return found
 
 
-def describe_service_code(code: str, is_tamil: bool = False) -> Optional[str]:
-    """A full, deterministic explanation of one urban service code."""
+def describe_service_code(code: str, is_tamil: bool = False, brief: bool = False) -> Optional[str]:
+    """A full, deterministic explanation of one urban service code.
+
+    When brief=True a single one-liner is returned so the officer can read it
+    fast and ask \"explain in detail\" for the full bullets.  brief=False (the
+    default) preserves the existing multi-bullet answer.
+    """
     code = normalize_service_code(code)
     if not code:
         return None
@@ -384,6 +397,34 @@ def describe_service_code(code: str, is_tamil: bool = False) -> Optional[str]:
     detail = SIS_SERVICE_CODE_DETAIL.get(code)
     short = info["short"]
     name = info["name"]
+
+    # ── brief one-liner ──────────────────────────────────────────────────────
+    if brief:
+        visit_en = "field visit required" if info["requires_field_visit"] else "no field visit"
+        visit_ta = "கள ஆய்வு தேவை" if info["requires_field_visit"] else "கள ஆய்வு தேவையில்லை"
+        if detail:
+            # summary is one short clause ("a straight patta transfer…"),
+            # meaning is a full sentence — use summary to keep brief truly brief.
+            summary = detail.get("summary_ta" if is_tamil else "summary", "")
+            if is_tamil:
+                return (
+                    f"சேவை குறியீடு {code} = {short} ({detail['tamil_name']}) — "
+                    f"{summary.rstrip('.')}. ({visit_ta})"
+                )
+            return (
+                f"Service code {code} = {short} ({name}) — {summary.rstrip('.')}. "
+                f"({visit_en})"
+            )
+        # non-core code
+        if is_tamil:
+            return (
+                f"சேவை குறியீடு {code} = {name} ({short}) — TAMILNILAM நகர்ப்புற சேவை, "
+                f"{visit_ta}. இது SIS பதிவேட்டில் கையாளப்படாத குறியீடு."
+            )
+        return (
+            f"Service code {code} = {name} ({short}) — TAMILNILAM urban service, "
+            f"{visit_en}. Not handled by the SIS register (only 0153/0154 are)."
+        )
 
     if detail:
         if is_tamil:
@@ -423,13 +464,13 @@ def describe_service_code(code: str, is_tamil: bool = False) -> Optional[str]:
     if is_tamil:
         return (
             f"சேவை குறியீடு {code} = {name} ({short}) — TAMILNILAM நகர்ப்புற சேவை, {visit_ta}.\n"
-            f"இது SIS உரையாடல் கையாளும் மூன்று குறியீடுகளில் (0153 / 0154 / 0155) ஒன்று அல்ல, "
+            f"இது SIS உரையாடல் கையாளும் இரண்டு குறியீடுகளில் (0153 / 0154) ஒன்று அல்ல, "
             f"எனவே உங்கள் பதிவேட்டில் {code} விண்ணப்பங்கள் எதுவும் இல்லை."
         )
     return (
         f"Service code {code} = {name} ({short}) — a TAMILNILAM urban service that "
-        f"{visit_en}.\nIt is not one of the three application types the schema even "
-        f"admits (0153 NISD / 0154 ISD / 0155 MERGE — the only types a row can ever "
+        f"{visit_en}.\nIt is not one of the two application types the schema even "
+        f"admits (0153 NISD / 0154 ISD — the only types a row can ever "
         f"be, whether or not any exist yet), so there are no {code} applications in "
         f"your workload."
     )

@@ -1,21 +1,12 @@
 SIS CHATBOT FAQ - ENGLISH
 
-=== SURVEY NUMBER MERGING ===
-
-Q: Which survey numbers and sub-divisions are included in this merge application?
-A: You can check the merge application details which will list all survey numbers and their sub-divisions being merged, for example Survey No. 145 with sub-divisions 145/1A, 145/1B and 145/1C.
+=== SUB-DIVISION LOOKUPS ===
 
 Q: List the owners of all sub-divisions under a specific survey number.
 A: The system will show ownership details for each sub-division, displaying the owner name associated with each sub-division like Survey No. 145/1 - Ramesh Kumar, Survey No. 145/2 - Lakshmi Devi.
 
 Q: Show pending applications on these sub-divisions.
-A: The system checks for any pending patta transfer or other applications on the sub-divisions involved in the merge and alerts if any applications are pending.
-
-Q: How is invalid merged geometry detected?
-A: The system validates that merged parcels satisfy all validation checks including boundary continuity, area calculations, and adjacency requirements. If no issues are detected, the merge can proceed.
-
-Q: How much land is included in this merge application?
-A: The total land area is calculated by summing all sub-divisions being merged, for example total area of 1,950 sq.m from three sub-divisions.
+A: The system checks for any pending patta transfer or other applications on the sub-divisions of the survey number and alerts if any applications are pending.
 
 Q: Show the area of each selected survey number.
 A: Each sub-division's area is displayed individually, for example 145/1A - 600 sq.m, 145/1B - 700 sq.m, 145/1C - 650 sq.m.
@@ -95,7 +86,7 @@ A: The system checks if the district code matches the survey jurisdiction. If a 
 === FIELD VISIT SCHEDULING ===
 
 Q: What is a field visit?
-A: A field visit (field inspection or site inspection) is the on-site verification an SIS officer carries out at the actual land parcel. The officer visits the survey number in person, measures the boundaries and area, records GPS coordinates, checks the boundary stones, looks for encroachment, collects the signatures of the applicant and all joint owners, and prepares field notes with photographs. It is mandatory for ISD (0154) and MERGE (0155) applications, must be scheduled within 15 working days of submission, and its date can only be changed with the Tahsildar's approval. NISD (0153) applications are verified from documents and normally need no field visit.
+A: A field visit (field inspection or site inspection) is the on-site verification an SIS officer carries out at the actual land parcel. The officer visits the survey number in person, measures the boundaries and area, records GPS coordinates, checks the boundary stones, looks for encroachment, collects the signatures of the applicant and all joint owners, and prepares field notes with photographs. It is mandatory for ISD (0154) applications, must be scheduled within 15 working days of submission, and its date can only be changed with the Tahsildar's approval. NISD (0153) applications are verified from documents and normally need no field visit.
 
 Q: What does the SIS officer check during a field visit?
 A: The officer verifies the survey number and sub-division on the ground, measures the actual boundaries and area against the patta and the sale deed, marks the corners with GPS coordinates, checks the boundary stones, records any encroachment, and takes the signatures of the applicant and joint owners.
@@ -160,7 +151,7 @@ A: The system displays the current status and latest action for each sub-divisio
 === TEMPORARY SUBDIVISION NUMBERS ===
 
 Q: What is a temporary subdivision number?
-A: A temporary subdivision number is a provisional number assigned by the Deputy Inspector Surveyor (DIS) to each proposed parcel in an ISD (0154) or MERGE (0155) application. It follows the format {existing_subdivision}/T{sequence}, for example 3/T1, 3/T2, 0/T1, 2A/T3. These temporary numbers track the proposed parcels through the workflow until DIS approves the application and assigns final subdivision numbers.
+A: A temporary subdivision number is a provisional number assigned by the Deputy Inspector Surveyor (DIS) to each proposed parcel in an ISD (0154) application. It follows the format {existing_subdivision}/T{sequence}, for example 3/T1, 3/T2, 0/T1, 2A/T3. These temporary numbers track the proposed parcels through the workflow until DIS approves the application and assigns final subdivision numbers.
 
 Q: Who assigns temporary subdivision numbers?
 A: The Deputy Inspector Surveyor (DIS) assigns temporary subdivision numbers during the ISD workflow, after the Senior Draughtsman (SD) has prepared the survey sketch. DIS reviews the field report and sketch, verifies compliance with survey rules and area calculations, and then assigns a temporary number to each proposed parcel.
@@ -249,7 +240,7 @@ Q: How many applications are awaiting my field visit?
 A: The system shows the count of applications waiting for field inspection to be scheduled or conducted.
 
 Q: Show my workload by application type.
-A: Your workload is broken down by type, for example ISD - 18 applications, NISD - 22 applications, Merge - 6 applications.
+A: Your workload is broken down by type, for example ISD - 18 applications, NISD - 22 applications.
 
 Q: Show my application completion rate for this month.
 A: The system calculates your completion rate as a percentage, showing how many of your assigned applications were completed out of the total assigned.

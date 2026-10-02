@@ -3,14 +3,13 @@
 Two DIFFERENT clocks, which the code used to run together ("15-day SLA" for every file):
 
 1. Field-visit deadline (workflow_guide.txt, "15 WORKING DAY FIELD VISIT DEADLINE RULE"):
-   an ISD or MERGE file must have its field visit completed within 15 working days of
+   an ISD file must have its field visit completed within 15 working days of
    submission. Past that the file is marked OVERDUE. NISD has no field visit.
 
 2. Service SLA (land_rules.txt, "SERVICE FEE AND SLA BY SERVICE CODE"), in working days
    from submission to completion:
        NISD  (0153)  15-20
        ISD   (0154)  30-35
-       MERGE (0155)  15
    The documents give a range, not a point. This module never invents one: a file is
    "within" the SLA up to the lower figure, "in the SLA window" between the two, and is
    called past the SLA only after the UPPER figure.
@@ -21,8 +20,8 @@ public holidays are not excluded and the answers say so.
 from datetime import date, timedelta
 from typing import Optional, Tuple
 
-SLA_WORKING_DAYS = {"NISD": (15, 20), "ISD": (30, 35), "MERGE": (15, 15)}
-FIELD_VISIT_TYPES = ("ISD", "MERGE")
+SLA_WORKING_DAYS = {"NISD": (15, 20), "ISD": (30, 35)}
+FIELD_VISIT_TYPES = ("ISD",)
 FIELD_VISIT_DEADLINE_WD = 15
 OPEN_STATUSES = ("pending", "in_progress", "escalated")
 
@@ -48,7 +47,7 @@ def sla_state(app_type: Optional[str], age_wd: int) -> Tuple[str, int, int]:
 
 def field_visit_overdue(app_type: Optional[str], status: Optional[str], submitted: Optional[date],
                         today: date, visit_completed_on: Optional[date] = None) -> bool:
-    """The documented overdue rule: an open ISD / MERGE file whose field visit is not
+    """The documented overdue rule: an open ISD file whose field visit is not
     completed more than 15 working days after submission. A completed visit stops the
     clock on the day it was done."""
     if (app_type or "").upper() not in FIELD_VISIT_TYPES or status not in OPEN_STATUSES or not submitted:

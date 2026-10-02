@@ -63,3 +63,10 @@ sis-qlora-adapter/checkpoint-*/
 sis-qlora-adapter/*.safetensors
 *.safetensors
 *.pt
+base-models/
+
+# Local GGUF model cache (multi-GB, exceeds GitHub's limit)
+models_cache/
+
+# Exceeds GitHub's 100MB single-file limit
+backend/sample_db_new/file_attachment_demo.csv

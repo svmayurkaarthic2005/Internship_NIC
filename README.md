@@ -145,7 +145,7 @@ POST /api/v1/chat/stream
 3.  last_application — "my previous / last approved application"
 4.  Per-application checks (joint_owner_check, check_documents, check_sale_deed,
     is_nisd_or_isd, litigation_check)
-5.  Workload / listing (pending, overdue, isd/nisd/merge applications, jurisdiction_summary)
+5.  Workload / listing (pending, overdue, isd/nisd applications, jurisdiction_summary)
 6.  Field-visit family (fv_*)
 7.  Sub-division desk family (sd_*)
 8.  Reference lookups (service_code_lookup, sub_registrar, rejection_info)
@@ -196,7 +196,6 @@ The chatbot queries **only layer 2** through `postgres.py`. `knowledge_embedding
 
 - **ISD** (`0154`) — **Involving Sub-Division**: field inspection + SD sketch required
 - **NISD** (`0153`) — **Not Involving Sub-Division**: document verification only, no field visit
-- **MERGE** (`0155`) — Merge application; follows the ISD chain
 
 ### 5. Application Statuses
 

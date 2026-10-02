@@ -40,7 +40,6 @@ TABLE_NAMES = {
 SERVICE_CODES = {
     "0153": "NISD - Not Involving Subdivision",
     "0154": "ISD - Involving Subdivision",
-    "0155": "Merge Subdivisions",
     "0156": "TSLR Extract with Sketch",
     "0157": "TSLR Extract Only",
     "0158": "Modification / Anadeenam",

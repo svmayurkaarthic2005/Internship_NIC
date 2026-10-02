@@ -115,7 +115,7 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
         .where(OfficerJurisdiction.officer_id == officer_id)
     )
     jurisdictions = result.scalars().all()
-    
+
     if not jurisdictions:
         return {
             "jurisdiction_type": "none",
@@ -126,118 +126,114 @@ async def get_officer_jurisdiction_ids(officer_id: UUID, db: AsyncSession) -> Di
             "ward_ids": [],
             "block_ids": []
         }
-    
-    # For simplicity, take the first jurisdiction (officers typically have one primary jurisdiction)
-    jurisdiction = jurisdictions[0]
-    
-    jurisdiction_type = jurisdiction.jurisdiction_type
-    district_ids = []
-    taluk_ids = []
-    town_ids = []
-    ward_ids = []
-    block_ids = []
-    jurisdiction_name = ""
-    
-    # Resolve based on jurisdiction level using optimized queries
-    if jurisdiction_type == "district":
-        # Officer has district-level access
-        district_ids = [jurisdiction.district_id]
-        jurisdiction_name = f"{jurisdiction.district.name} District" if jurisdiction.district else "Unknown District"
-        
-        # Get ALL child entities in ONE query using joins
-        result = await db.execute(
-            select(Taluk.id, Town.id, Ward.id, Block.id)
-            .select_from(Taluk)
-            .join(Town, Town.taluk_id == Taluk.id, isouter=True)
-            .join(Ward, Ward.town_id == Town.id, isouter=True)
-            .join(Block, Block.ward_id == Ward.id, isouter=True)
-            .where(Taluk.district_id == jurisdiction.district_id)
-        )
-        
-        for taluk_id, town_id, ward_id, block_id in result.all():
-            if taluk_id and taluk_id not in taluk_ids:
-                taluk_ids.append(taluk_id)
-            if town_id and town_id not in town_ids:
-                town_ids.append(town_id)
-            if ward_id and ward_id not in ward_ids:
-                ward_ids.append(ward_id)
-            if block_id and block_id not in block_ids:
-                block_ids.append(block_id)
-    
-    elif jurisdiction_type == "taluk":
-        # Officer has taluk-level access
-        taluk_ids = [jurisdiction.taluk_id]
-        district_ids = [jurisdiction.district_id]
-        jurisdiction_name = f"{jurisdiction.taluk.name} Taluk" if jurisdiction.taluk else "Unknown Taluk"
-        
-        # Get all child entities in ONE query
-        result = await db.execute(
-            select(Town.id, Ward.id, Block.id)
-            .select_from(Town)
-            .join(Ward, Ward.town_id == Town.id, isouter=True)
-            .join(Block, Block.ward_id == Ward.id, isouter=True)
-            .where(Town.taluk_id == jurisdiction.taluk_id)
-        )
-        
-        for town_id, ward_id, block_id in result.all():
-            if town_id and town_id not in town_ids:
-                town_ids.append(town_id)
-            if ward_id and ward_id not in ward_ids:
-                ward_ids.append(ward_id)
-            if block_id and block_id not in block_ids:
-                block_ids.append(block_id)
-    
-    elif jurisdiction_type == "town":
-        # Officer has town-level access
-        town_ids = [jurisdiction.town_id]
-        taluk_ids = [jurisdiction.taluk_id]
-        district_ids = [jurisdiction.district_id]
-        jurisdiction_name = f"{jurisdiction.town.name} Town" if jurisdiction.town else "Unknown Town"
-        
-        # Get all child entities in ONE query
-        result = await db.execute(
-            select(Ward.id, Block.id)
-            .select_from(Ward)
-            .join(Block, Block.ward_id == Ward.id, isouter=True)
-            .where(Ward.town_id == jurisdiction.town_id)
-        )
-        
-        for ward_id, block_id in result.all():
-            if ward_id and ward_id not in ward_ids:
-                ward_ids.append(ward_id)
-            if block_id and block_id not in block_ids:
-                block_ids.append(block_id)
-    
-    elif jurisdiction_type == "ward":
-        # Officer has ward-level access
-        ward_ids = [jurisdiction.ward_id]
-        town_ids = [jurisdiction.town_id]
-        taluk_ids = [jurisdiction.taluk_id]
-        district_ids = [jurisdiction.district_id]
-        
-        ward = jurisdiction.ward
-        jurisdiction_name = f"{ward.ward_name or 'Ward ' + str(ward.ward_number)}" if ward else "Unknown Ward"
-        
-        # Get all blocks in ONE query
-        result = await db.execute(
-            select(Block.id).where(Block.ward_id == jurisdiction.ward_id)
-        )
-        block_ids = [row[0] for row in result.all()]
-    
-    elif jurisdiction_type == "block":
-        # Officer has block-level access
-        block_ids = [jurisdiction.block_id]
-        ward_ids = [jurisdiction.ward_id]
-        town_ids = [jurisdiction.town_id]
-        taluk_ids = [jurisdiction.taluk_id]
-        district_ids = [jurisdiction.district_id]
-        
-        block = jurisdiction.block
-        jurisdiction_name = f"{block.block_name or 'Block ' + str(block.block_number)}" if block else "Unknown Block"
-    
+
+    # An officer can hold MORE THAN ONE jurisdiction row -- e.g. a ward-level
+    # officer assigned several wards when there are fewer officers than wards
+    # (see build_app_tables_new.py's round-robin). Taking only jurisdictions[0]
+    # silently dropped every ward but one from this dict (though
+    # get_jurisdiction_filter, used for the actual DB queries, already looped
+    # over all of them) -- OfficerContext.jurisdiction_ids is built from this
+    # dict and is what several chatbot.py lookups filter on directly
+    # (Ward.id.in_(officer.jurisdiction_ids), ...), so the gap was real. Every
+    # row is now resolved and the results are unioned.
+    district_ids: list = []
+    taluk_ids: list = []
+    town_ids: list = []
+    ward_ids: list = []
+    block_ids: list = []
+    names: list = []
+
+    def _extend_unique(target: list, values) -> None:
+        for v in values:
+            if v and v not in target:
+                target.append(v)
+
+    for jurisdiction in jurisdictions:
+        jurisdiction_type = jurisdiction.jurisdiction_type
+
+        if jurisdiction_type == "district":
+            _extend_unique(district_ids, [jurisdiction.district_id])
+            names.append(f"{jurisdiction.district.name} District" if jurisdiction.district else "Unknown District")
+
+            result = await db.execute(
+                select(Taluk.id, Town.id, Ward.id, Block.id)
+                .select_from(Taluk)
+                .join(Town, Town.taluk_id == Taluk.id, isouter=True)
+                .join(Ward, Ward.town_id == Town.id, isouter=True)
+                .join(Block, Block.ward_id == Ward.id, isouter=True)
+                .where(Taluk.district_id == jurisdiction.district_id)
+            )
+            for taluk_id, town_id, ward_id, block_id in result.all():
+                _extend_unique(taluk_ids, [taluk_id])
+                _extend_unique(town_ids, [town_id])
+                _extend_unique(ward_ids, [ward_id])
+                _extend_unique(block_ids, [block_id])
+
+        elif jurisdiction_type == "taluk":
+            _extend_unique(taluk_ids, [jurisdiction.taluk_id])
+            _extend_unique(district_ids, [jurisdiction.district_id])
+            names.append(f"{jurisdiction.taluk.name} Taluk" if jurisdiction.taluk else "Unknown Taluk")
+
+            result = await db.execute(
+                select(Town.id, Ward.id, Block.id)
+                .select_from(Town)
+                .join(Ward, Ward.town_id == Town.id, isouter=True)
+                .join(Block, Block.ward_id == Ward.id, isouter=True)
+                .where(Town.taluk_id == jurisdiction.taluk_id)
+            )
+            for town_id, ward_id, block_id in result.all():
+                _extend_unique(town_ids, [town_id])
+                _extend_unique(ward_ids, [ward_id])
+                _extend_unique(block_ids, [block_id])
+
+        elif jurisdiction_type == "town":
+            _extend_unique(town_ids, [jurisdiction.town_id])
+            _extend_unique(taluk_ids, [jurisdiction.taluk_id])
+            _extend_unique(district_ids, [jurisdiction.district_id])
+            names.append(f"{jurisdiction.town.name} Town" if jurisdiction.town else "Unknown Town")
+
+            result = await db.execute(
+                select(Ward.id, Block.id)
+                .select_from(Ward)
+                .join(Block, Block.ward_id == Ward.id, isouter=True)
+                .where(Ward.town_id == jurisdiction.town_id)
+            )
+            for ward_id, block_id in result.all():
+                _extend_unique(ward_ids, [ward_id])
+                _extend_unique(block_ids, [block_id])
+
+        elif jurisdiction_type == "ward":
+            _extend_unique(ward_ids, [jurisdiction.ward_id])
+            _extend_unique(town_ids, [jurisdiction.town_id])
+            _extend_unique(taluk_ids, [jurisdiction.taluk_id])
+            _extend_unique(district_ids, [jurisdiction.district_id])
+
+            ward = jurisdiction.ward
+            names.append(f"{ward.ward_name or 'Ward ' + str(ward.ward_number)}" if ward else "Unknown Ward")
+
+            result = await db.execute(
+                select(Block.id).where(Block.ward_id == jurisdiction.ward_id)
+            )
+            _extend_unique(block_ids, [row[0] for row in result.all()])
+
+        elif jurisdiction_type == "block":
+            _extend_unique(block_ids, [jurisdiction.block_id])
+            _extend_unique(ward_ids, [jurisdiction.ward_id])
+            _extend_unique(town_ids, [jurisdiction.town_id])
+            _extend_unique(taluk_ids, [jurisdiction.taluk_id])
+            _extend_unique(district_ids, [jurisdiction.district_id])
+
+            block = jurisdiction.block
+            names.append(f"{block.block_name or 'Block ' + str(block.block_number)}" if block else "Unknown Block")
+
     return {
-        "jurisdiction_type": jurisdiction_type,
-        "jurisdiction_name": jurisdiction_name,
+        # Representative type for the handful of call sites that branch on it
+        # (e.g. "is this a ward/block officer") -- every seeded officer holds
+        # a single jurisdiction_type across all their rows, so the first is
+        # exactly right; a hypothetical mixed-type officer still gets every
+        # id correctly, just a type label taken from their first row.
+        "jurisdiction_type": jurisdictions[0].jurisdiction_type,
+        "jurisdiction_name": ", ".join(dict.fromkeys(names)) or "Unknown",
         "district_ids": district_ids,
         "taluk_ids": taluk_ids,
         "town_ids": town_ids,

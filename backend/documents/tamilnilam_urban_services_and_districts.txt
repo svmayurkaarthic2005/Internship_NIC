@@ -5,8 +5,8 @@ Sub Inspector Surveyors (SIS) operate exclusively in Urban Jurisdictions (Munici
 Their core duties:
 - Physical Field Inspection & Cadastral Verification for Town Survey Numbers (TSLR)
 - Verifying boundaries, sub-divisions, encroachments, and land types (Residential, Commercial, Agricultural)
-- Preparing inspection reports and measurement sketches (Colour Map) for ISD, Merge, and Demarcation applications
-- Forwarding verified ISD / Merge applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS), and after DIS approval to the Tahsildar, who applies the DSC and generates the patta transfer order; forwarding verified NISD applications directly to the Zonal Level Tahsildar (ZDT), who holds the DSC key and approves
+- Preparing inspection reports and measurement sketches (Colour Map) for ISD and Demarcation applications
+- Forwarding verified ISD applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS), and after DIS approval to the Tahsildar, who applies the DSC and generates the patta transfer order; forwarding verified NISD applications directly to the Zonal Level Tahsildar (ZDT), who holds the DSC key and approves
 
 2. URBAN APPLICATION NUMBER FORMAT
    YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE
@@ -15,7 +15,6 @@ Their core duties:
 3. URBAN SERVICE CODES HANDLED BY SIS
 - 0153: Not Involving Subdivision (NISD) — Direct patta transfer verification (no new sub-division).
 - 0154: Involving Subdivision (ISD) — Requires mandatory field inspection & sub-division sketch.
-- 0155: Merge Subdivisions — Verification of merged plots & total area.
 - 0156: TSLR Extract with Sketch — Urban land record extract with boundary sketch.
 - 0157: TSLR Extract Only — Urban land record extract.
 - 0158: Modification / Anadeenam — Correction/modification of urban survey records.

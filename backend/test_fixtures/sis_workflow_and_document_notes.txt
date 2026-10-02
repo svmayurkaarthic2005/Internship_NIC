@@ -21,7 +21,7 @@ Workflow reference:
 3. ZDT or HQDT takes the final approval or rejection action.
 Open statuses are pending or in_progress; a completed order is approved or rejected.
 
-NISD / service code 0153 is Not Involving Sub-Division: it is a whole-survey patta transfer and normally has no new sub-division or field visit. MERGE / service code 0155 combines sub-divisions and follows the ISD-style review chain.
+NISD / service code 0153 is Not Involving Sub-Division: it is a whole-survey patta transfer and normally has no new sub-division or field visit.
 
 Bilingual reminder:
 விண்ணப்பம் சோதனை தரவு மட்டுமே. நில அளவை குறிப்புகள் மற்றும் ஆவணங்கள் அனைத்தும் கற்பனையானவை.

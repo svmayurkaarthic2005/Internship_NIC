@@ -5,7 +5,7 @@ SIS WORKFLOW GUIDE FOR ISD AND NISD APPLICATIONS
 Survey Number Application Rules:
 - Only ONE active application (pending/in_progress) is allowed per survey number at any time
 - A new application for the same survey number can ONLY be submitted AFTER the previous application is completed (approved or rejected)
-- This rule applies to all application types: ISD, NISD, and MERGE
+- This rule applies to all application types: ISD and NISD
 - Attempting to submit a duplicate application while one is pending will be rejected
 - Officers should verify no active applications exist for a survey number before processing new submissions
 
@@ -134,7 +134,7 @@ What the officer does during a field visit:
 - Takes photographs and prepares preliminary field notes and a rough sketch
 
 Rules that apply to a field visit:
-- Mandatory for every ISD (0154) and MERGE (0155) application
+- Mandatory for every ISD (0154) application
 - Not required for NISD (0153), which is a document-only verification, unless a
   specific issue is flagged
 - Must be scheduled within 15 working days of the application's submission date
