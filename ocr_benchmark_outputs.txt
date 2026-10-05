@@ -1,0 +1,84 @@
+
+######################################################################
+# clean_english
+
+-- ground truth --
+The Sub Inspector Surveyor verifies survey boundaries, confirms ownership documents, and forwards the application to the Senior Draughtsman for sub-division sketch preparation before the file moves to the Zonal Level Tahsildar for final approval.
+
+-- easyocr output --
+(empty)
+
+-- tesseract output --
+The Sub Inspector Surveyor verifies survey boundaries, confirms
+ownership documents, and forwards the application to the Senior
+Draughtsman for sub-division sketch preparation before the file
+moves to the Zonal Level Tahsildar for final approval.
+
+
+######################################################################
+# clean_tamil
+
+-- ground truth --
+நில எல்லைத் தொடர்ச்சி, பரப்பளவுக் கணக்கீடு மற்றும் அண்டை நிலங்களுடனான இணக்கம் உள்ளிட்ட அனைத்து சரிபார்ப்புகளும் மேற்கொள்ளப்படும். குறைபாடுகள் ஏதும் இல்லையெனில் இணைப்பு செயல்முறை தொடர அனுமதிக்கப்படும்.
+
+-- easyocr output --
+(empty)
+
+-- tesseract output --
+நில எல்லதை தொடர்ச்சி, பரப்பளவுக்‌ கணக்கீடு மற்றம்‌ அண்ட
+நிலங்களடனான இணக்கம்‌ உள்ளிட்ட அனதைத சரிபார்ப்புகளப
+மலறே்கசொள்ளப்படும்‌. கறபைடபுகள்‌ ஏதம்‌ இல்லயைனணொில்‌ இண
+சயெல்மறைதகொடர அனமைதிக்கப்படம்‌.
+
+
+######################################################################
+# degraded_low_res
+
+-- ground truth --
+Application Number: 2025/0154/28/000042 விண்ணப்ப வகை: ISD (Involving Sub-Division) Survey Number: 1345/2A      Ward: 102 நிலையான நிலை: Pending - SIS அலுவலகத்தில் பரிசீலனையில் உள்ளது.
+
+-- easyocr output --
+(empty)
+
+-- tesseract output --
+Application Number: 2025/0154/28/000042
+விண்ணப்ப வகபை50 (Involving Sub-Division)
+Survey Number: 1345/2A Ward: 102
+
+நிலயைன slaved: Pending - SIS அவுவலகத்தில்‌
+பரிசீலனயைில்‌ உள்ளத.
+
+
+######################################################################
+# mixed_tamil_english
+
+-- ground truth --
+Application Number: 2025/0154/28/000042 விண்ணப்ப வகை: ISD (Involving Sub-Division) Survey Number: 1345/2A      Ward: 102 நிலையான நிலை: Pending - SIS அலுவலகத்தில் பரிசீலனையில் உள்ளது.
+
+-- easyocr output --
+(empty)
+
+-- tesseract output --
+Application Number: 2025/0154/28/000042
+விண்ணப்ப 660): ISD (Involving Sub-Division)
+Survey Number: 1345/2A — Ward: 102
+
+நிலயைான leven: Pending - SIS அலவலகத்தில்‌
+பரிசீலனயைல்‌ உள்ளத.
+
+
+######################################################################
+# table
+
+-- ground truth --
+Survey No Patta No Owner Area (sq.m) 1345/2A 4521 ரமேஷ் குமார் 812.5 1345/2B 4522 லட்சுமி தேவி 640.0 102/5 1187 முத்துலட்சுமி 915.2
+
+-- easyocr output --
+(empty)
+
+-- tesseract output --
+Survey No Patta No Owner Area (sq.m)
+
+1345/2A 4521 ரமஷே சுமார்‌ 812.5
+1345/28 4522 லட்சுமி தவி 640.0
+102/5 1187 மத்தலட்சுமி 915.2

@@ -240,3 +240,5 @@ The register does NOT hold an owner's mobile number, ration card number,
 voter ID (EPIC), PIN code, occupation code or door number - those columns are
 blank in the source extracts and are not projected. A question about one of
 them is answered as "not recorded", not treated as missing data.
+
+UDS (Undivided Share): the proportion of land held in common that belongs to one owner -- for example the share of the land under a block of flats that goes with a single flat. It is recorded as a measure of land (extent) or a fraction in the owner record, not as a separate parcel, and is read together with the owner's share and extent. In the SIS register the UDS column of the new-owner and old-owner records is part of a full-field patta transfer (NISD).

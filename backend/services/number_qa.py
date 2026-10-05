@@ -54,6 +54,8 @@ def _match(r: dict, terms: List[Tuple[str, str]]) -> bool:
     for k, vals in by.items():
         got = {"status": _status(r), "type": _type(r), "channel": str(r.get("submission_channel") or ""),
                "ward": str(r.get("ward_number") or "").zfill(3)}[k]
+        if k == "status" and "pending" in vals and got in ("in_progress", "escalated"):
+            continue                 # the register's open status already holds the files in progress
         if got not in vals:
             return False
     return True
@@ -63,6 +65,18 @@ def _name(kind: str, value: str, ta: bool) -> str:
     if kind == "ward":
         return f"வார்டு {value}" if ta else f"ward {value}"
     return (_LABEL_TA if ta else _LABEL).get(value, value)
+
+
+def _service_codes(text: str) -> List[str]:
+    """TAMILNILAM service codes named in the message ("0158", "0178"), in order."""
+    from backend.utils.helpers import find_service_codes
+    return list(dict.fromkeys(find_service_codes(text)))
+
+
+def _code_name(code: str) -> str:
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    nm = (SIS_URBAN_SERVICES.get(code, {}) or {}).get("name")
+    return f"{code} ({nm})" if nm else code
 
 
 def _pct(n: int, total: int) -> str:
@@ -98,6 +112,10 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
         return None
     if _stray_words(text):
         return None                      # "hello and how many are ISD": the rest is not this module's to drop
+    if re.search(r"\b(?:this|last|previous|past)\s+(?:year|month|week|quarter)\b|\b(?:today|yesterday)\b|\b20\d\d\b|"
+                 r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+                 text, re.IGNORECASE):
+        return None                      # "how many rejected in september": counted over that period by the register listing
     terms = neg_scope._terms(text)
     named_noun = bool(_NOUN.search(text)) or any(is_token_typo_match(w, "applications") for w in re.findall(r"[a-z]{6,}", text.lower()))
     all_words = bool(_ALL_WORDS.search(text)) and not _PRONOUN.search(text)
@@ -116,6 +134,9 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
     if _RATIO.search(text) and len({v for _k, v in terms}) >= 2:  # ratio A to B
         kind = terms[0][0]
         sides = list(dict.fromkeys(v for k, v in terms if k == kind))[:3]
+        if use_view and len({_status(r) if kind == 'status' else _type(r) for r in rows}) == 1:
+            rows = rows_all      # a list of one kind cannot be the ratio's base: compare the register
+            scope = _scope_words(False, len(rows), ta)
         if len(sides) >= 2:
             counts = [sum(1 for r in rows if _match(r, [(kind, v)])) for v in sides]
             label = " : ".join(_name(kind, v, ta) for v in sides)
@@ -161,6 +182,19 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
         parts = ", ".join(f"{by[s]} {_name('status', s, ta)}" for s in order)
         return (f"உங்கள் அதிகார வரம்பில் மொத்தம் {total} விண்ணப்பங்கள் — {parts}." if ta
                 else f"You have {total} applications in total — {parts}.")
+
+    # "how many are 0158?" / "what percentage are F-Line (0178)?" over the list on
+    # screen -- a service code is a kind of application exactly as ISD/NISD are,
+    # so it is counted the same way instead of falling to a fresh, unscoped query.
+    codes = _service_codes(text)
+    if use_view and codes and not terms and (_COUNT.search(text) or _PCT.search(text)):
+        n = sum(1 for r in rows if str(r.get("service_code") or "") in codes)
+        names = (" / " if ta else " or ").join(_code_name(c) for c in codes)
+        if _PCT.search(text):
+            if ta:
+                return f"{scope} {n} ({_pct(n, total)}) {names}."
+            return f"{n} {scope} ({_pct(n, total)}) {'is' if n == 1 else 'are'} {names}."
+        return f"{scope} {n} {names}." if ta else f"{n} {scope} {'is' if n == 1 else 'are'} {names}."
 
     if use_view and terms and _COUNT.search(text):     # "how many are rejected" / "ithula evlo rejected" over the rows on screen
         n = sum(1 for r in rows if _match(r, terms))

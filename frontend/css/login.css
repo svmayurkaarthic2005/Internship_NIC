@@ -632,6 +632,21 @@
     transform: none;
 }
 
+/* The button is disabled while signing in, which fades it. Success must stay
+   fully opaque with white text, or "Success!" disappears into the green. */
+.btn-submit-new.is-success,
+.btn-submit-new.is-success:disabled {
+    background: var(--success);
+    color: #fff;
+    opacity: 1;
+    cursor: default;
+}
+
+.btn-submit-new:focus-visible {
+    outline: 3px solid rgba(var(--primary-rgb), 0.45);
+    outline-offset: 2px;
+}
+
 .btn-icon-new {
     width: 16px;
     height: 16px;

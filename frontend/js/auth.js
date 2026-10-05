@@ -253,7 +253,7 @@ async function handleLogin(event) {
             
             // Show success feedback
             btnText.textContent = 'Success!';
-            submitBtn.style.background = 'var(--success)';
+            submitBtn.classList.add('is-success');
             
             // Redirect to chatbot page after short delay
             setTimeout(() => {

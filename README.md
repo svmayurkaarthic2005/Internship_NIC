@@ -53,10 +53,13 @@ python serve_frontend.py       # Serves on http://localhost:3000
 
 **API Docs** (dev only): `http://localhost:8000/api/docs`
 
-**Test Credentials** (run `python check_login_credentials.py` for the full list):
-- `csenthil@sis.tn.gov.in` / `Test@1234` — Ward 002 SIS (Thoothukudi)
-- `msivakumar@sis.tn.gov.in` / `Test@1234` — Ward 102 SIS (Thoothukudi)
-- `muthulakshmis@sis.tn.gov.in` / `Test@1234` — Ward 103 SIS (Thoothukudi)
+**Test Credentials** (all use password `Test@1234`, Thoothukudi district 28):
+- `csenthil@sis.tn.gov.in` — ward 002
+- `msivakumar@sis.tn.gov.in` — ward 102
+- `muthulakshmis@sis.tn.gov.in` — ward 103
+
+Run `python check_login_credentials.py` for the current list (see CLAUDE.md — the
+older `arjun.kumar` / `priya.devi` / `arun_m` style accounts no longer exist).
 
 ## Project Structure
 
@@ -76,21 +79,15 @@ nic_internship/
 │   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
-│   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~6500 lines) — entry point for all chat logic
-│   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
-│   │   ├── postgres.py       # All database query handlers
-│   │   ├── agent.py          # LLM tool-calling loop (the general_query fallback)
-│   │   ├── followup_context.py  # Reference context for implicit follow-ups
-│   │   ├── doc_extract.py    # Uploaded file → located text segments + citations
-│   │   ├── attachment_store.py  # Attachment tables, authorization, evidence retrieval
-│   │   ├── csv_ops.py        # Deterministic count/sum/min/max/group over CSV rows
-│   │   ├── attachment_qa.py  # Which file, which entity, evidence or refusal
-│   │   ├── agent_tools.py    # The 14 authorized domain tools the agent may call
-│   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
-│   │   ├── embeddings.py     # Embedding generation via Ollama
-│   │   └── auth_service.py   # Login, JWT creation/verification
+│   ├── services/             # chatbot.py (orchestrator, ~16000 lines), rag.py (intent/LLM),
+│   │   │                     #   postgres.py (DB-only queries), agent.py + agent_tools.py
+│   │   │                     #   (tool-calling fallback), plus ~25 per-topic *_qa.py modules
+│   │   │                     #   (owner/parcel/F-Line/TSLR/workflow/attachment handlers, …).
+│   │   │                     #   This list grows often — see CLAUDE.md's Project Structure
+│   │   │                     #   for the current full breakdown, not this file.
 │   ├── sample_db/            # sis_chatbot_db build pipeline — see backend/sample_db/README.md
+│   │   │                     #   NOTE: an uncommitted backend/sample_db_new/ has superseded
+│   │   │                     #   this as what actually built the live DB — see CLAUDE.md.
 │   │   ├── seed_sample_db.py      # Creates the DB, applies DDL, generates + inserts rows
 │   │   ├── verify_sample_db.py    # Structure/refs/population/signature/non-leakage checks
 │   │   ├── build_app_tables.py    # Projects sample tables → the app's ORM tables
@@ -169,14 +166,22 @@ One PostgreSQL database holds **two layers**:
 
 | Table | Rows | Table | Rows |
 |---|---|---|---|
-| `urban_application_log` | 1211 | `nisd_transfer_old_owner` | 630 |
-| `application_workflow_action` | 288087 | `nisd_transfer_return_owner` | 46 |
-| `urban_temp_subdivision_parcel` | 49 | `nisd_transfer_urban_detail` | 229 |
-| `urban_temp_subdivision_owner` | 117 | `isd_transfer_application_info` | 41 |
-| `nisd_transfer_application_info` | 166 | `isd_transfer_urban_detail` | 50 |
-| `nisd_transfer_igrs_owner` | 100 | `urban_parcel_register` | 1033 |
-| `nisd_transfer_new_owner` | 620 | `urban_parcel_signature` | 1036 |
-| `urban_natham_chitta_owner` | 551 | `urban_natham_chitta_signature` | 439 |
+| `appl_log_urban_demo` | 1211 | `full_field_patta_transfer_old_owner_demo` | 630 |
+| `application_workflow_demo` | 288087 | `full_field_patta_transfer_return_owner_demo` | 46 |
+| `areg_temp_subdivclub_demo` | 49 | `full_field_patta_transfer_urban_demo` | 229 |
+| `chitta_temp_subdivclub_demo` | 117 | `sub_div_patta_transfer_application_information_urban_demo` | 41 |
+| `full_field_patta_transfer_application_information_demo` | 166 | `sub_div_patta_transfer_urban_demo` | 50 |
+| `full_field_patta_transfer_igrs_owner_demo` | 100 | `uareg_demo` | 1033 |
+| `full_field_patta_transfer_new_owner_demo` | 620 | `uaregmap_ds_demo` | 1036 |
+| `uchitta_natham_demo` | 551 | `uchitta_nathammap_ds_demo` | 439 |
+
+These table names and the mapping below are the names as *committed* in
+`backend/sample_db/`. The live database was in fact last built from an
+uncommitted `backend/sample_db_new/` pipeline (different table names, e.g.
+`appl_log_urban` with no `_demo` suffix, plus several tables not listed here —
+`service_register_entries`, `correction_modification_flow`, `f_line_service_urban`,
+`tslr_sketch_urban`, …). See CLAUDE.md's "Database Layout" section for the
+current, unreconciled state before trusting either list against a running DB.
 
 **Layer 2 — ORM tables** (`backend/models.py`), projected from layer 1 by `build_app_tables.py`:
 

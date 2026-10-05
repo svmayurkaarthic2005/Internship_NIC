@@ -1759,7 +1759,12 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             f"{_money(fs.get('total_fee'))} across "
             f"{_e(fs.get('with_fee'))} of {_e(fs.get('total_applications'))} "
             f"application(s) that carry a fee record "
-            f"({_e(fs.get('without_fee'))} carry none).</div>"
+            f"({_e(fs.get('without_fee'))} carry none)."
+            + (f" Fees are recorded for ISD/NISD files only; "
+               f"{_e(fs.get('other_service_code_applications'))} application(s) under other "
+               f"service codes have no fee record and are not included."
+               if fs.get('other_service_code_applications') else "")
+            + "</div>"
         )
         type_rows = "".join(
             f"<tr><td>{_e(r.get('application_type'))}</td>"
@@ -2252,7 +2257,7 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             notes
             + f"<div class='table-intro'><strong>{t['survey_no']} {_e(structured_data['survey_no'])}</strong></div>"
             f"<ul>"
-            f"<li>{t['total_area']}: <strong>{(structured_data.get('total_area_sqm') or 0):.2f} sq.m</strong></li>"
+            f"<li>{t['total_area']}: <strong>{(str(round(structured_data.get('total_area_sqm'), 2)) + ' sq.m') if structured_data.get('total_area_sqm') else 'not recorded'}</strong></li>"
             f"<li>{t['land_type']}: {_e(structured_data.get('land_type'))}</li>"
             f"<li>{t['patta_number']}: {_e(structured_data.get('patta_number'))}</li>"
             f"<li>{t['jurisdiction']}: {_e(jur.get('district'))} &rarr; {_e(jur.get('taluk'))} &rarr; "
@@ -2444,11 +2449,11 @@ def _build_html_response_core(structured_data: Dict[str, Any], language: str = "
             if not structured_data.get("status_filter") and _done is not None and _todo is not None \
                     and (_done + _todo) == _fv_total and _done and _todo:
                 if _is_ta:
-                    _late_note = f", {_late} தாமதமானவை" if _late else ""
+                    _late_note = f", {_late} திட்டமிட்ட தேதியைக் கடந்தவை" if _late else ""
                     count_info += (f" — <strong>{_done}</strong> முடிந்தவை, "
                                    f"<strong>{_todo}</strong> இன்னும் பார்வையிட வேண்டியவை{_late_note}")
                 else:
-                    _late_note = f", {_late} overdue" if _late else ""
+                    _late_note = f", {_late} past the scheduled date" if _late else ""
                     count_info += (f" — <strong>{_done}</strong> completed, "
                                    f"<strong>{_todo}</strong> still to visit{_late_note}")
 
@@ -3346,7 +3351,7 @@ def _classify_application_subtopic(message: str, prev_intent: str = None):
                                        "கூட்டுரிமை"))
     ):
         return None
-    # "group survey / sub-division / patta number" name the `appl_log_urban_demo`
+    # "group survey / sub-division / patta number" name the `appl_log_urban`
     # group_* columns, which the ORM projection drops. Routed as survey_detail /
     # survey_owners the deterministic "not in register" handler never sees them
     # and the officer got "No records found". Fall back to application_status,
@@ -3362,7 +3367,7 @@ def _classify_application_subtopic(message: str, prev_intent: str = None):
 # here answers the same regardless of date, so inheriting it would be noise.
 DATE_SCOPED_INTENTS = frozenset({
     "pending_applications", "isd_applications", "nisd_applications",
-    "both_applications", "overdue_applications",
+    "both_applications", "overdue_applications", "all_service_code_applications",
     "town_applications", "block_applications", "applications_by_block",
     "active_applications_taluks",
     "highest_priority_applications", "assigned_today", "immediate_action",
@@ -3651,7 +3656,84 @@ APP_SCOPED_INTENTS = {
 }
 
 
+# What makes a listing question ISD/NISD-specific. Everything else an officer
+# can say about "applications" -- a status, a channel, a ward or block, a month
+# or a date range, a sort order, "how many" -- is true of EVERY service code, so
+# the answer must cover every service code in the register.
+#
+# These words name something only the ISD/NISD workflow carries: the type
+# itself, overdue/escalated state, the field-visit and sketch stages, the desks
+# an application moves through, per-file detail the flat register does not hold.
+_ISD_NISD_ONLY_RE = re.compile(
+    r"\b(?:isd|nisd|nsid|0153|0154)\b|involving\s+sub[\s-]?division"
+    r"|\b(?:overdue|late|delayed|escalated|escalation|in[\s-]?progress|"
+    r"field[\s-]?visits?|visits?|inspections?|unscheduled|sketch|draughtsman|"
+    r"workflow|stages?|desks?|priority|priorities|urgent|workload|assigned|"
+    r"awaiting|waiting|sla|working\s+days?|oldest|longest|stuck)\b"
+    r"|\b(?:sd|dis|sis|tahsildar|zdt|hqdt)\b|காலதாமத|தாமத|கள\s*ஆய்வு",
+    re.IGNORECASE)
+_LISTING_NOUN_RE = re.compile(r"\b(?:applications?|apps?|appl|files?|cases)\b|விண்ணப்ப", re.IGNORECASE)
+
+
+_BARE_FILLER = frozenset("i m im am asking abt about only just ones one what whats how show me my the those them also and now then please pls "
+                         "list ok okay give want need see view display tell are is of for".split())
+_BARE_STATUS = frozenset("pending pnding pendng approved rejected open".split())
+
+
+def _is_bare_status_request(text: str) -> bool:
+    """Nothing but a status word and filler: a request for that status across the whole register."""
+    toks = re.findall(r"[a-z']+", (text or "").lower().replace("'", ""))
+    return bool(toks) and any(t in _BARE_STATUS for t in toks) and all(t in _BARE_FILLER or t in _BARE_STATUS for t in toks)
+
+
+def _is_register_wide_listing(message: str, prev_intent: Optional[str]) -> bool:
+    """True when a generic application listing / count should span every
+    service code instead of just ISD/NISD.
+
+    `pending_applications` is the ISD/NISD desk queue: its rows carry stages,
+    overdue flags and field-visit state that only those two services have. A
+    plain "show my pending applications" is not asking for that detail -- it was
+    answered with 17 of an officer's 53 pending files, the other 36 (0156, 0158,
+    0159, 0165, 0178) silently missing. Equal treatment means a question that
+    names no type is answered across every type; a question that names ISD/NISD,
+    or something only they have, stays on the detailed ISD/NISD handler.
+    """
+    text = message or ""
+    text = re.sub(r"\bnot\s+involving\s+sub[\s-]?division\b", "nisd", text, flags=re.IGNORECASE)
+    text = re.sub(r"\binvolving\s+sub[\s-]?division\b", "isd", text, flags=re.IGNORECASE)
+    if _is_bare_status_request(text):
+        return True            # "i m asking abt pending", "pending ones only", "what about pending"
+    if _ISD_NISD_ONLY_RE.search(text):
+        return False
+    # Scopes the flat register cannot narrow by, or per-file detail it lacks:
+    # leave those on the ISD/NISD handler rather than quietly dropping the scope.
+    if (extract_application_number(text) or re.search(r"\b(?:survey|sy|s\.?\s*no)\b|சர்வே|கணக்கெண்", text, re.IGNORECASE)
+            or extract_taluk_name(text) or _get_projected_application_columns(text) is not None):
+        return False
+    # A follow-up ("last month", "only CSC") continues a register list; a fresh
+    # question has to actually be about applications.
+    if re.search(r"\bhow\s+many\b", text, re.IGNORECASE) and re.search(r"\b(?:pending|approved|rejected|accepted|completed)\b", text, re.IGNORECASE):
+        return True            # "how many approved this year": a count over the whole register, not the ISD / NISD desk
+    return prev_intent == "all_service_code_applications" or bool(_LISTING_NOUN_RE.search(text))
+
+
 def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False) -> str:
+    """Route a message to an intent (see `_parse_intent_core`), then widen a
+    generic application listing to every service code."""
+    if re.search(r"\bhow\s+many\b.{0,40}\b(?:awaiting|waiting\s+for|need(?:ing)?|require|requiring|without|no)\b.{0,25}\bfield\s*visit|"
+                 r"\bwhich\b.{0,40}\b(?:have|has|with)\s+no\s+field\s*visit\s*(?:scheduled|booked|fixed)?|\bno\s+field\s*visit\s+(?:scheduled|booked)\b",
+                 message or "", re.IGNORECASE):
+        return "fv_unassigned_awaiting"      # applications with no visit booked: counted and listed, not the whole calendar
+    if (re.search(r"\bdifference[s]?\s+between\s+(?:service\s+codes?\s+)?0153\s+(?:and|&|vs\.?)\s+0154\b|\bdifference[s]?\s+between\s+0154\s+(?:and|&|vs\.?)\s+0153\b",
+                  message or "", re.IGNORECASE) and not re.search(r"\bhow\s+many\b|\bcount\b|\bnumber\s+of\b|\bmore\b|\bfiles\b", message or "", re.IGNORECASE)):
+        return "service_code_guide"      # the codes, spelled as numbers: still the definition, as for ISD / NISD
+    intent = _parse_intent_core(message, prev_intent, app_scoped)
+    if intent == "pending_applications" and _is_register_wide_listing(message, prev_intent):
+        return "all_service_code_applications"
+    return intent
+
+
+def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool = False) -> str:
     """
     Parse user intent from message using exact token-boundary and production edit-distance matching.
     Supports English, Tamil, and Tanglish. Deterministic identifiers use exact token bounds;
@@ -3917,7 +3999,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                       "pattadar", "urimaiyalar", "urimayalar"]
     ta_pending     = ["நிலுவை", "நிலுவையில்", "நிலுவையிலுள்ள", "காத்திருக்கும்", "பெண்டிங்", "பெண்டிங்ஸ்", "பெண்டிங்கில்", "பெண்டிங்க்", "பென்டிங்",
                       "pending", "waiting", "pendig", "pendng", "uncompleted", "niluvai", "niluvaiyil"]
-    ta_overdue     = ["காலதாமத", "காலதாமதமான", "தாமதம்", "தாமதமான", "காலக்கெடு கடந்த", "ஓவர்டியூ", "ஓவர் டியூ", "ஓவர்ட்யூ", "ஓவர்டியு", "ஓவர்டியூஸ்", "ஒவர்டியூ", "ஓவர்ட்யு", "ஓவர்",
+    ta_overdue     = ["காலதாமதம்", "காலதாமதமாக", "காலதாமத", "காலதாமதமான", "தாமதம்", "தாமதமான", "காலக்கெடு கடந்த", "ஓவர்டியூ", "ஓவர் டியூ", "ஓவர்ட்யூ", "ஓவர்டியு", "ஓவர்டியூஸ்", "ஒவர்டியூ", "ஓவர்ட்யு", "ஓவர்",
                       "overdue", "late", "delayed", "overdew", "overdu", "over-due", "kaalathaamadha", "kaalathamadhamaana", "thamadham",
                       # natural synonyms officers use for "past the SLA" -- specific
                       # multi-word phrases so they never match on a stray word
@@ -4945,6 +5027,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
                                    # Tamil: சமீபத்தில் மாற்றப்பட்டது
                                    "சமீபத்தில் மாற்றப்பட்ட", "கடந்த 7 நாட்கள்"]):
             return "fv_recently_rescheduled"
+        if (re.search(r"\bpast\s+(?:their\s+|the\s+|its\s+)?(?:scheduled|schedule)\s+date|\bmissed\s+(?:their\s+|the\s+)?(?:scheduled\s+)?(?:date|visit)", msg)
+                and re.search(r"\bvisits?\b|inspections?", msg) and not re.search(r"\bnot\b|\bno\b|n.t\b", msg)):
+            return "fv_overdue_inspections"
         if any(w in msg for w in ["reschedule", "availability", "rescheduling",
                                    # Tamil: மீண்டும் திட்டமிடு, கிடைப்பு நேரம்
                                    "மீண்டும் திட்டமிடு", "மீண்டும் திட்டமிட", "கிடைக்கும் நேரம்",
@@ -4979,6 +5064,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         ]):
             return "fv_overdue_inspections"
         
+        _past_sched = bool(re.search(r"\bpast\s+(?:their\s+|the\s+|its\s+)?(?:scheduled|schedule|due)\s+date|\bmissed\s+(?:their\s+|the\s+)?(?:scheduled\s+)?(?:date|visit)", msg))
+        if _past_sched and re.search(r"\bvisits?\b|inspections?", msg) and not _is_negated_overdue:
+            return "fv_overdue_inspections"
         _is_overdue = any(w in msg for w in ["overdue", "delayed", "காலதாமதமான"]) or bool(re.search(r"\blate\b", msg))
         _is_field_visit = any(w in msg for w in ["field visit", "field visits", "visit", "visits", "inspection", 
                                                    "கள ஆய்வு", "கள்ஆய்வு", "ஆய்வு"])
@@ -5454,7 +5542,7 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         "csc", "common service cent", "citizen",
     ])
     # Bare "source" is also half of "irrigation source" -- a real
-    # uareg_demo field name (_UNTRACKED_PARCEL_FIELDS) -- so "what
+    # uareg field name (_UNTRACKED_PARCEL_FIELDS) -- so "what
     # is the irrigation source for <app>?" was swallowed whole into a channel
     # ("how did this application arrive") answer before the parcel-field
     # guard ever got a look at it. Excluded only in that one phrase; every

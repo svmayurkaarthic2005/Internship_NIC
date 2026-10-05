@@ -14,12 +14,16 @@
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .data-table-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 12px 16px;
   background: var(--table-header-bg, #EEF4FF);
   border-bottom: 1px solid var(--table-border);
@@ -70,8 +74,13 @@
 }
 
 .data-table-container {
-  overflow-x: auto;
+  /* ONE scroll box for the table: sideways for wide tables, and vertically
+     past a screenful of rows so the sticky header stays in view. */
+  overflow: auto;
+  max-height: min(60vh, 560px);
+  max-height: min(60dvh, 560px);
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
   width: 100%;
 }
 
@@ -98,6 +107,9 @@
 }
 
 .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--background);
   color: var(--text-secondary);
   font-size: 11px;
@@ -115,8 +127,16 @@
   transition: background 0.1s ease;
 }
 
+.data-table tbody tr:nth-child(even) {
+  background: #FAFBFE;
+}
+
 .data-table tbody tr:hover {
   background: var(--table-row-hover, #F8FAFC);
+}
+
+.data-table tbody td:first-child {
+  font-weight: 600;
 }
 
 .data-table tbody tr:last-child {
@@ -238,4 +258,64 @@
   max-width: 100%;
   overflow: visible;
   margin-top: 8px;
+}
+
+/* ---- Phones and small tablets ------------------------------------------
+   The table scrolls sideways inside its own card; the application number
+   column stays pinned so every row remains identifiable while scrolling. */
+@media (max-width: 768px) {
+  .data-table-header {
+    padding: 10px 12px;
+  }
+
+  .data-table-container {
+    max-height: min(55dvh, 480px);
+  }
+
+  .data-table thead th,
+  .data-table tbody td {
+    padding: 10px 12px;
+  }
+
+  .data-table thead th:first-child,
+  .data-table tbody td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    box-shadow: 1px 0 0 var(--table-border);
+  }
+
+  .data-table thead th:first-child {
+    z-index: 3;
+  }
+
+  .data-table tbody td:first-child {
+    background: #FFFFFF;
+  }
+
+  .data-table tbody tr:nth-child(even) td:first-child {
+    background: #FAFBFE;
+  }
+
+  .data-table-footer {
+    padding: 10px 12px;
+  }
+
+  .data-table-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .pagination-controls {
+    justify-content: center;
+  }
+
+  /* Pagination buttons are tap targets, not tiny desktop controls. */
+  .btn-pagination,
+  .btn-copy-table {
+    min-height: 40px;
+    min-width: 40px;
+  }
 }

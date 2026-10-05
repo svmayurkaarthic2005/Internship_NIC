@@ -13,7 +13,12 @@ httpx==0.27.2
 langchain==0.3.27
 langchain-community==0.3.27
 langchain-ollama==0.2.3
-pypdf>=5.9.0
+pypdf>=5.9.0             # chat-attachment path (backend/services/doc_extract.py) — unchanged, no OCR there
+pymupdf>=1.24.0          # offline corpus ingestion (backend/ingest.py): text + native tables + page images
+pytesseract>=0.3.10      # offline corpus ingestion: scanned-page OCR fallback, DEFAULT engine (OCR_ENGINE="tesseract")
+pillow>=10.0.0           # offline corpus ingestion: needed by the pytesseract path
+easyocr>=1.7.0           # offline corpus ingestion: alternate OCR engine, set OCR_ENGINE="easyocr" — currently
+                         # broken for Tamil (upstream bug, see backend/ingest.py); kept wired in for when it's fixed
 python-docx==1.2.0
 fpdf2>=2.7.0            # test fixtures only: builds the PDFs test_attachments.py reads back
 pgvector>=0.3.0

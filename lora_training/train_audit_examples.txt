@@ -1,0 +1,114 @@
+
+--- WRONG_LABEL (row 8, source=flinetslr) ---
+  turn 1: name-like phrase 'The Declared Reason' in answer not present in context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nOfficer: Lakshmi Narayanan, Sub Inspector Surveyor. Jurisdiction (wards held"
+  user: 'SIS reason of 2026/0153/02/779386'
+  assistant: 'The Declared Reason for 2026/0153/02/779386 is: sale'
+
+--- UNSUPPORTED_FIELD (row 16, source=glossary_reinforced) ---
+  turn 1: value '100.00' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is NISD?'
+  assistant: 'Service code 0153 = NISD (Not Involving Subdivision).\n  • What it is: a patta transfer that does not create a new subdivision, so no field visit and no SD sketch.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (document verification) → Zonal Level'
+
+--- UNSUPPORTED_FIELD (row 16, source=glossary_reinforced) ---
+  turn 1: value '15' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is NISD?'
+  assistant: 'Service code 0153 = NISD (Not Involving Subdivision).\n  • What it is: a patta transfer that does not create a new subdivision, so no field visit and no SD sketch.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (document verification) → Zonal Level'
+
+--- UNSUPPORTED_FIELD (row 16, source=glossary_reinforced) ---
+  turn 1: value '20' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is NISD?'
+  assistant: 'Service code 0153 = NISD (Not Involving Subdivision).\n  • What it is: a patta transfer that does not create a new subdivision, so no field visit and no SD sketch.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (document verification) → Zonal Level'
+
+--- UNSUPPORTED_FIELD (row 62, source=glossary_reinforced) ---
+  turn 1: value '60.00' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is ISD?'
+  assistant: 'Service code 0154 = ISD (Involving Subdivision).\n  • What it is: a patta transfer in which the parcel is split, so a field inspection and a sub-division sketch are required.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (mandatory field visit) → '
+
+--- UNSUPPORTED_FIELD (row 62, source=glossary_reinforced) ---
+  turn 1: value '35' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is ISD?'
+  assistant: 'Service code 0154 = ISD (Involving Subdivision).\n  • What it is: a patta transfer in which the parcel is split, so a field inspection and a sub-division sketch are required.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (mandatory field visit) → '
+
+--- UNSUPPORTED_FIELD (row 62, source=glossary_reinforced) ---
+  turn 1: value '400.00' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is ISD?'
+  assistant: 'Service code 0154 = ISD (Involving Subdivision).\n  • What it is: a patta transfer in which the parcel is split, so a field inspection and a sub-division sketch are required.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (mandatory field visit) → '
+
+--- UNSUPPORTED_FIELD (row 62, source=glossary_reinforced) ---
+  turn 1: value '30' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is ISD?'
+  assistant: 'Service code 0154 = ISD (Involving Subdivision).\n  • What it is: a patta transfer in which the parcel is split, so a field inspection and a sub-division sketch are required.\n  • Workflow: Citizen / CSC / Sub-Registrar → SIS (mandatory field visit) → '
+
+--- UNSUPPORTED_FIELD (row 63, source=allcodes) ---
+  turn 1: value '30' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nService code reference (from the department's code table):\n0185 F-Line Appea"
+  user: 'How many days does tslr sketch verification take'
+  assistant: 'The reference documents give a time limit only for 0153 (15-20 working days) and 0154 (30-35 working days). None is documented for 0170 (TSLR Sketch Verification).'
+
+--- UNSUPPORTED_FIELD (row 73, source=allcodes) ---
+  turn 1: value '2026.' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nOfficer: Meena Sundaram, Sub Inspector Surveyor. Jurisdiction (wards held): "
+  user: 'How many 0158 applications were submitted in march 2026'
+  assistant: 'Found 1 application(s) under 0158 (Modification / Anadeenam) submitted in March 2026.'
+
+--- UNSUPPORTED_FIELD (row 75, source=flinetslr) ---
+  turn 1: value '644086.' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nOfficer: Kavitha Raman, Sub Inspector Surveyor. Jurisdiction (wards held): W"
+  user: 'is there no f-line record for 2026/0178/02/644086'
+  assistant: 'No, the F-Line record is held for 2026/0178/02/644086.'
+
+--- UNSUPPORTED_FIELD (row 76, source=flinetslr) ---
+  turn 1: value '566579.' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nOfficer: Senthil Nathan, Sub Inspector Surveyor. Jurisdiction (wards held): "
+  user: '2026/0158/02/566579 tslr linked application number'
+  assistant: 'No TSLR sketch record is held for application 2026/0158/02/566579. Only a TSLR sketch application (service code 0156) carries one.'
+
+--- UNSUPPORTED_FIELD (row 82, source=allcodes) ---
+  turn 1: value '71' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nService code reference (from the department's code table):\n0171 Rural-Urban "
+  user: 'which service code has the most applications'
+  assistant: '0171 (Rural-Urban Correlation) - 18 application(s), the most of 6 codes (71 in all).'
+
+--- UNSUPPORTED_FIELD (row 82, source=allcodes) ---
+  turn 1: value '18' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nService code reference (from the department's code table):\n0171 Rural-Urban "
+  user: 'which service code has the most applications'
+  assistant: '0171 (Rural-Urban Correlation) - 18 application(s), the most of 6 codes (71 in all).'
+
+--- UNSUPPORTED_FIELD (row 88, source=allcodes) ---
+  turn 1: value '100.0' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date.\n\nOfficer: Gayathri Mohan, Sub Inspector Surveyor. Jurisdiction (wards held): "
+  user: 'code 0157 la approved percentage evlo'
+  assistant: '0157 (TSLR Extract Only) கீழ் 1 விண்ணப்பங்களில் 1 ஒப்புதல் அளிக்கப்பட்ட — 100.0%.'
+
+--- WRONG_LABEL (row 110, source=?) ---
+  turn 1: name-like phrase 'Inspector General' in answer not present in context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'IGRS full form enna?'
+  assistant: 'IGRS = Inspector General of Registration and Stamps'
+
+--- UNSUPPORTED_FIELD (row 137, source=glossary_reinforced) ---
+  turn 1: value '100.00' in answer not found in, or derivable from, prior context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'Can you explain, service code 0153 nu sonna enna'
+  assistant: 'சேவை குறியீடு 0153 = NISD (Not Involving Subdivision / உட்பிரிவு இல்லாத பட்டா மாறுதல்).\n  • முழு கணக்கெண்ணின் நேரடி பட்டா மாறுதல் — புதிய உட்பிரிவு உருவாக்கப்படாது, எனவே கள ஆய்வோ SD வரைபடமோ தேவையில்லை\n  • பணிப்பாய்வு: குடிமகன் / CSC / சார்-பதிவாளர் →'
+
+--- WRONG_LABEL (row 2635, source=?) ---
+  turn 1: name-like phrase 'Inspector General' in answer not present in context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: 'What is the full form of IGRS?'
+  assistant: 'IGRS = Inspector General of Registration and Stamps'
+
+--- WRONG_LABEL (row 3191, source=?) ---
+  turn 1: name-like phrase 'Registrar Office' in answer not present in context
+  system[:250]: "You are the SIS AI Assistant for Tamil Nadu Sub Inspector Surveyor officers. Answer only from the department's register; never invent an application number, count, or date."
+  user: "if the IGRS number is absent, what does it mean, so it's not from SRO?"
+  assistant: 'SRO is the Sub-Registrar Office, where a sale deed is registered. When a deed is registered there, its IGRS system raises the patta mutation off the registered document and issues an IGRS Form 6 number. An application that reaches the SIS desk that w'

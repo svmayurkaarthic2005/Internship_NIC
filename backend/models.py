@@ -493,6 +493,8 @@ class ServiceRegisterEntry(Base):
     status = Column(String(30))              # coarse: approved / rejected / pending -- the raw appl_status, not the ISD/NISD state machine
     stage = Column(String(30))               # coarse: Open / Completed -- read off the extract's own workflow marker, not a real desk chain
     submission_channel = Column(String(20))  # CSC / citizen / sub_registrar -- can_channel(), same rule as Application
+    submission_ip = Column(String(50))       # appl_log_urban.ip_address -- same source column Application.submission_ip
+                                              # reads, just not restricted to service codes 0153/0154
     submission_date = Column(Date)
     ward_id = Column(UUID(as_uuid=True), ForeignKey("wards.id"), nullable=False)
     block_id = Column(UUID(as_uuid=True), ForeignKey("blocks.id"))

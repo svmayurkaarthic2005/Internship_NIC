@@ -346,7 +346,7 @@ def authorize_geography(ctx: ToolContext, args: Dict[str, Any]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 _ROW_CAP = 15
 
-_APP_FIELDS = ("application_number", "type", "status", "current_stage", "stage",
+_APP_FIELDS = ("application_number", "type", "service_code", "service_name", "status", "current_stage", "stage",
                "submission_date", "ward_number", "block_number", "survey_number",
                "applicant_name", "days_pending", "is_overdue", "submission_channel")
 
@@ -377,15 +377,45 @@ def _slim_list(data: Dict[str, Any], key: str, slim=_slim_app) -> Dict[str, Any]
 # ─────────────────────────────────────────────────────────────────────────────
 # Handlers — each one forwards ctx.officer into the existing query function
 # ─────────────────────────────────────────────────────────────────────────────
+def _register_wide(args: Dict[str, Any]) -> bool:
+    """True when a list/count call asks nothing only ISD/NISD can answer.
+
+    `get_officer_applications` reads `applications`, which holds ISD/NISD only,
+    so an unscoped "how many pending applications" answered 17 of 47. Unless the
+    call names a type, an overdue flag, or an in-progress/escalated status (the
+    register has no such split), it is answered from the register across every
+    service code, the same as the deterministic handlers.
+    """
+    return (not args.get("application_type") and args.get("is_overdue") is None
+            and args.get("status") not in ("in_progress", "escalated"))
+
+
+async def _register_applications(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    status = args.get("status")
+    scoped = (args.get("submission_year") or args.get("submission_month")
+              or args.get("submission_channel"))
+    return await pg.get_all_service_code_applications(
+        ctx.db, ctx.officer,
+        submission_channel=args.get("submission_channel"),
+        status=status or (None if scoped else "pending"),
+        submission_year=args.get("submission_year"),
+        submission_month=args.get("submission_month"),
+        ward_number=args.get("ward_number"), block_number=args.get("block_number"),
+        hide_rejected=status is None)
+
+
 async def _h_list_applications(ctx: ToolContext, **args) -> Dict[str, Any]:
     authorize_geography(ctx, args)
+    if _register_wide(args):
+        return _slim_list(await _register_applications(ctx, args), "applications")
     data = await pg.get_officer_applications(ctx.db, ctx.officer, **args)
     return _slim_list(data, "applications")
 
 
 async def _h_count_applications(ctx: ToolContext, **args) -> Dict[str, Any]:
     authorize_geography(ctx, args)
-    data = await pg.get_officer_applications(ctx.db, ctx.officer, **args)
+    data = (await _register_applications(ctx, args) if _register_wide(args)
+            else await pg.get_officer_applications(ctx.db, ctx.officer, **args))
     count = data.get("count")
     if count is None:
         count = len(data.get("applications") or [])
@@ -511,13 +541,15 @@ TOOLS: List[ToolSpec] = [
     ToolSpec(
         name="list_applications",
         description=(
-            "List the signed-in officer's applications from the register, optionally "
-            "filtered by status, type (ISD/NISD), submission channel, ward, "
-            "block, or submission month/year. Use for 'show me...', 'which "
-            "applications...'. Returns real rows; never invent application numbers. "
-            "Called with NO filter it returns only what is live at this officer's "
-            "desk right now, not their whole history -- to search the register as a "
-            "whole, always pass a status, type, channel or period."),
+            "List the signed-in officer's applications across EVERY service code in the "
+            "register (ISD, NISD, Modification, Addition, F-Line, ...), optionally "
+            "filtered by status, submission channel, ward, block, or submission "
+            "month/year. Use for 'show me...', 'which applications...'. Returns real "
+            "rows; never invent application numbers. Every service code is treated "
+            "alike -- do not narrow to ISD/NISD unless the officer names a type. "
+            "With NO filter it lists the open (pending) applications. Pass "
+            "application_type ('ISD'/'NISD') or is_overdue only when the officer asks "
+            "for those, which switches to the detailed ISD/NISD queue."),
         parameters=_obj({
             "status": {"type": "string", "enum": _STATUS_ENUM},
             "application_type": {"type": "string"},
@@ -533,12 +565,13 @@ TOOLS: List[ToolSpec] = [
     ToolSpec(
         name="count_applications",
         description=(
-            "Count the signed-in officer's applications matching a filter, without "
-            "listing them. Use for 'how many...'. The number in your answer must be "
-            "the number this tool returns. With NO filter it counts only what is "
-            "live at this officer's desk; for a total across the register pass the "
-            "status, type, channel or period being asked about, or call "
-            "get_officer_workload for the workload summary."),
+            "Count the signed-in officer's applications across EVERY service code in the "
+            "register matching a filter, without listing them. Use for 'how many...'. "
+            "The number in your answer must be the number this tool returns. With NO "
+            "filter it counts the open (pending) applications; pass the status, "
+            "channel or period being asked about. Pass application_type ('ISD'/'NISD') "
+            "or is_overdue only when the officer asks for those. For the officer's "
+            "desk workload summary call get_officer_workload."),
         parameters=_obj({
             "status": {"type": "string", "enum": _STATUS_ENUM},
             "application_type": {"type": "string"},

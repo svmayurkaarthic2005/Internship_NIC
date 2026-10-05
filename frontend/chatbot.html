@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2951C4">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
@@ -23,9 +24,9 @@
     <link rel="stylesheet" href="css/global.css?v=20260920_001">
     <link rel="stylesheet" href="css/animations.css?v=20260920_001">
     <link rel="stylesheet" href="css/components.css?v=20260920_001">
-    <link rel="stylesheet" href="css/chatbot.css?v=20260916_001">
-    <link rel="stylesheet" href="css/responsive.css?v=20260916_001">
-    <link rel="stylesheet" href="css/table_styles.css?v=20260930_001">
+    <link rel="stylesheet" href="css/chatbot.css?v=20261003_001">
+    <link rel="stylesheet" href="css/responsive.css?v=20261003_001">
+    <link rel="stylesheet" href="css/table_styles.css?v=20261003_001">
 </head>
 <body class="chatbot-page">
     <div class="chat-main-container-new">
@@ -79,11 +80,18 @@
             
             <!-- Input Area -->
             <div class="chat-input-area-new">
+                <div class="quick-chips" id="quickChips" role="group" aria-label="Suggested questions">
+                    <button type="button" class="quick-chip" data-q="Show my pending applications">Pending applications</button>
+                    <button type="button" class="quick-chip" data-q="Which applications are overdue?">Overdue</button>
+                    <button type="button" class="quick-chip" data-q="What is my workload?">My workload</button>
+                    <button type="button" class="quick-chip" data-q="Which application should I field visit next?">Next field visit</button>
+                    <button type="button" class="quick-chip" data-q="What is service code 0154?">What is ISD?</button>
+                </div>
                 <div class="input-container-new">
                     <textarea 
                         id="messageInput" 
                         class="message-input-new" 
-                        placeholder="Ask about survey numbers, applications, ownership, documents, or workflow..."
+                        placeholder="Ask about applications..."
                         rows="1"
                         maxlength="1000"
                         aria-label="Message input"
@@ -96,7 +104,7 @@
                                  and it stays crisp if the icon library is slow. -->
                             <span class="stop-icon-new" aria-hidden="true"></span>
                         </button>
-                        <button class="btn-icon-action-new" aria-label="Attach file">
+                        <button class="btn-icon-action-new" aria-label="Attach file" title="Attach file">
                             <i data-lucide="paperclip" class="attach-icon-new"></i>
                         </button>
                     </div>
@@ -110,17 +118,34 @@
     
     <!-- JavaScript -->
     <script src="js/chatStorage.js?v=20260909_001"></script>
-    <!-- js/dataTable.js is NOT loaded on purpose. It defines the same twelve
-         functions as table_renderer.js -- renderDataTable, createTableHTML,
-         prepareApplicationsTable and the rest -- and loaded first, every one of
-         them was immediately overwritten by table_renderer.js below. So it
-         rendered nothing, while looking exactly like the file that did: an edit
-         made there (its district column, its cell classes) changed the screen
-         not at all. The file is still on disk; nothing loads it. -->
     <script src="js/table_renderer.js?v=20260930_001"></script>
-    <script src="js/chat.js?v=20260929_001"></script>
+    <script src="js/chat.js?v=20261004_002"></script>
     <script>
         lucide.createIcons();
+
+        // Starter chips: fill the box, send, and tuck the row away once a
+        // conversation is under way.
+        (function () {
+            var chips = document.getElementById('quickChips');
+            var input = document.getElementById('messageInput');
+            var send = document.getElementById('sendBtn');
+            var list = document.getElementById('chatMessages');
+            if (!chips || !input || !send || !list) return;
+
+            chips.addEventListener('click', function (e) {
+                var chip = e.target.closest('.quick-chip');
+                if (!chip) return;
+                input.value = chip.getAttribute('data-q');
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                send.click();
+            });
+
+            function sync() {
+                chips.hidden = list.querySelectorAll('.message-user').length > 0;
+            }
+            new MutationObserver(sync).observe(list, { childList: true });
+            sync();
+        })();
     </script>
 </body>
 </html>

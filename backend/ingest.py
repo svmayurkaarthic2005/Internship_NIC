@@ -12,19 +12,152 @@ if sys.platform == "win32":
         pass
 from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import io as _io
+import os
 import re
 import csv
 import unicodedata
 
 try:
-    from pypdf import PdfReader
+    import fitz  # PyMuPDF — PDF text, native tables, and page images for OCR
 except ImportError:  # PDF ingestion is optional; .txt/.csv still work without it
-    PdfReader = None
+    fitz = None
+
+# Neither OCR engine's package is imported here. Only the one actually
+# selected by OCR_ENGINE is imported, and only on first real use inside
+# `_ocr_image` / `_get_easyocr_reader` below — EasyOCR in particular pulls in
+# PyTorch (~2GB on disk); a deployment that never OCRs a page, or that only
+# ever runs Tesseract, should never pay that import cost.
 
 try:
     import docx as _docx  # python-docx
 except ImportError:
     _docx = None
+
+# A page with fewer extractable characters than this is treated as a scan and
+# sent to OCR instead — most text PDFs clear this easily, so only genuinely
+# image-only pages pay the OCR cost.
+OCR_MIN_CHARS_PER_PAGE = 20
+
+# ── OCR engine selection ────────────────────────────────────────────────────
+# Both engines are open-source and non-Chinese-origin (PaddleOCR, Chinese/
+# Baidu, ruled out on origin alone; Surya, Datalab/USA, ruled out separately
+# for not supporting Tamil at all). An external Tamil benchmark (Gupta et al.
+# 2025, arXiv:2507.18264) suggested EasyOCR should out-accuracy Tesseract on
+# Tamil -- but that was never verified against this project's own documents,
+# so it was NOT trusted on its own. benchmark_ocr_engines.py in the repo root
+# ran both through this exact `_ocr_image()` function on five representative
+# SIS-style fixtures (clean Tamil, clean English, mixed Tamil+English, a
+# table, a degraded scan). Result, reproduced twice:
+#
+#   engine      | maintainer          | license    | Tamil on THIS install
+#   ------------|---------------------|------------|----------------------------
+#   EasyOCR     | Jaided AI, Thailand | Apache-2.0 | FAILS on every fixture --
+#   (1.7.2)     |                     |            | easyocr.Reader(['ta', ...])
+#               |                     |            | raises RuntimeError: size
+#               |                     |            | mismatch loading its own
+#               |                     |            | shipped Tamil checkpoint
+#               |                     |            | (143 vs 127 output classes).
+#               |                     |            | Confirmed a known, still-
+#               |                     |            | open upstream bug -- GitHub
+#               |                     |            | JaidedAI/EasyOCR #1135 (Sep
+#               |                     |            | 2023) and #1315 (Oct 2024),
+#               |                     |            | fix PR #1333 still unmerged.
+#               |                     |            | Reproduced with Tamil alone
+#               |                     |            | too, so it is the shipped
+#               |                     |            | model file, not a language-
+#               |                     |            | combination issue.
+#   Tesseract   | Google (US), OSS    | Apache-2.0 | WORKS. avg CER 0.135 / WER
+#               |                     |            | 0.341 across the 5 fixtures
+#               |                     |            | (clean English: exact match,
+#               |                     |            | CER 0.016, WER 0.0). Main
+#               |                     |            | error mode is vowel-sign
+#               |                     |            | placement/dropping on Tamil
+#               |                     |            | consonant clusters, and an
+#               |                     |            | English acronym (ISD) inside
+#               |                     |            | a Tamil line occasionally
+#               |                     |            | misreads as noise -- usable,
+#               |                     |            | not perfect. ~0.5s/page,
+#               |                     |            | ~380MB RSS, zero failures.
+#
+# Tesseract is the current production default because it is functional and
+# reliable in our tested environment -- not a claim that it is permanently the
+# better engine. EasyOCR should be re-benchmarked with benchmark_ocr_engines.py
+# if its Tamil checkpoint issue is fixed upstream, and again against real
+# scanned SIS/government PDFs once some are available -- this fixture set is
+# synthetic. The engine is selected by name in ONE place (`OCR_ENGINE`,
+# overridable with the OCR_ENGINE env var without touching code) and called
+# through ONE function (`_ocr_image`) -- swapping never touches `_ocr_page` or
+# anything upstream of it.
+OCR_ENGINE = os.environ.get("OCR_ENGINE", "tesseract")  # "tesseract" | "easyocr"
+OCR_LANGS_EASYOCR = ["ta", "en"]
+OCR_LANG_TESSERACT = "tam+eng"  # needs tesseract-ocr-tam (Linux) or the
+                                  # Tamil language pack (Windows installer)
+
+_easyocr_reader = None  # lazy singleton: import + model load is expensive, do it once
+
+
+def _get_easyocr_reader():
+    """Import and build the EasyOCR reader on first use only (see the module
+    import comment above) -- never at import time, never unless selected."""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        import easyocr  # may raise ImportError; caller handles it
+        _easyocr_reader = easyocr.Reader(OCR_LANGS_EASYOCR, gpu=False)
+    return _easyocr_reader
+
+
+def _ocr_image(png_bytes: bytes) -> str:
+    """OCR one rendered page image. The single entry point for every engine —
+    this is the one function a future engine swap needs to touch. A missing
+    package or binary is logged with the exact fix and the page is skipped
+    (returns ""), never raised -- one bad/unconfigured page must not fail the
+    whole ingestion run."""
+    if OCR_ENGINE == "easyocr":
+        try:
+            reader = _get_easyocr_reader()
+        except ImportError:
+            logger.warning(
+                "Scanned page skipped — OCR_ENGINE=easyocr but the 'easyocr' "
+                "package is not installed: pip install easyocr (first use "
+                "downloads its Tamil + English model weights)."
+            )
+            return ""
+        lines = reader.readtext(png_bytes, detail=0, paragraph=True)
+        return "\n".join(lines)
+
+    if OCR_ENGINE == "tesseract":
+        try:
+            import pytesseract
+            from PIL import Image
+        except ImportError:
+            logger.warning(
+                "Scanned page skipped — OCR_ENGINE=tesseract but 'pytesseract' "
+                "and/or 'pillow' is not installed: pip install pytesseract pillow."
+            )
+            return ""
+        # No machine-specific path is hardcoded here. If the Tesseract binary
+        # is not on PATH, point at it with the TESSERACT_CMD env var instead
+        # of editing this file.
+        tesseract_cmd = os.environ.get("TESSERACT_CMD")
+        if tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        img = Image.open(_io.BytesIO(png_bytes))
+        try:
+            return pytesseract.image_to_string(img, lang=OCR_LANG_TESSERACT)
+        except pytesseract.TesseractNotFoundError:
+            logger.warning(
+                "Scanned page skipped — the Tesseract OCR binary itself was "
+                "not found. Install it (`tesseract-ocr` + `tesseract-ocr-tam` "
+                "on Linux; the UB-Mannheim build, with the Tamil language pack, "
+                "on Windows: https://github.com/UB-Mannheim/tesseract/wiki), "
+                "then either add it to PATH or set the TESSERACT_CMD "
+                "environment variable to the full path of tesseract.exe / "
+                "tesseract."
+            )
+            return ""
+
+    raise ValueError(f"Unknown OCR_ENGINE: {OCR_ENGINE!r}")
 
 # Every extension the loader understands. A file dropped into backend/documents/
 # with one of these suffixes is picked up automatically -- no config entry needed.
@@ -140,20 +273,88 @@ def fix_tamil_reordering(text: str) -> str:
     return unicodedata.normalize("NFC", fixed)
 
 
+def _ocr_page(page: "fitz.Page") -> str:
+    """Render one PDF page to an image and OCR it via `_ocr_image`.
+
+    ponytail: one page at a time, ~1-3s each on CPU — fine for the occasional
+    scanned circular; add a process pool if a bulk backlog of scans shows up.
+    """
+    pix = page.get_pixmap(dpi=300)  # 300 DPI is the usual OCR sweet spot
+    try:
+        return _ocr_image(pix.tobytes("png"))
+    except Exception as e:
+        logger.warning(f"OCR failed on a page: {e}")
+        return ""
+
+
+def _extract_pdf_tables(page: "fitz.Page") -> list:
+    """Pipe-delimited rows for every table PyMuPDF finds on the page.
+
+    Uses PyMuPDF's built-in table finder — no extra dependency — in the same
+    '|'-joined row shape the .docx table loader below already uses.
+    """
+    lines = []
+    try:
+        found = page.find_tables()
+    except Exception:
+        return lines
+    for t_idx, tbl in enumerate(found.tables, start=1):
+        try:
+            rows = tbl.extract()
+        except Exception:
+            continue
+        for r_idx, row in enumerate(rows, start=1):
+            cells = [str(c).strip() if c else "" for c in row]
+            if any(cells):
+                lines.append(f"table {t_idx} row {r_idx}: " + " | ".join(cells))
+    return lines
+
+
+# Embedded per-page marker, stripped out of chunk text before storage; read
+# back by `_page_info_for_chunks` the same way `_prefix_section_headings`
+# reads '=== SECTION ===' headings below.
+_PDF_PAGE_RE = re.compile(r"<<<PAGE (\d+)(\|OCR)?>>>\n?")
+
+
 def load_document(file_path: Path) -> str:
     """
     Load document content from file
     """
     try:
         if file_path.suffix.lower() == ".pdf":
-            if PdfReader is None:
-                logger.error(f"Skipping {file_path.name}: pypdf not installed "
-                             f"(pip install pypdf) — PDF ingestion unavailable")
+            if fitz is None:
+                logger.error(f"Skipping {file_path.name}: PyMuPDF not installed "
+                             f"(pip install pymupdf) — PDF ingestion unavailable")
                 return ""
-            reader = PdfReader(str(file_path))
-            content = "\n".join(page.extract_text() or "" for page in reader.pages)
+            parts = []
+            page_count = 0
+            ocr_pages = 0
+            pdf = fitz.open(str(file_path))
+            try:
+                for i, page in enumerate(pdf, start=1):
+                    page_count = i
+                    text = (page.get_text() or "").strip()
+                    used_ocr = False
+                    # Rule 1 & 2: only pages with too little extractable text
+                    # go to OCR — a normal text page never pays that cost.
+                    if len(text) < OCR_MIN_CHARS_PER_PAGE:
+                        ocr_text = _ocr_page(page).strip()
+                        if ocr_text:
+                            text = ocr_text
+                            used_ocr = True
+                            ocr_pages += 1
+                    table_lines = _extract_pdf_tables(page)
+                    if table_lines:
+                        text = (text + "\n" + "\n".join(table_lines)).strip()
+                    marker = f"<<<PAGE {i}{'|OCR' if used_ocr else ''}>>>"
+                    parts.append(f"{marker}\n{text}" if text else marker)
+            finally:
+                pdf.close()
+            content = "\n\n".join(parts)
             content = fix_tamil_reordering(content)
-            logger.info(f"Loaded PDF document: {file_path.name} ({len(content)} chars)")
+            logger.info(f"Loaded PDF document: {file_path.name} "
+                        f"({len(content)} chars, {page_count} pages, "
+                        f"{ocr_pages} via OCR)")
             return content
 
         if file_path.suffix.lower() == ".docx":
@@ -301,6 +502,38 @@ def _prefix_section_headings(content: str, chunks: list) -> list:
         out.append(f"{owning}\n{chunk}" if owning else chunk)
     return out
 
+def _page_info_for_chunks(content: str, chunks: list) -> list:
+    """Return (page_number, used_ocr) for each chunk, read off the embedded
+    '<<<PAGE N>>>' / '<<<PAGE N|OCR>>>' markers `load_document` left in a
+    PDF's text. Same "find the chunk's offset, take the marker in force
+    before it" approach as `_prefix_section_headings` above, just answering a
+    page number instead of prepending a heading.
+
+    Non-PDF content has no markers, so every entry comes back (None, False)
+    and the caller falls back to its old chunk-index numbering unchanged.
+    """
+    markers = [(m.start(), int(m.group(1)), bool(m.group(2)))
+               for m in _PDF_PAGE_RE.finditer(content)]
+    if not markers:
+        return [(None, False)] * len(chunks)
+
+    out = []
+    cursor = 0
+    for chunk in chunks:
+        pos = content.find(chunk[:120], cursor)
+        if pos == -1:
+            pos = cursor
+        cursor = max(cursor, pos + 1)
+        owning = (markers[0][1], markers[0][2])
+        for start, page_no, used_ocr in markers:
+            if start <= pos:
+                owning = (page_no, used_ocr)
+            else:
+                break
+        out.append(owning)
+    return out
+
+
 def chunk_document(content: str, document_name: str) -> list:
     """
     Split document into chunks using RecursiveCharacterTextSplitter
@@ -388,27 +621,36 @@ def ingest_documents(extra_paths=None):
         chunks = chunk_document(content, doc_name)
         if not chunks:
             continue
-        
+
+        # Real PDF page numbers (and whether a chunk's page was OCR'd), read
+        # off the markers load_document embedded. (None, False) per chunk for
+        # every other file type -- page_number then falls back to chunk index,
+        # exactly as before this pipeline carried PDF page numbers at all.
+        page_info = _page_info_for_chunks(content, chunks)
+
         # Prepare chunks with metadata
         for i, chunk in enumerate(chunks):
             # Stable across runs: the store upserts ON CONFLICT (chunk_id), so a
             # random suffix here made every re-ingest insert a second copy of
             # each chunk instead of replacing it.
             chunk_id = f"{doc_name}_{i}"
-            
+
+            page_no, used_ocr = page_info[i]
+            stored_chunk = _PDF_PAGE_RE.sub("", chunk).strip() if page_no is not None else chunk
+
             chunk_metadata = {
                 "document_name": doc_name,
-                "section": f"chunk_{i}",
+                "section": f"chunk_{i}" + ("_ocr" if used_ocr else ""),
                 "category": metadata["category"],
                 "source": metadata["source"],
                 "language": metadata["language"],
-                "page_number": i + 1,
+                "page_number": page_no if page_no is not None else i + 1,
                 "total_chunks": len(chunks)
             }
-            
+
             all_chunks.append({
                 "id": chunk_id,
-                "content": chunk,
+                "content": stored_chunk,
                 "metadata": chunk_metadata
             })
         

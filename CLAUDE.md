@@ -136,7 +136,7 @@ nic_internship/
 ├── frontend/
 │   ├── login.html / chatbot.html / channel_report.html
 │   ├── css/
-│   └── js/                   # auth.js, chat.js, chatStorage.js, dataTable.js,
+│   └── js/                   # auth.js, chat.js, chatStorage.js,
 │                             #   table_renderer.js, lucide-fallback.js
 ├── var/attachments/          # Uploaded-file bytes (gitignored, outside anything served)
 ├── tools/                    # create_chatbot_test_fixtures.js
@@ -290,6 +290,26 @@ reflected anywhere else in this file yet, and `sample_db_new/` has no
 Layer 1/Layer 2 tables below as the superseded pipeline's shape until
 `sample_db_new` is reconciled with (or replaces) `sample_db` and this file is
 updated accordingly.
+
+**Every service code is treated alike unless the question names ISD/NISD.**
+`applications` holds only ISD/NISD, so answering generic questions from it
+told an officer with 47 pending files they had 17, and the same officer got
+57, 36 or 152 "applications" depending on phrasing. The register
+(`service_register_entries`) is now the source for any question that names no
+type:
+
+| question | answered from |
+|---|---|
+| listing / count with a status, period, ward, block, channel, sort or "first N" ("show my pending applications", "how many are approved in June") | register, all service codes (`_register_listing()` in `chatbot.py`, routed by `rag._is_register_wide_listing()` wrapping `parse_intent`) |
+| follow-ups on that list ("how many of them are CSC", "how many are 0158") | the rows on screen, register rows included (`get_applications_by_numbers`, `number_qa`) |
+| totals, per-month/year, percentages, completion rate, by block/ward, status/channel/ward/month/type comparisons | register (`get_analytics_rows`, `get_comparison`, `_register_completion`, `get_applications_by_block`) |
+| names ISD/NISD, or overdue / escalated / in progress / field visit / stage / workload / per-file fields / a survey or application number | the detailed ISD/NISD handlers, as before |
+| average time, longest to approve, fee totals | ISD/NISD only (the register holds no decision date or fee); the answer says so |
+
+`parse_intent` returns `pending_applications` for ~30 phrasings; the widening
+is one rule on top of them, not 30 edits. Rejected files stay out of a list
+unless asked for, and the answer reports how many were left out.
+`python test_register_equal_treatment.py` (`--routing` skips the database).
 
 Three more live tables fit the same pattern — real data, no mention anywhere
 in this file, and no evident ORM/query/intent wiring found so far:
@@ -2078,3 +2098,270 @@ python test_clear_command.py --routing  # classification only, no database
 ## License
 
 Developed for **National Informatics Centre (NIC)** internship — Tamil Nadu Survey Department.
+
+## Sub-division plot fields of one application
+
+`backend/services/subdivision_qa.py`, hooked by `_early_subdivision_answer()` in
+`chatbot.py` (both chat paths, ahead of the "not held in your register" guards).
+`python test_subdivision_qa.py` (no DB, no LLM).
+
+Answers temporary / new sub-division number, existing / new patta, area, land type / use,
+tax, plot, soil, group numbers and owners from the plot rows in `areg_temp_subdivclub`
+(via `application_sub_divisions`), in English, Tamil and Tanglish, tolerant of typos
+("temp sub div no", "pata", "aria", "nmbr"). Exact words win over fuzzy matches
+("ares" / "area" are confusable). A back-reference ("this / intha / இந்த") also claims
+a turn routed to a listing intent, which then becomes `application_status`.
+**Area is stored as hectare + ares + sq.m**: total sq.m = 10000·ha + 100·ares + sq.m
+(`build_app_tables_new.py` used to keep only the sq.m part).
+
+## Old-owner record (`chitta_temp_old_owner`) and its comparison with the sub-division record
+
+`backend/services/oldowner_qa.py`, hooked first inside `_early_subdivision_answer()`;
+`python test_oldowner_qa.py` (no DB, no LLM). Answers old-owner name, patta, relative
+(father / husband), relation / relation code, owner no, share, extent u1-u3, survey /
+sub-division no, status code, gender, "is there an old-owner record" and a full card, and
+compares the old-owner row with `areg_temp_subdivclub` field by field (survey, sub-division,
+existing / new patta, new sub-division, status, district-block codes, extent vs area):
+✔ match, ✘ differs, ◐ some plots only, – not comparable (one side blank). Blank columns
+(`relation = '...'`, no share / extent / sex) are "not recorded", never guessed; the status
+codes (M / E) belong to different tables, so a difference is flagged as a note, not a conflict.
+A bare "owner name" is left to the fuller owner handler. A comparison question skips the
+multi-request splitter and the "town-level data" jurisdiction keyword guard, and a hook answer
+forces `intent = application_status` so a later listing branch cannot overwrite it.
+
+## Desk recommendations, change flags and application-information fields
+
+`backend/services/cmflow_qa.py` and `backend/services/appinfo_qa.py`, both answered from
+`_early_subdivision_answer()` (`python test_record_qa.py`, no DB, no LLM).
+
+* **`cmflow_qa`** reads `correction_modification_flow`: SIS / ZDT / SD / DIS / Tahsildar / RDO /
+  Collector-DRO / DRO / COSS / CLA recommendation (Y / N), remarks and submit date; reason code,
+  govt / private change flags, SIS / DIS certificates; compare, who-recommended, workflow, first /
+  last submitted, missing recommendation. The table holds only service codes 0158-0169; an ISD / NISD
+  file has no row and the answer says so (a SIS-only question on an ISD / NISD file stays with the
+  existing workflow handlers). Reason codes are shown raw: the register does not define them.
+* **`appinfo_qa`** reads the application-information extract (ISD: `sub_div_patta_transfer_application_information_urban`,
+  NISD: `full_field_patta_transfer_application_information`): challan no / date, payment mode,
+  amount, status / reject-reason code, proposed field-visit date and remarks, missing documents,
+  enclosures, SRO, CSC name, permanent address, mother / father, gender, DOB. A blank column is
+  "not recorded" with the rule that explains it (no SRO on a CSC file).
+* **Plumbing** (`_cm_strong()` in `chatbot.py`): a claimed message is forced to `application_status`,
+  skips the multi-request splitter, the `workflow_remarks` early handler, the channel-clarification
+  guard and the pending-list routing; `_hook_done` stops the later application_status branches from
+  overwriting the answer. A service code other than 0153 / 0154 is not in `applications`: the gate
+  returns the register row (`_register_card()`), or lets a record question through to the hook.
+  "what is the current application status?" right after an answer about one application is that
+  application's status (`_bare_app_status()`), not the pending list. The gate looks back 8 officer
+  turns for the application number.
+
+**Details of an application under any other service code** (`backend/services/othercode_detail.py`):
+"show details of 2026/0158/02/000905" (any code but 0153 / 0154, which have no row in `applications`)
+returns one card assembled by `appl_id` from the register entry, `appl_log_urban`, the workflow log,
+`correction_modification_flow`, `uareg_modification` / `uchitta_natham_modification` (the parcel and
+owners being modified; extent = ha + ares + sq.m) and, for F-Line 0178, the application-information
+extract (applicant, challan, amount, proposed visit). Built in `resolve_application_reference()`
+(`register_only` verdict); a number that exists in the register but outside the officer's ward is
+refused as out of jurisdiction, not reported as non-existent. Attachment bodies are never read.
+
+**F-Line (0178) record** (`backend/services/fline_qa.py`, tested in `test_record_qa.py`): survey / sub-division /
+patta, land type and extent, govt / private code, transaction status, total boundaries, sketch available (the
+base64 body is never read), SIS and DIS recommendation / remarks / reason / verify date / user, scheduled date,
+applicant type, from `f_line_service_urban`. For an F-Line application every field is answered from that row;
+for any other file an F-Line-only field says no F-Line record is held and the general fields stay with the
+general handlers. The govt / private code (`govt_pri`) is shown raw: the register does not define its values.
+A record question with no number resolves its application from the last 14 chat messages (either side), because
+an answer carries it as "[number]"; such a question skips the follow-up layer, the unknown-qualifier guard
+("I don't know how to filter by 'checking'") and the pending-list routing.
+
+**NISD application-information columns** are covered by `appinfo_qa` too: barcode flag, encertify, physical
+verification, documents sent / received dates, RTR str, owner-correction reason, merged application id,
+automutated, occupation, last-updated + remarks, current address and mobile. Columns that exist only in
+`full_field_patta_transfer_application_information` (barcode, physical verification, sent / received, owner
+correction reason, automutated, occupation) are reported on an ISD file as "held only for NISD applications".
+A message `appinfo_qa` claims skips the MERGE-code guard, the record-field (ownership / updated) turn and the
+uploaded-document planner, which each used to answer it first ("There is no MERGE service code (0155)",
+"I don't have an uploaded document for this chat").
+
+**Context hygiene for record answers.** An answer from `_early_subdivision_answer()` records its application
+(`_HOOK_APP`) as the follow-up context, and a register-only card (`register_only` gate verdict) does too; before,
+neither did, so a numberless follow-up after "status of <0158 file>" fell back to an older application. A listing
+under one service code (`all_service_code_applications`) now records its rows as the carried list (with the code as
+a filter), so "show details of the second one" after "show my pending 0158 applications" picks that list, not an
+earlier ISD one. A Tamil cue that is a substring of another word is a trap here too: `வரி` (tax) sits inside
+`முகவரி` (address), so `subdivision_qa` replaces `முகவரி` first.
+
+**Merge ids.** There is no merge service code; the old guard that answered every "merge" question with a
+"no MERGE service code (0155)" line no longer names a code. A merge is only `applications.merged_application_id`
+(source `merge_applid` in the application-information extracts; one ISD file, 2026/0154/02/013642, carries one, merged
+with 2026/0154/02/011886). Forward ("merge id of X", "with which application is it merged", "merge applid enna") is a
+field answered by `appinfo_qa`; `backend/services/merge_qa.py` adds the reverse ("which applications are merged with X")
+and the overview ("which applications have a merge id", "how many merged applications"), each re-checked against the
+officer's jurisdiction (a parent outside it is never confirmed) and recorded as the carried list, so "show details of the
+first one" and "how many of them are approved" continue it. A generic "what is the merge service code" / "can I merge
+two applications" is answered by saying merging is a merge id on an ISD file, not a service.
+
+**Cross-checks** (`backend/services/crosscheck_qa.py`, parse tested in `test_record_qa.py`): comparisons of one
+application against its other records, computed from the rows -- applicant vs the chitta old owner (names compared
+through `utils/translit`, so Tamil and Latin spellings meet), a full mismatch report (patta, survey, ward, block),
+application status vs the correction / modification flow, address / mobile shared with other applications (only
+ones in the officer's jurisdiction are named), challan date vs submission date, physical verification vs the proposed
+visit, missing documents vs submitted, owner-correction reason, automutated vs manual, what a merge id indicates,
+payment completeness. A patta-transfer applicant is usually the NEW owner, so an applicant that differs from the old
+owner is stated as expected, not as an error. Where a column does not exist for the file's type (physical verification,
+owner correction reason and automutated are NISD-only) the answer says so. The application a numberless follow-up
+means is the one an answer is ABOUT: its trailing "[number]", else the number it opens with (`_LastAppNo`), never a
+number quoted inside it.
+
+**IGRS owner records** (`backend/services/igrs_owner_qa.py`, tested in `test_record_qa.py`): the owners a Sub-Registrar
+(IGRS) referral names, from `full_field_patta_transfer_igrs_owner` (9 rows, 6 NISD files, none of which also has a chitta
+old-owner row -- the two owner records never coexist on one file). Fields: owner (Tamil / English), patta, door, relative
+and relation, owner / relative no, share, address and pincode, IGRS form 6 no, form 6 and assignment no, ration card,
+EPIC, Aadhaar (never shown, only "recorded"), mobile, sex, occupation code, last updated, user no, image. Several owners
+are listed one by one. A file with no IGRS rows answers an explicit IGRS question with "no IGRS owner record held";
+an owner question without the word IGRS goes to the other owner handlers unless the file has IGRS rows. Comparisons
+(IGRS owner vs chitta old owner, vs the patta-transfer applicant; patta, form 6, relative, relation, share, address;
+"same application") are computed from the rows, name compared across scripts by transliteration, narrowed to the
+topic asked, and say when the chitta side does not exist. The owner-photo refusal and the record-field handler step
+aside for these questions.
+
+**New-owner records and UDS** (`backend/services/newowner_qa.py`, tested in `test_record_qa.py`): the owners a full-field
+patta transfer (NISD) gives the land to, from `full_field_patta_transfer_new_owner` (30 rows, 16 NISD files; the old
+owners of those files are in `full_field_patta_transfer_old_owner`, not in the chitta table, which is ISD's). Fields:
+name (Tamil / English), relationship and relative, extent, patta, owner and relative no, owner-record status code (raw:
+the register does not define it), UDS, share, photo, Aadhaar (never shown), sex, survey and sub-division no, geography,
+mobile. Comparisons (new vs old owner, vs IGRS, vs F-Line, vs the sub-division record, vs the application; "same
+person", "only the fields that changed") are computed from the rows and say when the other side does not exist: IGRS,
+F-Line, chitta and new-owner records never coexist on one file. Two rows can carry the same owner no (a split into
+sub-divisions), so owners are numbered by position and paired with the old owners by position. **UDS means Undivided
+Share** (the proportion of land held in common that goes with a flat or plot): "what is UDS" is answered by definition
+before any application is needed (`_merge_turn` carries it), and the same text is in `land_rules.txt` for the next
+`python -m backend.ingest`. A bare "who is the owner" is only a SOFT claim of the IGRS / new-owner modules: it never
+steers a turn, so "who is the owner of survey 20" still reaches `survey_owners` (that regression was caught here).
+
+**Old owners of a full-field (NISD) transfer** are answered by `newowner_qa` too (`full_field_patta_transfer_old_owner`:
+name, relative, relationship, extent, patta, owner / relative no, status, UDS, share, sex, Aadhaar presence, geography,
+"the application linked to this old owner", "complete old owner details"); an ISD file's old owner is still the chitta
+record (`oldowner_qa`). Old-vs-new comparisons pair the owners by position and answer "which fields changed", "which
+stayed the same", "same person or changing the owner", "same share", "any inconsistent details", district / taluk / town /
+ward / block, status and Aadhaar presence (the numbers are never shown, so equality of Aadhaar cannot be stated). "Old
+owner of survey 5" is a survey question and is left to the survey handlers.
+
+**Returned owners** (`newowner_qa`: `full_field_patta_transfer_return_owner`): the owners of a transfer that was returned.
+The live table is EMPTY (0 rows), so every returned-owner question -- field or comparison -- is answered "no returned-owner
+record is held for this application (the table holds no records for any application at present)", never invented; a
+"why was it returned" answer adds that the record has no reason column and quotes the application's own remarks, and an
+"overall status" question adds the application's status. When rows do exist the same functions render them (fields, update
+date, status and owner-status code, geography) and compare returned vs old / new / IGRS by name, patta, share, extent, UDS
+and relative -- exercised against fake rows in `test_record_qa.py`.
+
+**Context rules the owner / record modules rely on** (checked across mixed conversations, three officers, both chat paths):
+a register-only application (0158 ... 0178) carried along from an earlier turn does not answer a question that names a
+survey number ("who is the owner of survey 20" stays a survey question); "and the old owner?" asks who it is; "which fields
+changed between them?" after an owner answer compares those owners (`_owner_ctx_compare`); every module re-checks the
+officer's jurisdiction, so another officer asking about the same file is refused with nothing shown.
+
+**The full-field transfer record** (`backend/services/fulltransfer_qa.py`, tested in `test_record_qa.py`): the NISD
+patta-transfer main row in `full_field_patta_transfer_urban` (46 rows, one per NISD file; no ISD file has one): survey,
+sub-division, old patta, land type code, extent (u1 ha / u2 ares / u3 sq.m; the extent-in-ares column is blank, so it is
+computed), registration document / place / date / year, reason (Sale / Settlement deed), ZDT patta / order / remarks,
+transaction status and code, submit and update time, tax rate, succession / legal-heir / court details, purchased area
+and unit, street and door, SIS recommendation / remarks / reason, group numbers, owner-correction reason, transaction type,
+direct-transfer flag, land category. Codes the register does not define are shown raw and said to be undefined. Cross-checks
+(old patta vs the old owner's, ZDT patta vs the new owner's, survey / sub-division vs the new owner, door, street, tax,
+purchased area vs extent, registration vs reason, succession / court support, SIS recommendation vs transaction status,
+group numbers vs the sub-division record, "differences vs the new-owner record") are computed and narrowed to the topic.
+On the sample, the ZDT patta of 048323 (84103) differs from the new owner's recorded patta (69522): that is what the two
+tables carry. A question that names a survey number and no application is never claimed by any record module
+(`_cm_strong` returns False), so "tax rate of survey 5" stays with the survey handlers.
+
+**SD attachments** (`backend/services/sdattach_qa.py`, tested in `test_record_qa.py`): the Senior Draughtsman's sketch PDFs
+kept against an ISD file in `sd_attachment` (52 rows, 29 files; 015395 has two, both survey / sub-division `120/1`). Answers:
+exists / how many / which files / sl no / survey-sub-division per attachment / missing / duplicates (compared by content hash)
+/ complete details, and the cross-checks against the application's survey and temp sub-division record. The rows carry NO file
+name, only the embedded PDF, so a file-name question reports type and size and says so; the file contents are never read or
+shown. F-Line and full-field records never exist for an ISD file, so those comparisons say so. The question must say "SD" or
+name an application (or follow an SD answer, `_sd_parse`) -- a chat-uploaded file ("the attached file", "register.csv") still
+goes to `attachment_qa`.
+
+**TSLR sketch records** (`backend/services/tslr_qa.py`, tested in `test_record_qa.py`): `tslr_sketch_urban` carries the
+survey / sub-division, old patta, door, type (e-category), land type code, extent (u1 ha / u2 ares / u3 sq.m), submit time,
+challan / payment (treasury, bank, mode, amount) and CAN of a TSLR-sketch application (service code **0156**; 22 rows, 11
+files, usually two per file). It is a register-only service, so the question is answered with an access check through the
+register, not `applications`. Comparisons against F-Line, full-field transfer, chitta and application-information say those
+records do not exist for a 0156 file; the TSLR rows are compared with the register entry's survey, sub-division, ward and block
+(all ✔ on the sample). The details card of a 0156 file now lists its TSLR rows. A bare follow-up ("and the sub division no?")
+after a TSLR answer continues it (`_tslr_parse`); an ISD file such as 015395 has none and says so.
+
+**Parcel-register modifications** (`backend/services/uamod_qa.py`, tested in `test_record_qa.py`): `uareg_modification` (134
+rows, 72 files, services 0158 / 0159 / 0160 / 0162 / 0164 / 0169) -- what a correction / modification application changes in
+the survey register: survey / sub-division and old survey no, door, govt / private, land type and use, irrigation, tax, soil,
+extent, patta numbers, remarks, forms, relinquishment / assignment, alienation / acquisition, assessed / cultivable,
+municipal tax, approval file no / date, status, reject reason, who / when updated, flow type, citizen street, COSS block.
+A file usually has two rows (operation 01 and 04; 0164 files three). **The register does not say which operation is the
+"before" and which the "after"**, so "what changed" / "what stayed the same" compares the rows field by field and states
+that; the dedicated old / new columns (`osurvey_no`, `existing_patta_no`, `new_patta_no`) are shown beside it and
+`oldpatta` / `newpatta` / `osubdiv_no` / form 6-8 / relinquishment / alienation / flow type are blank in every row. Codes
+(operation, govt / private, land type, status, reject reason) are shown raw and flagged undefined. The modification status
+is compared with the register status only (the correction flow has no status column). The word "modification" (or a column
+only this record has) must be in the question, or it must follow a parcel-modification answer; fuzzy matching must never
+turn "approved" into "approval" (`test_register_equal_treatment` caught that). An ISD / NISD file says it has no
+parcel-modification record.
+
+**One large message with many questions** (`_big_plan()` / `_answer_big()` / `_single_turn()` in `chatbot.py`, `python
+test_big_message.py`). A message of 14+ words that is a numbered list ("1) ... 2) ..."), "<head> : f1, f2, f3", "tell me /
+give me / show me f1, f2, f3 ...", "<application no> f1, f2, f3 ...", "details of A, B, C including f1, f2 ..." or several
+"?" questions is split into its own questions BEFORE any handler sees it; each question goes through the ordinary pipeline
+in the same order `process_chat` uses (`_single_turn`), and every answer joins the history the next question sees, so "its
+SIS recommendation" and "the same application" resolve. Before this a large message was claimed whole by one record module
+(the other parts silently dropped) or reduced to its last clause by `_plan_requests` ("focus"). A field list over several
+applications asks each field of each application (capped at 30 questions; "details of A, B, C" over the cap falls back to
+one details card per application); a qualified field ("IGRS owner name") hands its qualifier to the short fields after it
+("IGRS share", "IGRS relative"); "does it match X, Y and Z" stays one comparison; a trailing "answer in tamil" is dropped
+from the list. One failing question gives "(could not answer this part)" instead of losing the others. A message with
+fewer than 14 words, or no list shape, is never split.
+
+**Natham-chitta modifications** (`backend/services/natham_qa.py`, tested in `test_record_qa.py`): `uchitta_natham_modification`
+(121 rows, 43 files, services 0158 / 0159 / 0160 / 0164 / 0169) -- the owners a modification application records against a natham
+patta: owner and relative (Tamil / English), relationship, patta and "S patta" (blank), door, share (blank), address, ID numbers
+(all blank; Aadhaar never shown), sex, status, operation, full data, flow type (blank), update time. A file has several rows tagged
+with operation codes 01 / 02 / 05 / 06 whose meaning the register does not give, so rows are grouped by operation code and "who
+changed" compares those groups (how many owners appear in both) and says so. The word "natham" must be in the question (or it
+follows a Natham answer). Comparisons with IGRS / chitta / TSLR / full-field / new- / old-owner records say those do not exist for
+such a file; patta, status, operation and geography are compared with the parcel-modification rows (`uareg_modification`) of the
+same file (patta matches). An ISD / NISD file says it has no Natham-chitta modification record.
+
+**Negated record questions** (`backend/services/negq.py`, `python test_negq.py`, no DB / LLM): "is there no new owner record", "tslr sketch illaya", "which fields are not recorded", "which fields did not change", "doesn't the ZDT patta match", "who has not recommended it", "natham patta match aagala". A record module answers a positive question, so `negq.rewrite()` (both chat paths, ahead of `neg_scope`) takes the negation out and names the record in the form each module reads: existence -> `<record> everyfield` / `complete details`, blank fields -> the same card, kept to the "not recorded" lines, "did not change" -> "which fields changed" kept to the ✔ lines, "not matching" -> the compare question with a "Correct, they do not match" / "No, they match" lead, "not recommended" -> `missing recommendation`. `_early_subdivision_answer()` is a wrapper that applies `negq.shape()` / `lead()` (a contextvar carries the kind). Fenced: it fires only with an application number in the message or the last 8 turns, never on lists / visits / documents / status words (`neg_scope` owns those), "door no" is a number not a negation, Tamil-script plain negations are left to the modules. A/B over the 7786 bank questions rewrites 0. Each record module's `parse()` has a sentinel (`everyfield`, plus its own record word) that returns every column. A file of another service code asked for an IGRS / new / old owner / full-field record answers "no such record" (`_other_code_absent`). Also fixed: a listing on screen no longer supplies "the application" to a numberless record question (`_LastAppNo` returns None for 3+ numbers, strips markup, prefers the first number), and the stream path no longer overwrites a hook answer with the application_status "not found" card.
+
+**What-if questions** (`negq.rewrite()` wrapper, same module): "what if there is no IGRS owner", "what if the challan is not paid", "suppose the DIS recommendation is blank", "sis recommend pannalana enna aagum", "ஒருவேளை … என்றால் என்ன ஆகும்". The register cannot simulate a change, so the wrapper is taken off, the underlying (possibly negated) question is answered from the record as it stands, and the answer opens with a note saying it is not a prediction (`HYP`, `HYP_NOTE`); polarity leads ("Correct, …") are dropped for a what-if. With no application in the message or the last 8 turns the what-if is left to the ordinary handlers. TSLR "payment" alone now asks challan no / payment mode / amount.
+
+**Mixed, long and unsupported questions.** `_big_plan()` now also splits (a) one sentence holding two questions ("which tslr fields are blank and which are the same as the application": `_compound_split`, the second keeps the record the first named; "whether / if" count as question starts), (b) several applications and one question each (`_multi_app_plan`: "compare A and B on status, applicant ..." asks each field of each file; "A, B and C: which has a new owner record, which has no old owner record" asks "does it have ..." of each), and (c) long prose of comma-joined questions (`_prose_plan`: each piece is asked of the application named most recently BEFORE it, greetings / "thanks" / "give the same for" dropped; English and Tanglish). `backend/services/unheld_qa.py` answers what no table holds -- caste / religion, market / guideline value, sale amount, stamp duty, acres / cents, an officer's name, age, income -- with "not held" and what IS held (Aadhaar: "never shown"); it runs ahead of the record modules and needs an application in view. "court case / litigation ... against it" carries the application and goes to the litigation handler. Staleness: `unheld_qa.context_app()` returns nothing when the newest answer is a listing (3+ applications) so a singular follow-up never lands on a list row; no record module caches anything (every turn re-reads its table). `test_negq.py` carries the plan cases. Audit: every application number in ~300 answers exists in the register (the only others are the deliberately fake numbers echoed in "does not exist").
+
+**One look for every answer** (`backend/services/card_html.py`): the ISD / NISD details render as a titled FIELD | DETAILS card with a Copy button, while the record modules, register-only cards (0156, 0158 ... 0178) and "not held" answers were plain text bullets, so the same kind of question looked different. `_early_subdivision_answer()` (and the register-only card) now return the same card markup (`data-table-card`, styles already in `table_styles.css`; Copy falls back to the DOM rows); a one-line answer becomes the `table-intro` sentence. Text is escaped; nothing is added. `_LastAppNo` strips markup so follow-ups still find the application, and `negq._hint` ignores "No ..." absence answers when guessing which record "which fields are blank" means.
+
+**Plain-text answers on the page** (`frontend/js/chat.js`, `plainToCard()`): any plain answer made of bullets or "Label: value" lines (the field-visit plan, workload, "not held" answers ...) is drawn as the same titled FIELD | DETAILS (or APPLICATION | DETAILS) card as the details, whichever backend path produced it, including streamed ones; prose and answers with long lines are left as text. The old bullet conversion ran after newlines had become `<br>` and never matched; lists are converted first now. `chatbot.html` bumps `?v=` for `chat.js` (20261003_002) -- bump it again on any change.
+
+**"Overdue" has two meanings, and the answers now say which.** The documented overdue rule is the 15-working-day field-visit deadline (`backend/utils/sla.py`, `applications.is_overdue`); a visit past its *scheduled date* is a different, earlier state. "Which applications are overdue" with none past the deadline now says so with the oldest open ISD file's age and how many visits are past their scheduled date (`postgres._no_overdue_note`); the field-visit summary says "N past the scheduled date", not "overdue"; "which visits are past scheduled date / missed the date" routes to `fv_overdue_inspections`. Bug found by cross-checking answers against SQL: that handler built its jurisdiction filter with `and_(*conditions)` (every ward required at once) instead of `or_`, so it reported "no field visit is past its scheduled date" while three were. A count in a ward / block ("how many applications in ward 001") is over the register, not narrowed to pending.
+
+**Calculations over the whole register** (`backend/services/calc_qa.py`, `_calc_turn()` ahead of `_stats_turn` in both chat paths, `python test_calc.py`): "pending plus approved", "approved minus rejected", "how many more approved than rejected", "ratio of approved to rejected", "what percentage of 0158 applications are approved", "sum of pending in ward 001", "which service code / ward / channel / month has the most / least", "top 3 wards", "average applications per day / week", and plain arithmetic ("47 plus 17", "20 percent of 150", via a whitelisted `ast` evaluator). The operands are counted from `get_all_service_code_applications(hide_rejected=False)` -- every service code, ISD / NISD being two of them -- and shown beside the result. The register's coarse status has three values; "pending" is its open status (it already holds files in progress), so a pending count is 47 everywhere. Bare "how many are approved" and a percentage with no noun stay follow-ups over the list on screen (`number_qa`); a ratio over a list of one kind compares the register instead. A bare status request ("i m asking abt pending", "pending ones only") is a register-wide listing like "show my pending applications" (it used to fall to the 17-row ISD/NISD desk queue).
+
+**Workflow history for every service code, one shape.** "workflow history of X", "workflow of X", "workflow steps for X", "where is it" / "who has it now" give the same answer for ISD / NISD and every other service code: "Workflow history for X (N step(s)):" then one dated line per step ("Submission → Sub Inspector Surveyor", `[recommended]`, ` · "remark"`) and where the file is now. Files under 0156 / 0158 / 0178 ... read `application_workflow` by `appl_id` (`othercode_detail.workflow()`, hooked by `_other_code_workflow()`); role ids use the ISD / NISD names (1 Submission, 41 / 42 / 44 Sub Inspector Surveyor, 8 Senior Draughtsman, 12 Deputy Inspector Surveyor, 16 Zonal Level Tahsildar, 0 Completed). Before, those codes answered the whole details card and "workflow of X" on an ISD / NISD file did the same.
+
+**Policy / how-to questions are answered from the documents, not by the model** (`backend/services/howto_qa.py`, `_howto_turn()` first in the turn chain, `python test_howto.py`): "what documents are needed for a patta transfer", "explain the 15 working day rule", "is it allowed to approve without a field visit", "how is a sub-division sketch prepared", "steps from application to patta order", "what is a field visit / what should I check", "what if the applicant does not turn up", "how many days does the Tahsildar take", "how can I speed up my pending files", "write a note to an applicant with incomplete documents", "Aadhaar numbers of all owners" (refused), F-Line / other-code fees (the documents give a fee only for 0153 and 0154; the F-Line amounts actually paid are quoted from the register), "anything suspicious or duplicated" (survey numbers with more than one open application), "applicants with more than one application" (matched by name + mobile). Each answer restates `workflow_guide.txt` / `land_rules.txt` and says so where they are silent; Tamil and Tanglish cues have Tamil answers. A how-to question is never split by `_big_plan` / `_plan_requests`. `unheld_qa.intent_alias()` maps "how busy am I", "summarise my day" to the workload and "which of my files should I worry about first" (any language) to the field-visit plan. The LLM (`LLM_MODEL=sis-assistant:latest`, the SIS fine-tune) is now reached by about 5 of 42 open questions and the mean answer time on that set dropped from 13.6 s to 3.1 s. Do not put `<...>` placeholders in answer text: the page treats anything tag-shaped as HTML.
+
+**Four gaps closed.** (1) "difference between 0153 and 0154" is the service-code definition (like ISD / NISD); "how many more 0154 than 0153" stays a count. (2) "what does litigation imply for new applications" (and the bare "what does that imply" right after a litigation answer) is answered from the rules (`howto_qa` topic `litigation_implies`); a how-to question that contains a survey number is a data question and is split, not answered whole. (3) "compare ... this week and last week" counts applications filed in each Monday-Sunday week from the register (`calc_qa`). (4) An LLM-written sentence that states a total ("You have 2 open applications") whose figure is nowhere in the data it was written from is dropped (`_scrub_unverified_counts`, inside `_verify_answer_numbers`, both chat paths) -- never corrected, since there is no telling which count was meant.
+
+**Sweep of everyday questions (68 questions, English / Tamil / Tanglish / typos) -- what it found and fixed.** A count with a period ("how many rejected in september", "how many approved this year") ignored the period (27 / 78 for the whole register): `number_qa` now leaves any period to the register listing, and "how many <status>" is a register-wide count (not the ISD / NISD desk). "list SRO applications" / "show applications from sro" asked for an application number (the `sro` column of the application-information record claimed the turn): a channel scope on a list is no longer a record question (`_cm_strong`). "how many applications are awaiting field visit" / "which have no field visit scheduled" -> the unassigned-visit count and list. "pending files evlo irukku" counts the register like "pending applications". Tamil "வேலைப்பளு" is the workload. "SRO name" on an NISD file no longer claims the column exists only for NISD (SRO / CSC name exist only in the ISD record). New `howto_qa` topics: common rejection reasons (workflow guide), "who is my district officer / the Tahsildar of my ward" (names are not held), "which survey numbers have multiple applications" (grouped by ward / block / survey; the open-duplicate check counts ISD / NISD only, the documented one-active-per-survey rule), "which applications have encroachment / litigation" (reads the survey flags; none are flagged in the sample data), "applications for settlement / sale deed" (declared reason). "who approved / rejected it" names the desk and date and says officer names are not held (`othercode_detail.decider`). A greeting waits at most 6 s for the model before using its fixed text (it used to wait 30 s).
+
+**Three leftovers closed.** A single-field survey question ("patta number of survey 120", "area of ...", "how many sub-divisions", "land type", "is there litigation") answers that one value (`_survey_attribute_answer`) instead of the whole parcel card; a total area of 0 is data that was never loaded (24 of 48 surveys), so it reads "not recorded" in both the answer and the card, not "0.00 sq.m". "show details of the first one" with nothing on screen says nothing has been shown yet (`_howto_turn`), instead of "not sure what you mean". "applications with sale deed" is the declared-reason list (sale).
+
+## Service-code / F-Line / TSLR training data (2026-10-04)
+
+`backend/sample_db/build_lora_dataset_allcodes.py` (all 29 codes, 0155 excluded, equal quota per code, half the code-level examples carry the code table / counts in the system prompt so a code added later is read from context, not remembered), `build_lora_dataset_flinetslr.py` (record-level F-Line 0178 and TSLR 0156 questions asked through the real pipeline), `build_lora_testset.py` (held-out phrasings, never trained on). Outputs in `lora_training/`: `train_augmented_v2.jsonl` (old rows + new, shuffled), `validation_v2.jsonl`, `test_heldout_allcodes.jsonl`, `test_heldout_flinetslr.jsonl`; train, validation and test share no question. Application numbers are invented serials, applicant names / addresses / mobiles / user ids are replaced, "No applications ..." answers are capped at 40% per group. `train_qlora.py` now reads the v2 files (lr 1e-4, dropout 0.1, weight decay, early stopping); after training run `python lora_training/eval_heldout.py --model <ollama model>` and compare held-out with validation scores. A fake serial can contain the digits "0155"; that is not the service code.
+
+There is no service code 0155 and no MERGE application type. The older rows that invented them (a "MERGE (0155)" meaning/listing, and the stale "the schema only admits 0153 / 0154 / 0155, other codes are not handled" wording) were removed from `train_augmented_v2.jsonl` (-286 rows) and `validation_v2.jsonl` (-44); `train_augmented.jsonl` / `validation.jsonl` still contain them, so train only on the v2 files. A merge is only a merge id on an ISD file.
+
+**Officer jurisdiction in the training data (2026-10-04).** Every data-dependent training row now carries the officer and the data its answer is read from in the system prompt (wards held, the register figures, the rows or the record card), so the model reads them instead of remembering them. `build_lora_dataset_jurisdiction.py` adds 80 synthetic officers (different wards, any of the 29 codes, some with no applications; ward and block questions outside their wards are refused by name); validation officers and the 25 test officers are unseen, and the test wards (061-100) never occur in training. Older rows that stated register data from the previous register (lists, counts, applicant names) were dropped; `assemble_lora_final.py` builds `train_v2_clean.jsonl` / `validation_v2_clean.jsonl` (what `train_qlora.py` reads) and re-applies the 0155 / MERGE / stale-wording filter. Rows are only kept if every figure in the answer is in the prompt.
+
+**Evaluating the fine-tune (2026-10-05).** `lora_training/eval_grounded.py` grades each answer `correct` / `missing` / `WRONG` by comparing the values it states (count, date, ward, block, channel, status, survey, code) with the expected answer; an invented application number or a different value is WRONG (a hallucination), "I do not know" is `missing`. `--selftest` has 15 cases. The Colab evaluation of the first adapter (best checkpoint-350, eval loss 0.393) scored the old keyword metric 29% tuned vs 6% base, but its all-codes test had no officer/register data in the prompt for the data-dependent groups, so those scores were meaningless -- `build_lora_testset.part1()` never attached the context (fixed: it now calls `with_officer`, and `g_chain_deep` puts the application's row in the prompt). Copy the three test files in `lora_training/upload_to_drive/` to the Drive folder `sis_qlora_data` (meta `real_app` removed) before the next evaluation run.
+
+**v3 correction set (2026-10-05).** First full evaluation of the best-350 adapter (grounded scorer, 2,038 held-out items): 60% / 67% / 50% correct and 18% / 28% / 25% WRONG on the all-codes / jurisdiction / F-Line+TSLR sets -- it reads supplied counts well but invents a record that does not exist, mixes up neighbouring service codes (0164 -> 0161), guesses a channel the prompt does not carry, and drifts on "not rejected" vs "total". `backend/sample_db/build_lora_dataset_v3.py` builds a small targeted set (1,001 train examples: channel now a column of the application rows in the prompt; "no F-Line / TSLR record is held" and "does not exist" answers in the pipeline's own wording, English + Tamil; service-code <-> name pairs with the neighbouring codes as contrasts; "how many" = not rejected + how many left out, "including rejected" = total, with each code's not-rejected / total printed in the prompt so nothing is added up; multi-turn follow-ups with "not in the data I was given" for values the rows do not hold). `assemble_lora_v3.py` drops the 12 v2 rows that stated a channel with none in the prompt and writes `train_v3_clean.jsonl` (4,848) / `validation_v3_clean.jsonl` (728). `bench_v3_extra.jsonl` (196) uses phrasings never trained on. The 2,038-item original evaluation files are untouched and share no question with v3, so v3 must beat best-350 on THEM before it replaces it. Arithmetic ("114 - 2") is not taught further: totals and differences belong to the deterministic handlers.

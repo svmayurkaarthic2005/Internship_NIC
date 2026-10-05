@@ -138,8 +138,19 @@ async def get_jurisdiction_filter(db: AsyncSession, officer: OfficerContext):
 
 async def get_all_service_code_applications(db: AsyncSession, officer: OfficerContext,
                                             service_code: Optional[str] = None,
-                                            submission_channel: Optional[str] = None,
-                                            status: Optional[Any] = None) -> Dict[str, Any]:
+                                            submission_channel: Optional[Any] = None,
+                                            status: Optional[Any] = None,
+                                            start_date: Optional[date] = None,
+                                            end_date: Optional[date] = None,
+                                            date_ranges: Optional[List[Tuple[date, date]]] = None,
+                                            exclude_date_range: bool = False,
+                                            submission_year: Optional[int] = None,
+                                            submission_month: Optional[int] = None,
+                                            ward_number: Optional[str] = None,
+                                            block_number: Optional[str] = None,
+                                            sort_by: Optional[str] = None,
+                                            sort_dir: Optional[str] = None,
+                                            hide_rejected: bool = False) -> Dict[str, Any]:
     """Every application across every TAMILNILAM service code in the officer's
     wards -- not just the ISD/NISD ones `Application` tracks in full.
 
@@ -154,6 +165,12 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
     service code (with its official name), a coarse status, and the
     submission date. An ISD/NISD row appears here too, so this is a superset
     of the officer's own patta-transfer queue, not a separate list.
+
+    Takes the same period / ward / block / channel / sort scopes
+    `get_officer_applications()` does, so a question like "pending applications
+    in June" or "approved applications in ward 102" can be answered over every
+    service code rather than silently narrowing to ISD/NISD. All service codes
+    are treated alike here: no code is singled out.
     """
     from backend.utils.helpers import SIS_URBAN_SERVICES
     try:
@@ -165,12 +182,44 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
         if service_code:
             _where.append(ServiceRegisterEntry.service_code == service_code)
         if submission_channel:
-            _where.append(ServiceRegisterEntry.submission_channel == submission_channel)
+            _chans = (list(submission_channel) if isinstance(submission_channel, (list, tuple, set))
+                      else [submission_channel])
+            _where.append(ServiceRegisterEntry.submission_channel.in_(_chans))
+
+        # Period scopes, same precedence as get_officer_applications():
+        # explicit segments, then a start/end range, then year / month.
+        _sd = ServiceRegisterEntry.submission_date
+        if date_ranges:
+            _in_any = or_(*[and_(_sd >= _s, _sd <= _e) for _s, _e in date_ranges])
+            _where.append(~_in_any if exclude_date_range else _in_any)
+        elif start_date and end_date:
+            _where.append(or_(_sd < start_date, _sd > end_date) if exclude_date_range
+                          else and_(_sd >= start_date, _sd <= end_date))
+        elif start_date:
+            _where.append(_sd >= start_date)
+        elif end_date:
+            _where.append(_sd <= end_date)
+        else:
+            if submission_year:
+                _where.append(func.extract("year", _sd) == submission_year)
+            if submission_month:
+                _where.append(func.extract("month", _sd) == submission_month)
+        _where_no_status = list(_where)
         if status:
             # This table's status is coarse (approved/pending/rejected only --
             # no in_progress/escalated split), unlike Application's state machine.
             _where.append(ServiceRegisterEntry.status.in_(status) if isinstance(status, list)
                            else ServiceRegisterEntry.status == status)
+        elif hide_rejected:
+            # The standing rule: a rejected file is not part of an operational
+            # list unless it was asked for. The count is reported so the list
+            # never reads as complete when it is not.
+            _where.append(ServiceRegisterEntry.status != "rejected")
+        rejected_hidden = 0
+        if hide_rejected and not status:
+            rejected_hidden = await db.scalar(
+                select(func.count()).select_from(ServiceRegisterEntry)
+                .where(and_(*_where_no_status, ServiceRegisterEntry.status == "rejected"))) or 0
         result = await db.execute(
             select(ServiceRegisterEntry)
             .options(selectinload(ServiceRegisterEntry.ward),
@@ -181,6 +230,25 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
         )
         rows = result.scalars().all()
 
+        # Ward / block narrowing, matched as loosely as the listing queries do
+        # so "ward 21" finds "021" and "block 15" finds "0015".
+        if ward_number:
+            rows = [r for r in rows if r.ward and str(ward_number).lower() in str(r.ward.ward_number or "").lower()]
+        if block_number:
+            rows = [r for r in rows if r.block and str(block_number).lower() in str(r.block.block_number or "").lower()]
+
+        _sort_keys = {
+            "application_number": lambda r: r.application_number or "",
+            "survey_no": lambda r: (len(str(r.survey_no or "")), str(r.survey_no or "")),
+            "status": lambda r: r.status or "",
+            "ward_number": lambda r: str(r.ward.ward_number if r.ward else ""),
+            "block_number": lambda r: str(r.block.block_number if r.block else ""),
+        }
+        if sort_by in _sort_keys:
+            rows = sorted(rows, key=_sort_keys[sort_by], reverse=(sort_dir == "desc"))
+        elif sort_dir == "desc" and sort_by in (None, "submission_date"):
+            rows = list(reversed(rows))   # default order is oldest submission first
+
         apps = []
         by_service: Dict[str, int] = {}
         by_channel: Dict[str, int] = {}
@@ -188,6 +256,7 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
             info = SIS_URBAN_SERVICES.get(r.service_code, {})
             apps.append({
                 "application_number": r.application_number,
+                "application_type": {"0153": "NISD", "0154": "ISD"}.get(r.service_code),
                 "service_code": r.service_code,
                 "service_name": info.get("name", "Unknown service"),
                 "survey_no": r.survey_no,
@@ -207,7 +276,9 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
 
         _svc_name = SIS_URBAN_SERVICES.get(service_code, {}).get("name") if service_code else None
         _chan_label = {"CSC": "CSC", "citizen": "citizen portal", "sub_registrar": "Sub-Registrar"}
-        _chan_name = _chan_label.get(submission_channel, submission_channel) if submission_channel else None
+        _chan_list = (list(submission_channel) if isinstance(submission_channel, (list, tuple, set))
+                      else ([submission_channel] if submission_channel else []))
+        _chan_name = " / ".join(_chan_label.get(c, c) for c in _chan_list) or None
         _qtype = (f"{service_code} {_svc_name} Applications" if _svc_name
                   else f"{_chan_name} Applications" if _chan_name
                   else "All Service Code Applications")
@@ -221,6 +292,11 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
             "service_code_filter": service_code,
             "channel_filter": submission_channel,
             "status_filter": status,
+            "ward_filter": ward_number,
+            "block_filter": block_number,
+            "rejected_hidden": rejected_hidden,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
             "empty_note": (None if apps else (
                 f"No {_empty_what} applications found in your jurisdiction."
                 if _empty_what else
@@ -754,6 +830,103 @@ async def get_comparison(db: AsyncSession, officer: OfficerContext,
     if scope.get("type_out"):
         base.append(Application.application_type.notin_(scope["type_out"]))
 
+    # ---- counts over EVERY service code ------------------------------------
+    # `applications` holds only ISD/NISD, so a count taken from it answers
+    # "pending versus approved" with 17 and 19 while the register holds 47 and
+    # 78. Counting questions (status, channel, ward, period, month, "which type
+    # has more") are answered from the register across every service code, over
+    # the officer's whole jurisdiction like the listings, not just the files
+    # assigned to them. Questions that need a decision date (how long, which
+    # took longest) or name ISD and NISD explicitly keep the ISD/NISD path
+    # below -- the register carries neither.
+    _named = [n for n in (spec.get("sides") or [spec.get("left"), spec.get("right")]) if n]
+    _coarse = {"pending", "approved", "rejected"}
+    _scope_statuses = set(scope.get("status_in") or []) | set(scope.get("status_out") or [])
+    _register_ok = (
+        spec.get("aspect") != "duration"
+        and not (_scope_statuses - _coarse)
+        and (kind in ("channel", "ward", "period", "month")
+             or (kind == "status" and all(n in _coarse for n in _named))
+             or (kind == "type" and not (spec.get("left") and spec.get("right")))))
+    if _register_ok:
+        from backend.utils.helpers import SIS_URBAN_SERVICES
+        SRE = ServiceRegisterEntry
+        rbase = [SRE.ward_id.in_(officer.jurisdiction_ids or [])]
+        if scope.get("status_in"):
+            rbase.append(SRE.status.in_(scope["status_in"]))
+        if scope.get("status_out"):
+            rbase.append(SRE.status.notin_(scope["status_out"]))
+        if scope.get("channel_out"):
+            rbase.append(SRE.submission_channel.notin_(scope["channel_out"]))
+        if scope.get("type_out"):
+            _codes_out = [c for t, c in (("ISD", "0154"), ("NISD", "0153")) if t in scope["type_out"]]
+            if _codes_out:
+                rbase.append(SRE.service_code.notin_(_codes_out))
+
+        if kind in ("status", "channel", "type"):
+            col = {"status": SRE.status, "channel": SRE.submission_channel,
+                   "type": SRE.service_code}[kind]
+            if _named and kind != "type":
+                sides = []
+                for name in _named:
+                    n = await db.scalar(select(func.count()).select_from(SRE)
+                                        .where(and_(*rbase, col == name))) or 0
+                    sides.append({"label": name, "count": n})
+            else:
+                grouped = (await db.execute(
+                    select(col, func.count()).where(and_(*rbase)).group_by(col)
+                    .order_by(func.count().desc(), col))).all()
+                sides = [{"label": ((f"{r[0]} {(SIS_URBAN_SERVICES.get(r[0], {}) or {}).get('name', '')}".strip())
+                                    if kind == "type" else r[0]), "count": r[1]}
+                         for r in grouped if r[0]]
+            return {"found": True, "kind": kind, "aspect": "count", "sides": sides,
+                    "total": sum(x["count"] for x in sides), "all_service_codes": True}
+
+        if kind == "ward":
+            counts = {r[0]: r[1] for r in (await db.execute(
+                select(Ward.ward_number, func.count()).select_from(SRE)
+                .join(Ward, SRE.ward_id == Ward.id)
+                .where(and_(*rbase)).group_by(Ward.ward_number))).all()}
+            wn = [n for n in (spec.get("sides") or [spec.get("left"), spec.get("right")]) if n]
+            if wn:
+                sides = [{"label": f"Ward {n}", "count": counts.get(n, 0)} for n in wn]
+            else:
+                sides = [{"label": f"Ward {w}", "count": c}
+                         for w, c in sorted(counts.items(), key=lambda kv: -kv[1])]
+            return {"found": True, "kind": kind, "aspect": "count", "sides": sides,
+                    "total": sum(x["count"] for x in sides), "all_service_codes": True}
+
+        if kind == "period":
+            sides = []
+            for period in spec.get("periods", []):
+                start = date.fromisoformat(period["start"])
+                end = date.fromisoformat(period["end"])
+                n = await db.scalar(select(func.count()).select_from(SRE).where(
+                    and_(*rbase, SRE.submission_date >= start, SRE.submission_date <= end))) or 0
+                sides.append({"label": period["label"], "count": n,
+                              "start": period["start"], "end": period["end"]})
+            return {"found": True, "kind": kind, "aspect": "count", "sides": sides,
+                    "total": sum(x["count"] for x in sides), "all_service_codes": True}
+
+        if kind == "month":
+            _y = func.extract("year", SRE.submission_date)
+            _m = func.extract("month", SRE.submission_date)
+            _MN = ["", "January", "February", "March", "April", "May", "June", "July",
+                   "August", "September", "October", "November", "December"]
+            rows = [(f"{_MN[int(r[1])]} {int(r[0])}", r[2]) for r in (await db.execute(
+                select(_y, _m, func.count()).where(and_(*rbase, SRE.submission_date.isnot(None)))
+                .group_by(_y, _m))).all()]
+            if not rows:
+                return {"found": False, "kind": kind,
+                        "message": "No application in your jurisdiction carries a filing date."}
+            ordered = sorted(rows, key=lambda r: (-r[1], r[0])) \
+                if spec.get("extreme") != "min" else sorted(rows, key=lambda r: (r[1], r[0]))
+            top = ordered[0]
+            return {"found": True, "kind": kind, "aspect": "count",
+                    "extreme": spec.get("extreme", "max"), "label": top[0], "count": top[1],
+                    "months": len(rows), "all_service_codes": True,
+                    "sides": [{"label": r[0], "count": r[1]} for r in ordered[:3]]}
+
     async def _count(**filters) -> int:
         q = select(func.count()).select_from(Application).where(and_(*base))
         for column, value in filters.items():
@@ -1167,15 +1340,43 @@ async def get_overdue_applications(
         if block_number:
             app_rows = [r for r in app_rows if _geo_hit(r, "block", block_number)]
 
-        return {
+        out = {
             "count": len(app_rows),
             "jurisdiction_type": officer.jurisdiction_type,
             "min_days_overdue": min_days_overdue,
             "applications": app_rows
         }
+        if not app_rows and not (application_type or min_days_overdue or start_date or end_date or ward_number or block_number):
+            out["empty_note"] = await _no_overdue_note(db, jurisdiction_filters, officer_stage, today)
+        return out
     except Exception as e:
         logger.error(f"Error getting overdue applications: {e}")
         return {"count": 0, "applications": [], "error": str(e)}
+
+
+async def _no_overdue_note(db, jurisdiction_filters, officer_stage, today) -> str:
+    """Why the overdue list is empty, in the documented terms: "overdue" is the 15-working-day field-visit
+    deadline (backend/utils/sla.py), which is NOT the same as a visit being past its scheduled date."""
+    from backend.utils.sla import working_days_between, FIELD_VISIT_DEADLINE_WD
+    rows = (await db.execute(
+        select(Application.submission_date, Application.field_visit_date).join(
+            SurveyNumber, Application.survey_number_id == SurveyNumber.id
+        ).join(Block, SurveyNumber.block_id == Block.id).join(Ward, Block.ward_id == Ward.id)
+        .join(Town, Ward.town_id == Town.id).join(Taluk, Town.taluk_id == Taluk.id)
+        .join(District, Taluk.district_id == District.id)
+        .where(and_(or_(*jurisdiction_filters), Application.current_stage == officer_stage,
+                    Application.application_type == "ISD",
+                    Application.current_status.in_(["pending", "in_progress", "escalated"]))))).all()
+    if not rows:
+        return "None is past the 15-working-day field-visit deadline (you have no open ISD file)."
+    oldest = min((r[0] for r in rows if r[0]), default=None)
+    age = working_days_between(oldest, today) if oldest else 0
+    late = sum(1 for r in rows if r[1] and r[1] < today)
+    note = (f"None is past the {FIELD_VISIT_DEADLINE_WD}-working-day field-visit deadline "
+            f"(your oldest open ISD file is {age} working days old).")
+    if late:
+        note += f" {late} field visit(s) are past their scheduled date though -- ask which application to field visit next."
+    return note
 
 
 async def get_highest_priority_applications(
@@ -2187,7 +2388,7 @@ async def get_survey_owners(
                 "name": owner.name,
                 "name_tamil": owner.name_tamil,
                 # Owner columns carried across from the natham-chitta owner row
-                # (uchitta_natham_demo -> owners). "who is the father of
+                # (uchitta_natham -> owners). "who is the father of
                 # the owner of survey 5", "the owner's aadhaar / gender /
                 # address" have real answers here; without these keys they fell
                 # through to the LLM. `mobile` / `address` are blank for every
@@ -2195,7 +2396,7 @@ async def get_survey_owners(
                 # can say "not recorded" rather than ignore the question.
                 "relative_name": owner.father_name,
                 # s/o, w/o, d/o -- how relative_name relates to the owner
-                # (uchitta_natham_demo.relationship_code). None where the
+                # (uchitta_natham.relationship_code). None where the
                 # extract left it as code 0.
                 "relationship": owner.relationship_type,
                 "aadhaar_last4": owner.aadhaar_last4,
@@ -3032,12 +3233,12 @@ async def get_digital_signature_details(
             "digital_signature_status": "not_implemented",
             "explanation": (
                 "Digital signature data exists in the TAMILNILAM Urban Revenue extracts "
-                "(uaregmap_ds_demo.csv and uchitta_nathammap_ds_demo.csv) but is not yet "
+                "(uaregmap_ds.csv and uchitta_nathammap_ds.csv) but is not yet "
                 "loaded into the application's PostgreSQL database. "
                 "\n\n"
                 "Available data in extracts:\n"
-                "- 1,036 parcel signature records (uaregmap_ds_demo.csv)\n"
-                "- 439 owner signature records (uchitta_nathammap_ds_demo.csv)\n"
+                "- 1,036 parcel signature records (uaregmap_ds.csv)\n"
+                "- 439 owner signature records (uchitta_nathammap_ds.csv)\n"
                 "- Fields: signed_datetime, signed_by_username, signature_content (JSON metadata)\n"
                 "- Note: nic_digital_signature column exists but is empty (awaiting actual PKCS#7 signatures)\n"
                 "\n\n"
@@ -3169,8 +3370,24 @@ async def get_fee_summary(
             select(func.count(Application.challan_number)).where(and_(*conditions))
         )).scalar()
 
+        # Fee is recorded on ISD/NISD files only. The applications under the
+        # other service codes live in the register, which holds no fee, so they
+        # can neither be summed nor called "free" -- they are counted so the
+        # answer can say how much of the officer's work this total does not cover.
+        other_codes = 0
+        if not application_type:
+            _o = [ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids or []),
+                  ServiceRegisterEntry.service_code.notin_(["0153", "0154"])]
+            if start_date:
+                _o.append(ServiceRegisterEntry.submission_date >= start_date)
+            if end_date:
+                _o.append(ServiceRegisterEntry.submission_date <= end_date)
+            other_codes = await db.scalar(
+                select(func.count()).select_from(ServiceRegisterEntry).where(and_(*_o))) or 0
+
         return {
             "fee_summary": {
+                "other_service_code_applications": other_codes,
                 "total_applications": total_apps or 0,
                 "with_fee": with_fee or 0,
                 "without_fee": (total_apps or 0) - (with_fee or 0),
@@ -3354,18 +3571,22 @@ async def get_applications_by_block(
     the same reason the listing queries exclude it.
     """
     try:
+        # Counted from the register, across every service code and over the
+        # officer's whole jurisdiction -- the same basis as the listings. This
+        # used to count only the ISD/NISD files assigned to the officer, so the
+        # per-block totals summed to 38 while the listing showed 152.
         rows = (await db.execute(
             select(
                 Ward.ward_number,
                 Block.block_number,
-                Application.current_status,
-                func.count(Application.id),
+                ServiceRegisterEntry.status,
+                func.count(ServiceRegisterEntry.id),
             )
-            .join(SurveyNumber, Application.survey_number_id == SurveyNumber.id)
-            .join(Block, SurveyNumber.block_id == Block.id)
-            .join(Ward, Block.ward_id == Ward.id)
-            .where(Application.assigned_officer_id == officer.officer_id)
-            .group_by(Ward.ward_number, Block.block_number, Application.current_status)
+            .select_from(ServiceRegisterEntry)
+            .join(Block, ServiceRegisterEntry.block_id == Block.id)
+            .join(Ward, ServiceRegisterEntry.ward_id == Ward.id)
+            .where(ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids or []))
+            .group_by(Ward.ward_number, Block.block_number, ServiceRegisterEntry.status)
         )).all()
     except Exception as e:
         logger.error(f"Error grouping applications by {group_by}: {e}")
@@ -3569,6 +3790,64 @@ async def get_applications_by_numbers(
             app_rows[-1]["days_to_decide"] = (
                 (_dec_ts.date() - app.submission_date).days
                 if _dec_ts and app.submission_date else None)
+
+        # Applications under the other service codes (0158, 0159, 0178, ...)
+        # live only in the flat register, not in `applications`. A list that
+        # spanned every service code carries their numbers too, so they are read
+        # back here -- otherwise a follow-up ("how many of them are approved?")
+        # would answer over the ISD/NISD subset while the officer was looking at
+        # the whole list. Fields the register does not hold are left empty, never
+        # invented, and the caller already reports how many rows carry each one.
+        _have = {(r["application_number"] or "").upper() for r in app_rows}
+        _missing = [n for n in numbers if n not in _have]
+        if _missing and not application_type:
+            _rq = (select(ServiceRegisterEntry)
+                   .options(selectinload(ServiceRegisterEntry.ward),
+                            selectinload(ServiceRegisterEntry.block))
+                   .where(ServiceRegisterEntry.application_number.in_(_missing))
+                   .where(ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids or [])))
+            if status:
+                _rq = _rq.where(ServiceRegisterEntry.status == status)
+            elif not include_rejected:
+                _rq = _rq.where(ServiceRegisterEntry.status != "rejected")
+            from backend.utils.helpers import SIS_URBAN_SERVICES as _SVC
+            for r in (await db.execute(_rq)).scalars().all():
+                _nm = (_SVC.get(r.service_code, {}) or {}).get("name") or r.service_code
+                app_rows.append({
+                    "application_number": r.application_number,
+                    "type": _nm,
+                    "service_code": r.service_code,
+                    "register_only": True,
+                    "status": r.status,
+                    "stage": r.stage,
+                    "submission_date": r.submission_date.isoformat() if r.submission_date else None,
+                    "last_updated_date": None,
+                    "is_overdue": None,
+                    "priority_flag": None,
+                    "field_visit_status": None,
+                    "submission_channel": r.submission_channel,
+                    "can_number": None,
+                    "igrs_form6_number": None,
+                    "fee_amount": None,
+                    "payment_mode": None,
+                    "survey_no": r.survey_no or "N/A",
+                    "raw_survey_no": r.survey_no or "N/A",
+                    "subdivisions": r.subdivision_no or "-",
+                    "sub_division_no": r.subdivision_no or "-",
+                    "district_name": _district_name_from_app_number(r.application_number) or "N/A",
+                    "taluk_name": "N/A",
+                    "town_name": "N/A",
+                    "ward_number": r.ward.ward_number if r.ward else "N/A",
+                    "block_number": r.block.block_number if r.block else "N/A",
+                    "applicant_name": "N/A",
+                    "applicant_mobile": "N/A",
+                    "applicant_address": "N/A",
+                    "included_subdivisions": r.subdivision_no or "-",
+                    "decision_date": None,
+                    "days_to_decide": None,
+                })
+            # keep the order the officer saw, as for the rows above
+            app_rows.sort(key=lambda r: position.get((r["application_number"] or "").upper(), 10**6))
 
         if sort_by:
             _key = {"application_number": "application_number", "status": "status",
@@ -3917,7 +4196,20 @@ async def get_ip_comparison(
         q = q.where(Application.application_number.in_(numbers))
     else:
         q = q.where(Application.current_status != "rejected")
-    rows = (await db.execute(q.order_by(Application.application_number))).all()
+    rows = list((await db.execute(q.order_by(Application.application_number))).all())
+
+    # ISD/NISD (0153/0154) is only part of the register -- service_register_entries carries
+    # submission_ip for every other code too, so a comparison naming (or spanning) a 0158 /
+    # 0169 / F-Line / ... file is not silently limited to the two codes `Application` tracks.
+    sq = (select(ServiceRegisterEntry.application_number, ServiceRegisterEntry.submission_ip)
+          .where(ServiceRegisterEntry.service_code.notin_(["0153", "0154"]),
+                 ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids or [])))
+    if numbers:
+        sq = sq.where(ServiceRegisterEntry.application_number.in_(numbers))
+    else:
+        sq = sq.where(ServiceRegisterEntry.status != "rejected")
+    rows += list((await db.execute(sq.order_by(ServiceRegisterEntry.application_number))).all())
+
     by_ip: Dict[str, List[str]] = {}
     no_ip: List[str] = []
     for num, ip in rows:
@@ -3982,6 +4274,23 @@ async def get_workflow_remarks(
     return {"apps": ordered, "requested": len(numbers), "dropped": len(numbers) - len(ordered)}
 
 
+async def get_repeat_applicants(db: AsyncSession, officer: OfficerContext) -> List[Dict[str, Any]]:
+    """Applicants (same name AND mobile) with more than one ISD / NISD application in the officer's jurisdiction.
+    The register keeps one applicant row per application, so a person is recognised by name + mobile. Read-only."""
+    jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+    if not jurisdiction_filters:
+        return []
+    q = (select(Applicant.name, Applicant.mobile, Application.application_number, Application.current_status)
+         .join(Application, Application.applicant_id == Applicant.id)
+         .where(Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters))))
+    by: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+    for name, mobile, num, status in (await db.execute(q)).all():
+        if name and mobile:
+            by.setdefault((str(name).strip().lower(), str(mobile).strip()), []).append((name, num, status))
+    out = [{"name": v[0][0], "applications": [(n, st) for _x, n, st in v]} for v in by.values() if len(v) > 1]
+    return sorted(out, key=lambda r: -len(r["applications"]))
+
+
 async def get_analytics_rows(db: AsyncSession, officer: OfficerContext) -> List[Dict[str, Any]]:
     """One lean row per application in the officer's jurisdiction, every status: the columns the
     year / month / fee / percentage / turnaround questions are computed from. Read-only."""
@@ -4005,4 +4314,48 @@ async def get_analytics_rows(db: AsyncSession, officer: OfficerContext) -> List[
         out.append({"application_number": num, "type": typ, "status": status, "submission_channel": channel,
                     "submission_date": sub, "fee": float(fee) if fee is not None else None,
                     "decided_on": decided_at.date() if decided_at else None, "days_to_decide": days})
+
+    # The other service codes (0156, 0158, 0159, 0178, ...) live only in the
+    # register. Their rows are added so a total, a per-month or per-year count
+    # or a percentage covers every service code, exactly as the listings do. The
+    # register holds no fee and no decision date, so those stay empty here and
+    # the fee / turnaround answers continue to rest on the files that have them.
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    _have = {r["application_number"] for r in out}
+    for r in (await get_all_service_code_applications(db, officer)).get("applications") or []:
+        if r["application_number"] in _have:
+            continue
+        out.append({"application_number": r["application_number"],
+                    "type": (SIS_URBAN_SERVICES.get(r["service_code"], {}) or {}).get("name") or r["service_code"],
+                    "service_code": r["service_code"], "status": r["status"],
+                    "submission_channel": r["submission_channel"],
+                    "submission_date": date.fromisoformat(r["submission_date"]) if r.get("submission_date") else None,
+                    "fee": None, "decided_on": None, "days_to_decide": None})
     return out
+
+
+async def get_flagged_surveys(db: AsyncSession, officer: OfficerContext, kind: str) -> Dict[str, Any]:
+    """Survey numbers in the officer's jurisdiction flagged for encroachment or litigation, with their ISD / NISD applications."""
+    jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+    if not jurisdiction_filters:
+        return {"surveys": []}
+    flag = SurveyNumber.has_encroachment if kind == "encroachment" else SurveyNumber.has_litigation
+    q = (select(SurveyNumber.survey_no, Application.application_number, Application.current_status)
+         .join(Application, Application.survey_number_id == SurveyNumber.id)
+         .where(flag.is_(True), Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters))))
+    by: Dict[str, List[Tuple[str, str]]] = {}
+    for sv, num, st in (await db.execute(q)).all():
+        by.setdefault(str(sv), []).append((num, st))
+    return {"surveys": [{"survey_no": k, "applications": v} for k, v in sorted(by.items())]}
+
+
+async def get_applications_by_reason(db: AsyncSession, officer: OfficerContext, reasons: List[str]) -> List[Tuple[str, str, str]]:
+    """ISD / NISD applications whose declared reason (sale, settlement, release, ...) is one of `reasons`, in the officer's jurisdiction."""
+    jurisdiction_filters = await get_jurisdiction_filter(db, officer)
+    if not jurisdiction_filters:
+        return []
+    q = (select(Application.application_number, Application.declared_reason, Application.current_status)
+         .where(func.lower(Application.declared_reason).in_([r.lower() for r in reasons]),
+                Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters)))
+         .order_by(Application.submission_date.desc()))
+    return [(n, r, s) for n, r, s in (await db.execute(q)).all()]

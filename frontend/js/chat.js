@@ -331,16 +331,17 @@ function renderMessagesFromHistory() {
  * Render welcome message
  */
 function renderWelcomeMessage() {
-    const welcomeMessage = `வணக்கம்! I'm your SIS AI Assistant. I can help you with:
-
-• Survey numbers and sub-divisions
-• ISD and NISD applications
-• Field visit scheduling
-• Application status tracking
-• Workflow questions
-• Workload management
-
-How can I assist you today?`;
+    // HTML, so it is shown as a greeting with a list -- not turned into a FIELD | DETAILS record card
+    const welcomeMessage = `<p>வணக்கம்! I'm your SIS AI Assistant. I can help you with:</p>
+<ul>
+<li>Survey numbers and sub-divisions</li>
+<li>Applications of every service code (ISD, NISD, F-Line, modification, TSLR and the rest)</li>
+<li>Field visit scheduling</li>
+<li>Application status and record details (owners, transfers, recommendations)</li>
+<li>Workflow questions</li>
+<li>Workload management</li>
+</ul>
+<p>How can I assist you today?</p>`;
     
     renderMessage('assistant', welcomeMessage, new Date().toISOString(), 'en', false);
 }
@@ -1061,6 +1062,10 @@ function formatBotMessage(text) {
         return text.trim();
     }
     
+    // ── Structured plain text (bullets, "Label: value" lines) → the same card the details use ──
+    const card = plainToCard(text);
+    if (card) return card;
+
     // ── Plain text → light markdown conversion ───────────────────────
     let formatted = escapeHtml(text);
     
@@ -1072,6 +1077,7 @@ function formatBotMessage(text) {
     
     // Collapse 3+ blank lines → single blank line, then convert newlines → <br>
     formatted = formatted.replace(/\n{3,}/g, '\n\n');
+    formatted = formatted.replace(/((?:^[•\-]\s+.+(?:\n|$))+)/gm, m => '<ul>' + m.trim().split('\n').map(l => '<li>' + l.replace(/^[•\-]\s+/, '') + '</li>').join('') + '</ul>');
     formatted = formatted.replace(/\n/g, '<br>');
     
     // Bullet lists: lines starting with • or -
@@ -1094,6 +1100,53 @@ function formatBotMessage(text) {
     );
     
     return formatted;
+}
+
+/**
+ * A plain-text answer made of bullets / "Label: value" lines (the record, visit-plan and "not held" answers) is shown
+ * as the same titled FIELD | DETAILS card as the ISD / NISD details, so every answer looks alike. Prose is left alone.
+ * Returns null when the text is not that shape.
+ */
+function plainToCard(text) {
+    const lines = text.split('\n').map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+    if (lines.length < 3) return null;
+    const isBullet = l => /^\s*[•\-–]\s+/.test(l);
+    const labelRe = /^(.{1,70}?)\s*:\s+(.+)$/;
+    const appRe = /^(\d{4}\/\d{3,4}\/\d{1,3}\/\d+)\b\s*(.*)$/;
+    const bullets = lines.filter(isBullet).length;
+    const labelled = lines.filter(l => labelRe.test(l.replace(/^\s*[•\-–]\s+/, ''))).length;
+    if (bullets < 2 && labelled < 3) return null;
+    // an intro, a plain bullet list and a closing sentence is a message with a list, not a record
+    if (labelled < 2 && !isBullet(lines[lines.length - 1]) && !lines.some(l => appRe.test(l.replace(/^\s*[•\-–]\s+/, '')))) return null;
+    if (lines.some(l => !isBullet(l) && l.length > 160)) return null;          // prose, not a record
+    let title = null;
+    const rows = [];
+    lines.forEach((raw, i) => {
+        const bullet = isBullet(raw);
+        const body = raw.replace(/^\s*[•\-–]\s+/, '').trim();
+        if (title === null && i === 0 && !bullet) { title = body.replace(/:$/, ''); return; }
+        const step = body.match(/^(\d{1,2})[.)]\s+(.+)$/);
+        const app = body.match(appRe);
+        const lab = body.match(labelRe);
+        if (!bullet && /:$/.test(body)) rows.push(['section', body.replace(/:$/, ''), '']);
+        else if (step) rows.push(['row', step[1], step[2]]);
+        else if (app && app[2]) rows.push(['row', app[1], app[2].replace(/^[—–-]\s*/, '')]);
+        else if (lab && !/^(Note|\()/.test(body)) rows.push(['row', lab[1], lab[2]]);
+        else rows.push(['note', body, '']);
+    });
+    if (!rows.length) return null;
+    const n = rows.filter(r => r[0] === 'row').length;
+    const body = rows.map(r => r[0] === 'section'
+        ? `<tr><td colspan="2"><strong>${escapeHtml(r[1])}</strong></td></tr>`
+        : r[0] === 'note'
+            ? `<tr><td colspan="2">${escapeHtml(r[1])}</td></tr>`
+            : `<tr><td>${escapeHtml(r[1])}</td><td>${escapeHtml(r[2])}</td></tr>`).join('');
+    const count = n ? `<span class="data-table-count">${n} records</span>` : '';
+    return `<div class="data-table-card"><div class="data-table-header"><div class="data-table-title-section">` +
+        `<span class="data-table-icon">📋</span><h3 class="data-table-title">${escapeHtml(title || '')}</h3>${count}</div>` +
+        `<button class="btn-copy-table" onclick="window.copyTableData(this)">Copy</button></div>` +
+        `<div class="data-table-container"><table class="data-table"><thead><tr><th>${rows.filter(r => r[0] === 'row' && appRe.test(r[1])).length * 2 > n ? 'APPLICATION' : 'FIELD'}</th><th>DETAILS</th></tr></thead>` +
+        `<tbody class="table-body-rows">${body}</tbody></table></div></div>`;
 }
 
 /**

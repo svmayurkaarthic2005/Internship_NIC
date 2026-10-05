@@ -180,7 +180,7 @@ def build_context(intent: Optional[str],
     # here and fell back to whatever application the officer had looked at
     # earlier in the session -- answering a request to re-explain a service
     # code with an unrelated application's detail card.
-    if sd.get("service_code_filter"):
+    if sd.get("service_code_filter") and not (isinstance(sd.get("applications"), list) and sd["applications"]):
         return FollowupContext(
             entity=ENTITY_SERVICE_CODE,
             filters={**filters, "service_code": sd["service_code_filter"]},
@@ -224,6 +224,8 @@ def build_context(intent: Optional[str],
     # falsy, so `[] or sd.get("unassigned_applications")` silently fell
     # through to whichever key held something -- or to None, erasing the
     # barrier and letting the walk-back reach straight past it again.
+    if sd.get("service_code_filter"):
+        filters = {**filters, "service_code": sd["service_code_filter"]}  # a listing under one code keeps it
     rows = sd["applications"] if isinstance(sd.get("applications"), list) \
         else sd.get("unassigned_applications")
     if isinstance(rows, list) and rows:
@@ -852,7 +854,7 @@ _SINGULAR_FIELD_CUES = (
     # "not in your SIS register" handler answers it instead.
     "tax", "soil", "plot", "adopted", "land use", "waste", "govern",
     "classification", "group",
-    # Parcel-register (uareg_demo) columns the survey projection
+    # Parcel-register (uareg) columns the survey projection
     # drops. A bare "what is the irrigation source?" / "is it double crop?" /
     # "the form 6 number?" / "is it cultivable?" follow-up after a survey
     # answer carried none of the cues above, classified as NONE, lost the
@@ -874,7 +876,7 @@ _SINGULAR_FIELD_CUES = (
     "transfer", "transferred", "registered", "registration", "deed",
     "remarks", "remark", "recommendation", "recommended", "order",
     "மாற்ற", "பதிவு", "பரிந்துரை", "குறிப்பு", "ஆணை",
-    # Owner (uchitta_natham_demo) sub-fields. A bare "what is the gender?"
+    # Owner (uchitta_natham) sub-fields. A bare "what is the gender?"
     # / "the relationship?" / "the aadhaar number?" / "the ownership share?"
     # follow-up after a joint-owner or survey-ownership answer carried none of
     # the cues above -- it classified as NONE, lost the survey/application

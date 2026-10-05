@@ -3,6 +3,15 @@
 The main PostgreSQL database `sis_chatbot_db` holding all application tables
 and data for the SIS Chatbot system.
 
+**This pipeline is not what last built the live database.** An uncommitted
+`backend/sample_db_new/` (own CSVs, `build_app_tables_new.py`, `column_map.py`)
+replaced this directory's `build_app_tables.py` as the thing that actually
+populated `sis_chatbot_db` — live table names (`appl_log_urban`, no `_demo`
+suffix) and row counts no longer match what is documented below. Treat this
+file as the shape of the superseded pipeline until `sample_db_new` is
+reconciled with (or replaces) `sample_db`. See CLAUDE.md's "Database Layout"
+section for the fuller account.
+
 **Structure follows the CSVs. Data does not.** Every column list is read
 straight from the CSV header, so the tables match the real extract shape.
 The rows are generated: code values, statuses, workflow role hops and

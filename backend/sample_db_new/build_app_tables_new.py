@@ -366,6 +366,7 @@ def main():
             "ALTER TABLE service_register_entries ADD COLUMN IF NOT EXISTS subdivision_no VARCHAR(50)",
             "ALTER TABLE service_register_entries ADD COLUMN IF NOT EXISTS stage VARCHAR(30)",
             "ALTER TABLE service_register_entries ADD COLUMN IF NOT EXISTS submission_channel VARCHAR(20)",
+            "ALTER TABLE service_register_entries ADD COLUMN IF NOT EXISTS submission_ip VARCHAR(50)",
         ):
             cx.execute(text(ddl))
         # town_code used to have a standalone unique constraint; it should be
@@ -642,14 +643,15 @@ def main():
                        {newcol('appl_log_urban', 'subdivision_number')},
                        {newcol('appl_log_urban', 'workflow_state')},
                        {newcol('appl_log_urban', 'source_name')},
-                       {newcol('appl_log_urban', 'camp_flag')}
+                       {newcol('appl_log_urban', 'camp_flag')},
+                       {newcol('appl_log_urban', 'ip_address')}
                 FROM appl_log_urban
                 ORDER BY {newcol('appl_log_urban', 'application_id')},
                          {newcol('appl_log_urban', 'last_updated_datetime')} DESC NULLS LAST,
                          {newcol('appl_log_urban', 'application_date')} DESC
             ) latest""")).all():
             (app_id, svc, dc, tk, tw, wd, bl, sub_date, status,
-             sno, subdiv_no, wf_state, src_name, camp_flag) = r
+             sno, subdiv_no, wf_state, src_name, camp_flag, ip_addr) = r
             wd_key = (dc, tk, tw, wd)
             if wd_key not in ward_id:
                 continue  # geography above covers every ward in this table; defensive only
@@ -664,18 +666,19 @@ def main():
                 num=app_id, svc=svc, sno=sno, sub=subdiv_no,
                 st=STATUS_MAP.get(status, "pending"),
                 stg=("Completed" if (wf_state or "").strip().upper() == "C" else "Open"),
-                ch=can_channel(src_name, camp_flag),
+                ch=can_channel(src_name, camp_flag), ip=(ip_addr or None),
                 d=_to_date(sub_date), w=ward_id[wd_key],
                 b=block_id.get(bl_key), t=now))
         if sre_rows:
             cx.execute(text("""INSERT INTO service_register_entries
                 (id,application_number,service_code,survey_no,subdivision_no,
-                 status,stage,submission_channel,submission_date,ward_id,block_id,created_at,updated_at)
-                VALUES (:i,:num,:svc,:sno,:sub,:st,:stg,:ch,:d,:w,:b,:t,:t)
+                 status,stage,submission_channel,submission_ip,submission_date,ward_id,block_id,created_at,updated_at)
+                VALUES (:i,:num,:svc,:sno,:sub,:st,:stg,:ch,:ip,:d,:w,:b,:t,:t)
                 ON CONFLICT (id) DO UPDATE SET
                     service_code=EXCLUDED.service_code, survey_no=EXCLUDED.survey_no,
                     subdivision_no=EXCLUDED.subdivision_no, status=EXCLUDED.status,
                     stage=EXCLUDED.stage, submission_channel=EXCLUDED.submission_channel,
+                    submission_ip=EXCLUDED.submission_ip,
                     submission_date=EXCLUDED.submission_date,
                     ward_id=EXCLUDED.ward_id, block_id=EXCLUDED.block_id,
                     updated_at=EXCLUDED.updated_at"""), sre_rows)
@@ -1170,14 +1173,26 @@ def main():
         _areg = "areg_temp_subdivclub"
         _areg_cols = ["application_id", "temporary_subdivision_number",
                      "new_subdivision_number", "area_square_meter", "existing_patta_number",
-                     "ward_code", "block_code", "survey_number", "row_id"]
+                     "ward_code", "block_code", "survey_number", "row_id",
+                     "area_hectare", "area_ares"]
         for r in cx.execute(text(f"""
             SELECT {', '.join(newcol(_areg, c) for c in _areg_cols)}
             FROM {_areg}
             ORDER BY {newcol(_areg, 'application_id')}, {newcol(_areg, 'row_id')}""")).all():
-            app_id, tmp_no, new_no, area, patta, ward, block, survey, _rid = r
+            app_id, tmp_no, new_no, area, patta, ward, block, survey, _rid, _ha, _ares = r
             if app_id not in app_uuid:
                 continue
+            # The extract records area as hectare + ares + square metres (1 ha =
+            # 10,000 sq.m, 1 are = 100 sq.m); the square-metre column holds only
+            # the remainder below one are. Reading that column alone stored 18
+            # for a plot of 0 ha 5 ares 18 sq.m -- 518 sq.m -- so every area
+            # answer was understated by the whole hectare and ares part.
+            def _n(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return 0.0
+            area = _n(_ha) * 10000.0 + _n(_ares) * 100.0 + _n(area)
             parent_no = (tmp_no or "").rsplit("/T", 1)[0]
             sub_uuid = None
             if patta and patta != "-" and patta in survey_by_patta:

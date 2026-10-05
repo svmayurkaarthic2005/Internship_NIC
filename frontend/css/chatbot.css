@@ -4,10 +4,44 @@
     margin: 0;
     padding: 0;
     height: 100vh;
+    /* 100vh includes the area under a phone's collapsing address bar, which
+       pushes the input box off-screen; dvh tracks the visible viewport. */
+    height: 100dvh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     background: var(--background);
+}
+
+/* Slim, unobtrusive scrollbars instead of the chunky default ones. */
+.chat-messages-new,
+.data-table-container {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--primary-rgb), 0.35) transparent;
+}
+
+.chat-messages-new::-webkit-scrollbar,
+.data-table-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.chat-messages-new::-webkit-scrollbar-thumb,
+.data-table-container::-webkit-scrollbar-thumb {
+    background: rgba(var(--primary-rgb), 0.3);
+    border-radius: 8px;
+}
+
+.chat-messages-new::-webkit-scrollbar-track,
+.data-table-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Keyboard users get a clear focus ring on every control. */
+.chatbot-page button:focus-visible,
+.chatbot-page a:focus-visible {
+    outline: 3px solid rgba(var(--primary-rgb), 0.45);
+    outline-offset: 2px;
 }
 
 /* ========== HEADER ========== */
@@ -22,14 +56,24 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 var(--spacing-xl);
+    /* Keep content clear of a notch / rounded corners in landscape. */
+    padding-left: max(var(--spacing-xl), env(safe-area-inset-left));
+    padding-right: max(var(--spacing-xl), env(safe-area-inset-right));
+    padding-top: env(safe-area-inset-top);
+    height: calc(68px + env(safe-area-inset-top));
     position: relative;
     z-index: 100;
+    flex-shrink: 0;
+    gap: var(--spacing-md);
 }
 
 .header-left-new {
     display: flex;
     align-items: center;
     gap: var(--spacing-lg);
+    /* Lets the title ellipsize instead of pushing the buttons off-screen. */
+    min-width: 0;
+    flex: 1;
 }
 
 .bot-avatar-container-new {
@@ -65,6 +109,7 @@
 .header-title-group-new {
     display: flex;
     flex-direction: column;
+    min-width: 0;
 }
 
 .header-title-new {
@@ -73,6 +118,13 @@
     color: var(--primary);
     margin: 0;
     line-height: var(--line-height-tight);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bot-avatar-container-new {
+    flex-shrink: 0;
 }
 
 .status-indicator-new {
@@ -98,11 +150,14 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-lg);
+    flex-shrink: 0;
 }
 
 .icon-btn-new {
     display: flex;
     align-items: center;
+    justify-content: center;
+    min-height: 44px; /* comfortable touch target */
     gap: var(--spacing-sm);
     padding: var(--spacing-md) var(--spacing-lg);
     background: var(--surface);
@@ -155,8 +210,16 @@
 /* ========== MESSAGES AREA ========== */
 .chat-messages-new {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    /* Scrolling to the end of the chat must not chain into the page. */
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
     padding: var(--spacing-xl);
+    padding-left: max(var(--spacing-xl), env(safe-area-inset-left));
+    padding-right: max(var(--spacing-xl), env(safe-area-inset-right));
     display: flex;
     flex-direction: column;
     gap: var(--spacing-lg);
@@ -183,6 +246,9 @@
     display: flex;
     gap: var(--spacing-lg);
     max-width: 85%;
+    /* A flex child never shrinks below its content by default; without this a
+       wide table forces the whole bubble past the edge of the screen. */
+    min-width: 0;
     animation: messageSlideIn var(--transition-slow);
 }
 
@@ -227,18 +293,23 @@
     gap: var(--spacing-sm);
     max-width: 600px;
     width: fit-content;
+    min-width: 0;
 }
 
-/* When the message contains a table, allow the bubble to expand naturally */
+/* When the message contains a table, let the bubble use the row's remaining
+   width (the avatar and gap are already accounted for by flex) and no more.
+   The table then scrolls inside .data-table-container, one scroll box only. */
 .message-content-wrapper:has(table) {
-    max-width: min(1000px, 90vw);
-    width: fit-content;
-    min-width: min(320px, 100%);
+    flex: 1 1 auto;
+    max-width: min(1000px, 100%);
+    width: auto;
+    min-width: 0;
 }
 
 .message-content:has(table) {
-    overflow-x: auto;
+    display: block;
     max-width: 100%;
+    overflow: hidden;
 }
 
 .message-user .message-content-wrapper {
@@ -420,8 +491,53 @@
 /* ========== INPUT AREA ========== */
 .chat-input-area-new {
     padding: var(--spacing-lg) var(--spacing-xl);
+    /* Keep the box above the iPhone home indicator. */
+    padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom));
+    padding-left: max(var(--spacing-xl), env(safe-area-inset-left));
+    padding-right: max(var(--spacing-xl), env(safe-area-inset-right));
     background: var(--surface);
     border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+/* Starter questions, shown until the first message is sent. */
+.quick-chips {
+    display: flex;
+    gap: var(--spacing-sm);
+    overflow-x: auto;
+    padding-bottom: var(--spacing-md);
+    margin: 0 calc(-1 * var(--spacing-xs));
+    scrollbar-width: none;
+}
+
+.quick-chips::-webkit-scrollbar {
+    display: none;
+}
+
+.quick-chips[hidden] {
+    display: none;
+}
+
+.quick-chip {
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    border: 1px solid rgba(var(--primary-rgb), 0.2);
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.quick-chip:hover {
+    background: rgba(var(--primary-rgb), 0.14);
+    border-color: var(--primary);
 }
 
 .input-container-new {
@@ -453,12 +569,20 @@
     font-family: inherit;
     color: var(--text-primary);
     max-height: 120px;
-    min-height: 22px;
+    min-height: 24px;
+    min-width: 0;
+    /* The textarea auto-grows; its own scrollbar only showed up as a stray
+       grey pill beside the send button. Scrolling still works. */
+    scrollbar-width: none;
     caret-color: var(--primary);
     /* Drops the ~300ms tap-response delay some mobile browsers add while
        they wait to see if a tap becomes a double-tap-to-zoom gesture --
        part of why touch input read as laggy rather than instant. */
     touch-action: manipulation;
+}
+
+.message-input-new::-webkit-scrollbar {
+    display: none;
 }
 
 .message-input-new::placeholder {
@@ -501,9 +625,12 @@
 }
 
 .btn-send-new:disabled {
-    background: var(--border);
+    /* A muted but clearly visible button; the old pale-grey-at-50% version
+       was almost invisible against the input box. */
+    background: var(--text-muted);
+    box-shadow: none;
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.55;
 }
 
 /* ---- send / stop swap -------------------------------------------------
@@ -820,74 +947,6 @@
     color: var(--text-primary);
 }
 
-.message-content table.data-table {
-    display: table;
-    width: 100%;
-    border-collapse: collapse;
-    margin: var(--spacing-md) 0 0 0;
-    background: var(--surface);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm);
-    overflow: hidden;
-}
-
-.message-content table.data-table thead {
-    background: var(--primary-gradient);
-    color: white;
-    display: table-header-group;
-}
-
-.message-content table.data-table tbody {
-    display: table-row-group;
-}
-
-.message-content table.data-table thead th {
-    padding: var(--spacing-sm) var(--spacing-md);
-    text-align: left;
-    font-weight: var(--font-weight-semibold);
-    font-size: var(--font-size-sm);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 2px solid var(--primary-dark);
-    white-space: nowrap;
-}
-
-.message-content table.data-table tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background var(--transition-base);
-}
-
-.message-content table.data-table tbody tr:hover {
-    background: var(--primary-light);
-}
-
-.message-content table.data-table tbody tr:last-child {
-    border-bottom: none;
-}
-
-.message-content table.data-table tbody td {
-    padding: var(--spacing-sm) var(--spacing-md);
-    font-size: var(--font-size-sm);
-    color: var(--text-primary);
-    vertical-align: top;
-    white-space: nowrap;
-}
-
-.message-content table.data-table tbody td:first-child {
-    font-weight: var(--font-weight-semibold);
-    color: var(--primary);
-}
-
-/* Responsive tables for mobile */
-@media (max-width: 768px) {
-
-    .message-content table.data-table thead th,
-    .message-content table.data-table tbody td {
-        padding: var(--spacing-xs) var(--spacing-sm);
-        font-size: var(--font-size-xs);
-    }
-}
-
 /* Generic fallback — scoped to non-data-table to avoid conflicts */
 .message-content table:not(.data-table) {
     width: 100%;
@@ -919,210 +978,4 @@
     background: var(--surface);
 }
 
-/* ========== DATA TABLE STYLES ==========
-   NOTE: this whole section used to be accidentally nested one level inside
-   ".message-content table:not(.data-table) tr:hover" (a missing closing
-   brace), which under the CSS Nesting spec silently turned every rule below
-   into a descendant selector of that hover state -- so none of it ever
-   matched real markup. Fixed alongside this pass's visual refresh. */
-.data-table-card {
-    margin-top: var(--spacing-lg);
-    background: var(--surface);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    box-shadow: var(--shadow-md);
-    border: 1px solid var(--border);
-}
-
-.data-table-header {
-    padding: var(--spacing-lg) var(--spacing-xl);
-    background: var(--primary-light);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.data-table-title-section {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-}
-
-.data-table-icon {
-    font-size: 24px;
-}
-
-.data-table-title {
-    margin: 0;
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-}
-
-.data-table-count {
-    font-size: var(--font-size-sm);
-    color: var(--primary-dark);
-    background: rgba(var(--primary-rgb), 0.12);
-    padding: var(--spacing-xs) var(--spacing-md);
-    border-radius: var(--radius-full);
-    font-weight: var(--font-weight-semibold);
-}
-
-.btn-copy-table {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--spacing-sm) var(--spacing-md);
-    cursor: pointer;
-    transition: all var(--transition-base);
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    color: var(--text-secondary);
-}
-
-.btn-copy-table:hover {
-    background: rgba(var(--primary-rgb), 0.1);
-    border-color: var(--primary);
-    color: var(--primary);
-}
-
-.data-table-container {
-    overflow-x: auto;
-    max-height: 600px;
-    overflow-y: auto;
-}
-
-.data-table {
-    width: 100%;
-    min-width: 500px;
-    border-collapse: collapse;
-    font-size: 14px;
-}
-
-.data-table thead {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--primary-light);
-}
-
-.data-table thead th {
-    padding: 12px 16px;
-    text-align: left;
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    border-bottom: 2px solid var(--border);
-    white-space: nowrap;
-}
-
-.data-table tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background-color var(--transition-base);
-}
-
-.data-table tbody tr:nth-child(even) {
-    background: var(--background);
-}
-
-.data-table tbody tr:hover {
-    background: var(--primary-light);
-}
-
-.data-table tbody td {
-    padding: 12px 16px;
-    color: var(--text-primary);
-    vertical-align: top;
-    word-wrap: break-word;
-    max-width: 300px;
-}
-
-.data-table tbody td:first-child {
-    font-weight: var(--font-weight-medium);
-}
-
-.data-table-empty {
-    padding: var(--spacing-xl);
-    text-align: center;
-    color: var(--text-secondary);
-}
-
-.data-table-footer {
-    padding: var(--spacing-md) var(--spacing-xl);
-    background: var(--background);
-    border-top: 1px solid var(--border);
-}
-
-.data-table-pagination {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.pagination-info {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-}
-
-.pagination-controls {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-}
-
-.pagination-page {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    font-weight: var(--font-weight-medium);
-}
-
-.btn-pagination {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--spacing-sm);
-    cursor: pointer;
-    transition: all var(--transition-base);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-}
-
-.btn-pagination:hover:not(:disabled) {
-    background: var(--primary);
-    border-color: var(--primary);
-    color: white;
-}
-
-.btn-pagination:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-/* Mobile responsiveness for tables */
-@media (max-width: 768px) {
-    .data-table-card {
-        margin: var(--spacing-md) calc(-1 * var(--spacing-md));
-        border-radius: 0;
-        border-left: none;
-        border-right: none;
-    }
-
-    .data-table {
-        min-width: 100%;
-        font-size: 13px;
-    }
-
-    .data-table thead th,
-    .data-table tbody td {
-        padding: 10px 12px;
-    }
-
-    .data-table-pagination {
-        flex-direction: column;
-        gap: var(--spacing-sm);
-        align-items: flex-start;
-    }
-}
+/* Table card, header, pagination and responsive rules live in table_styles.css. */

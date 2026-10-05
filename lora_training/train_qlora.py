@@ -10,24 +10,25 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+from transformers import EarlyStoppingCallback
 
-TRAIN_PATH = "/content/train_augmented.jsonl"
-VAL_PATH = "/content/validation.jsonl"
+TRAIN_PATH = "/content/train_v2_clean.jsonl"
+VAL_PATH = "/content/validation_v2_clean.jsonl"   # disjoint from train; test_heldout_*.jsonl is never loaded here
 
 BASE_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 OUTPUT_DIR = "/content/sis-qlora-adapter-v2"
 
 LORA_R = 16
 LORA_ALPHA = 32
-LORA_DROPOUT = 0.05
+LORA_DROPOUT = 0.1
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj",
                    "gate_proj", "up_proj", "down_proj"]
 
-LEARNING_RATE = 2e-4
+LEARNING_RATE = 1e-4   # lower than before: more data now, and the aim is to read the context, not to memorise it
 NUM_EPOCHS = 2
 PER_DEVICE_BATCH = 2
 GRAD_ACCUM = 16
-MAX_SEQ_LEN = 1024
+MAX_SEQ_LEN = 1536   # officer / record context is in the prompt now
 LR_SCHEDULER = "cosine"
 WARMUP_STEPS = 10
 SEED = 42
@@ -87,6 +88,7 @@ sft_config = SFTConfig(
     lr_scheduler_type=LR_SCHEDULER,
     warmup_steps=WARMUP_STEPS,
     optim="paged_adamw_8bit",
+    weight_decay=0.01,
     max_length=MAX_SEQ_LEN,
     packing=False,
     completion_only_loss=True,  # mask loss to assistant turns only
@@ -109,6 +111,7 @@ trainer = SFTTrainer(
     train_dataset=dataset["train"],
     eval_dataset=dataset["validation"],
     processing_class=tokenizer,
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],   # stop when eval loss stops improving
 )
 
 trainer.train()
