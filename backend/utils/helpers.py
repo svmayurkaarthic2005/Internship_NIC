@@ -78,7 +78,6 @@ TAMIL_NADU_DISTRICTS = {
 SIS_URBAN_SERVICES = {
     "0153": {"name": "Not Involving Subdivision",                     "short": "NISD",             "category": "Urban", "requires_field_visit": False},
     "0154": {"name": "Involving Subdivision",                         "short": "ISD",              "category": "Urban", "requires_field_visit": True},
-    "0155": {"name": "Merge Subdivisions",                            "short": "MERGE",            "category": "Urban", "requires_field_visit": True},
     "0156": {"name": "TSLR Extract with Sketch",                      "short": "TSLR_SKETCH",      "category": "Urban", "requires_field_visit": False},
     "0157": {"name": "TSLR Extract Only",                             "short": "TSLR_EXTRACT",     "category": "Urban", "requires_field_visit": False},
     "0158": {"name": "Modification / Anadeenam",                      "short": "MODIFICATION",     "category": "Urban", "requires_field_visit": True},
