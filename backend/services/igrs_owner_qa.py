@@ -133,9 +133,12 @@ def claims(message: str) -> bool:
     p = parse(message)
     if p["kind"] == "compare":
         return True
-    # a field question is this module's when it names IGRS or a column only this table has
+    # a field question is this module's when it names IGRS or a column only this table has.
+    # RELATIVE is included bare ("relation?", "relative's name?") the same way newowner_qa
+    # already treats its own RELATIVE/RELATION keys as a soft claim -- a bare relation/relative
+    # follow-up used to fall through to no module at all (parse() recognised it; claims() didn't).
     return p["kind"] == "field" and (p["igrs"] or "owner" in p["ws"]
-                                     or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6}))
+                                     or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6, RELATIVE}))
 
 
 async def load(db, app: str) -> List[Dict[str, Any]]:

@@ -58,10 +58,13 @@ class Settings(BaseSettings):
     RAG_MAX_DISTANCE: float = 0.50
     # Max output tokens per LLM response. Ollama's own default (128 on many
     # builds) truncates anything longer than a short reply, so this is set
-    # explicitly rather than left to the server default. 2048 leaves room for
-    # a full workflow explanation or a multi-row listing without the answer
-    # stopping mid-sentence.
-    LLM_NUM_PREDICT: int = 512
+    # explicitly rather than left to the server default. Capped at 256 (down
+    # from 512): on this machine's 4GB-VRAM GPU the model is mostly
+    # CPU-decoded (~0.2-0.35s/token), so 512 tokens could run past the 90s /
+    # 180s call timeouts before finishing. The system prompt's STRICT DATA
+    # RULES + DIRECT ANSWER MODE already push answers toward a few sentences,
+    # so 256 rarely truncates a real answer.
+    LLM_NUM_PREDICT: int = 256
     # Context window (input + output tokens) the model can see at once. The
     # prompt is large -- ~1.8k tokens of system rules + up to 10 history turns
     # + retrieved document chunks (n_results x 2000 chars) + the structured
@@ -75,8 +78,10 @@ class Settings(BaseSettings):
     # Wall-clock ceiling on a single non-streaming LLM call. A long generation
     # on CPU can otherwise outrun the client / reverse-proxy timeout and hang
     # the request with nothing to show; on timeout the caller gets a readable
-    # message instead.
-    LLM_TIMEOUT_SECONDS: float = 90.0
+    # message instead. 120s (up from 90s): this machine's GPU (4GB VRAM) only
+    # fits a fraction of an 8B Q4 model, so decode is mostly CPU-bound and a
+    # full-context answer can take 45-90s even at the reduced LLM_NUM_PREDICT.
+    LLM_TIMEOUT_SECONDS: float = 120.0
     # See services/llm_gate.py: generations allowed at once, and how long to wait for a slot.
     LLM_MAX_CONCURRENT: int = 2
     LLM_QUEUE_WAIT_SECONDS: float = 20.0

@@ -43,7 +43,7 @@ from sqlalchemy import select
 from backend.database import AsyncSessionLocal, engine
 from backend.models import SISOfficer
 from backend.services import chatbot
-from backend.sample_db.build_lora_dataset import build_officer_context, _flatten_html
+from backend.sample_db.lora.build_lora_dataset import build_officer_context, _flatten_html
 
 _EVAL_SET = Path(__file__).resolve().parents[2] / "backend" / "sample_db" / "eval_set.jsonl"
 

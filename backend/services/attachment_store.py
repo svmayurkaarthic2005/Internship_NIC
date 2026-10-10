@@ -320,9 +320,14 @@ async def save_document(
                                      session_id=sid, row_number=n, data=row))
 
     await db.flush()
-    await _retire_surplus(db, oid, sid, keep_id=doc.id)
+    retired = await _retire_surplus(db, oid, sid, keep_id=doc.id)
     await db.commit()
     await db.refresh(doc)
+    # Not a column -- a transient note for the upload endpoint to tell the
+    # officer which file(s) just aged out of this session's memory. Silently
+    # dropping the oldest file past the session cap read as the assistant
+    # losing track of it for no reason the officer could see.
+    doc.retired_filenames = retired
     # Content is never logged — only what the file is and how much of it there is.
     logger.info(
         "chat attachment stored",
@@ -334,8 +339,14 @@ async def save_document(
 
 
 async def _retire_surplus(db: AsyncSession, officer_id: uuid.UUID,
-                          session_id: uuid.UUID, keep_id: uuid.UUID) -> None:
-    """Keep only the newest N attachments answerable in a session."""
+                          session_id: uuid.UUID, keep_id: uuid.UUID) -> List[str]:
+    """Keep only the newest N attachments answerable in a session.
+
+    Returns the filenames retired, so the caller can tell the officer their
+    oldest file just stopped being answerable -- a file dropping out of
+    `active_documents()` with no explanation reads as the assistant having
+    forgotten it, not as "the session only holds 5 at a time".
+    """
     limit = max(1, settings.UPLOAD_MAX_DOCS_PER_SESSION)
     rows = (await db.execute(
         select(ChatAttachment)
@@ -344,9 +355,12 @@ async def _retire_surplus(db: AsyncSession, officer_id: uuid.UUID,
                ChatAttachment.is_active.is_(True))
         .order_by(ChatAttachment.created_at.desc(), ChatAttachment.id)
     )).scalars().all()
+    retired = []
     for extra in rows[limit:]:
         if extra.id != keep_id:
             extra.is_active = False
+            retired.append(extra.filename)
+    return retired
 
 
 # ─────────────────────────────────────────────────────────────────────────────

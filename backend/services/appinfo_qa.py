@@ -43,7 +43,7 @@ _EXACT = {
     "numbr": "number", "challn": "challan", "chalan": "challan", "chalaan": "challan", "chalann": "challan",
     "field": "field", "visit": "visit", "fv": "visit", "csc": "csc", "sro": "sro", "igrs": "igrs",
     "remark": "remarks", "remarks": "remarks", "remraks": "remarks", "enclosure": "enclosures",
-    "enclosures": "enclosures", "enclosers": "enclosures", "bank": "bank", "treasury": "treasury",
+    "enclosures": "enclosures", "enclosers": "enclosures", "bank": "bank", "bnk": "bank", "treasury": "treasury",
     "barcod": "barcode", "barcode": "barcode", "bar": "bar", "encertifyed": "encertify", "encertified": "encertify",
     "encertify": "encertify", "physical": "physical", "verification": "verification", "verifcation": "verification",
     "receved": "received", "recieved": "received", "receipt": "received", "received": "received", "sent": "sent",
@@ -148,7 +148,7 @@ def parse(message: str) -> List[str]:
             add(DOB)
         if "occupation" in ws:
             add(OCC)
-    if ws & {"treasury", "bank"} and ws & {"challan", "payment", "application"}:
+    if "treasury" in ws or ("bank" in ws and ws & {"branch", "brnch", "challan", "payment", "application"}):
         add(TREASURY)
     if "barcode" in ws:
         add(BARCODE)
@@ -177,8 +177,23 @@ def claims(message: str) -> bool:
     return bool(parse(message))
 
 
+NAME, APPL_STATUS = "appl_name", "appl_status"
+
+
+def applicant_keys(message: str) -> List[str]:
+    """"applicant name" / "applicant status" -- answered from this record only for a file outside
+    ISD / NISD (an F-Line file, say), whose applicant is held nowhere else. Kept out of parse()
+    so ISD / NISD applicant questions stay with the main field handlers."""
+    ws = set(normalise(message).split())
+    if "applicant" not in ws:
+        return []
+    return [k for k, w in ((NAME, "name"), (APPL_STATUS, "status")) if w in ws]
+
+
 _TABLES = {"0154": "sub_div_patta_transfer_application_information_urban",
-           "0153": "full_field_patta_transfer_application_information"}
+           "0153": "full_field_patta_transfer_application_information",
+           "0178": "f_line_service_application_information_urban"}
+_KIND = {"0154": "ISD", "0153": "NISD", "0178": "F-Line"}
 
 
 async def load(db, app: str) -> Optional[Dict[str, Any]]:
@@ -223,6 +238,7 @@ _LABEL = {
     RECEIVED: ("Documents received on", "ஆவணங்கள் பெற்ற தேதி"), RTR: ("RTR str", "RTR str"),
     OWNERCORR: ("Owner correction reason", "உரிமையாளர் திருத்த காரணம்"), MERGE: ("Merged application id", "இணைக்கப்பட்ட விண்ணப்ப எண்"),
     AUTOMUT: ("Automutated", "தானியங்கி பட்டா மாறுதல்"), UPDATE: ("Last updated", "கடைசியாக புதுப்பித்தது"), TREASURY: ("Treasury / bank", "கருவூலம் / வங்கி"),
+    NAME: ("Applicant name", "விண்ணப்பதாரர் பெயர்"), APPL_STATUS: ("Application status (as recorded)", "விண்ணப்ப நிலை (பதிவில்)"),
 }
 
 
@@ -234,15 +250,12 @@ def answer(keys: List[str], app: str, row: Optional[Dict[str, Any]], detail: Dic
     status = (detail or {}).get("current_status") or (detail or {}).get("status") or ""
     channel = (detail or {}).get("submission_channel") or ""
     lines: List[str] = []
+    kind = _KIND.get(app.split("/")[1] if app.count("/") >= 3 else "", "this")
     for k in keys:
         lab = _t(ta, *_LABEL[k])
-        if k not in row and k in (SRO, CSC):
-            lines.append(f"{lab}: " + _t(ta, "held only for ISD applications; this NISD file's record has no such column",
-                                         "ISD விண்ணப்பங்களுக்கு மட்டுமே உள்ளது; இந்த NISD கோப்பின் பதிவில் அந்த புலம் இல்லை"))
-            continue
         if k not in row:
-            lines.append(f"{lab}: " + _t(ta, "held only for NISD (full-field transfer) applications; this file has no such column",
-                                         "NISD (முழு புலம் மாற்றம்) விண்ணப்பங்களுக்கு மட்டுமே உள்ளது; இந்த கோப்புக்கு அந்த புலம் இல்லை"))
+            lines.append(f"{lab}: " + _t(ta, f"the {kind} application-information record has no such column",
+                                         f"{kind} விண்ணப்பத் தகவல் பதிவில் அந்த புலம் இல்லை"))
             continue
         if k == UPDATE:
             ud, rm = _v(row.get("update_date")), _v(row.get("remarks"))

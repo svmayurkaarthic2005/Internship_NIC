@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 LT = ROOT / "lora_training"
 sys.path.insert(0, str(ROOT))
-from backend.sample_db.build_lora_dataset_allcodes import CODES  # noqa: E402
+from backend.sample_db.lora.build_lora_dataset_allcodes import CODES  # noqa: E402
 
 NUM_RE = re.compile(r"\d[\d,]*\.?\d*")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?|\d{4}/\d{4}/\d{1,3}/\d{3,9}")

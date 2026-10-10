@@ -103,7 +103,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"   ⚠️  Ollama connection warning: {e}")
         print(f"      Make sure Ollama is running: ollama serve")
-    
+
+    # semantic_intent's greeting/smalltalk/thanks/farewell prototypes used to
+    # embed lazily on whichever officer's message first reached the general_query
+    # fallback, so that officer's turn paid for embedding ~55 prototypes AND
+    # negatives on top of their own query (3-16s the first time). Embedding them
+    # here means the first real request never pays that cost.
+    try:
+        import asyncio as _asyncio
+        from backend.services import semantic_intent
+        await _asyncio.to_thread(semantic_intent._build)
+        print("   ✅ Semantic intent prototypes warmed up")
+    except Exception as e:
+        print(f"   ⚠️  Semantic intent warm-up warning: {e}")
+
     print("   ✅ API Server Ready")
     print("=" * 60)
     

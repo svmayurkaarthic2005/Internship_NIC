@@ -28,7 +28,10 @@ _EXACT = {
     "mismatches": "mismatch", "differnces": "difference", "differences": "difference", "diffrence": "difference", "consistant": "consistent",
     "conflicting": "conflict", "conflict": "conflict", "agree": "match", "matches": "match", "same": "same", "tslr": "tslr", "u1": "u1", "u2": "u2", "u3": "u3",
     "catagory": "category", "typ": "type", "category": "category", "paid": "paid", "taluk": "taluk", "town": "town", "ward": "ward", "block": "block", "district": "district",
+    "submi": "submit", "submt": "submit", "sumbit": "submit", "warrd": "ward", "wrd": "ward", "blok": "block", "blook": "block",
 }
+_ALL_KEYS = ["survey", "subdiv", "old_patta", "door", "land_type", "ecate", "extent", "submit", "challan_no", "challan_date",
+             "paymode", "treasury", "amount", "can", "geo"]
 _VOCAB = ["sketch", "survey", "extent", "submitted", "payment", "amount", "challan", "application", "consistent", "difference", "mismatch", "treasury"]
 
 
@@ -65,6 +68,17 @@ def parse(message: str) -> Optional[Dict[str, Any]]:
                                          PAYMODE, TREASURY, AMOUNT, CAN], "ws": {"tslr"}}
     ws = set(normalise(message).split())
     if "tslr" not in ws:
+        return None
+    # Six TAMILNILAM codes carry "TSLR" in their official name (0156-0157,
+    # 0165, 0167-0168, 0170); this module is specifically 0156's sketch
+    # record. "TSLR Settlement - Owner Entry code number" (0167) was claimed
+    # here on the bare word "tslr" and demanded an application number for a
+    # question that named no application at all -- a service-code lookup
+    # by name, not a record question.
+    from backend.utils.helpers import find_service_codes, SIS_URBAN_SERVICES
+    _other_tslr_named = {c for c in find_service_codes(message) if c != "0156"
+                          and "tslr" in (SIS_URBAN_SERVICES.get(c, {}) or {}).get("name", "").lower()}
+    if _other_tslr_named:
         return None
     keys: List[str] = []
 
@@ -107,11 +121,21 @@ def parse(message: str) -> Optional[Dict[str, Any]]:
         add(APPNO)
     if ws & {"district", "taluk", "town", "ward", "block"}:
         add(GEO)
+    # "show my TSLR applications" asks for a LIST of the officer's 0156 files
+    # (the `all_service_code_applications` intent already answers it by code
+    # or by name), not the full field-card of one TSLR record -- "my" plus the
+    # plural noun with no singular cue ("record"/"card"/"detail"/"this") is
+    # what tells the two apart.
+    is_listing_ask = "my" in ws and "application" in ws and not (ws & {"record", "card", "detail", "details", "this", "that"})
     mode = None
     if ws & {"compare", "match", "mismatch", "difference", "consistent", "conflict", "same"}:
         mode = "compare"
     elif "howmany" in ws or ("how" in ws and "many" in ws):
         mode = "count"
+    elif is_listing_ask and not keys:
+        return None
+    elif not keys and ws & {"show", "display", "full", "complete", "details", "detail", "card", "give", "view"}:
+        mode, keys = "field", list(_ALL_KEYS)   # "show the TSLR record": the record itself, not just that it exists
     elif not keys and ws & {"any", "are"}:
         mode = "exists"
     elif keys:
@@ -174,20 +198,33 @@ def answer(p: Dict[str, Any], app: str, rows: List[Dict[str, Any]], reg: Optiona
     if mode == "count":
         return _t(ta, f"{n} TSLR sketch record(s) for {app}.", f"{app}-க்கு {n} TSLR வரைபட பதிவு(கள்).")
     L: List[str] = []
+    # the extract repeats a file's row verbatim; identical copies are one record to the officer
+    rows = list({tuple(sorted((k, str(v)) for k, v in r.items())): r for r in rows}.values())
+    dup_note = (_t(ta, f"({n} records held, all identical)", f"({n} பதிவுகள், அனைத்தும் ஒன்றே)")
+                if len(rows) == 1 and n > 1 else "")
+    n = len(rows)
     if mode == "field":
         for i, r in enumerate(rows, 1):
             tag = f"[{i}] " if n > 1 else ""
             for k in keys:
                 if k == SURVEY:
-                    L.append(tag + _t(ta, "Survey no: ", "சர்வே எண்: ") + (_v(r.get("survey_no")) or nr))
+                    # Same compound identifier as the F-Line record: the survey
+                    # number alone does not name a parcel in this register, so a
+                    # bare "what is the survey number" carries the sub-division
+                    # number along with it instead of naming only half of it.
+                    L.append(tag + _t(ta, "Survey no: ", "சர்வே எண்: ")
+                             + f"{_v(r.get('survey_no')) or nr} / {_v(r.get('sub_div_no')) or nr}")
                 elif k == SUBDIV:
+                    if SURVEY in keys:
+                        continue  # already shown combined with the survey number above
                     L.append(tag + _t(ta, "Sub-division no: ", "உட்பிரிவு எண்: ") + (_v(r.get("sub_div_no")) or nr))
                 elif k == OLDPATTA:
                     L.append(tag + _t(ta, "Old patta no: ", "பழைய பட்டா எண்: ") + (_v(r.get("old_patta_no")) or nr))
                 elif k == DOOR:
                     L.append(tag + _t(ta, "Door no: ", "கதவு எண்: ") + (_v(r.get("door_no")) or nr))
                 elif k == LANDTYPE:
-                    L.append(tag + _t(ta, "Land type code: ", "நில வகை குறியீடு: ") + (_v(r.get("land_type_code")) or nr) + _t(ta, " (a code the register does not define)", " (பதிவேடு வரையறுக்காத குறியீடு)"))
+                    _lt = _v(r.get("land_type_code"))
+                    L.append(tag + _t(ta, "Land type code: ", "நில வகை குறியீடு: ") + (_lt + _t(ta, " (a code the register does not define)", " (பதிவேடு வரையறுக்காத குறியீடு)") if _lt else nr))
                 elif k == ECATE:
                     L.append(tag + _t(ta, "Type (e-category): ", "வகை (e-category): ") + (_v(r.get("type_ecate")) or nr))
                 elif k == EXTENT:
@@ -214,7 +251,9 @@ def answer(p: Dict[str, Any], app: str, rows: List[Dict[str, Any]], reg: Optiona
                     L.append(tag + _t(ta, "District / taluk / town / ward / block: ", "மாவட்டம் / வட்டம் / நகரம் / வார்டு / பிளாக்: ") +
                              " / ".join(_v(r.get(c)) or nr for c in ("district_code", "taluk_code", "town_code", "ward_code", "block_code")))
         L = list(dict.fromkeys(L))
-        return L[0] + f"  [{app}]" if len(L) == 1 else f"{app} (TSLR sketch):\n" + "\n".join("• " + x for x in L)
+        if len(L) == 1:
+            return L[0] + f"  [{app}]" + (f" {dup_note}" if dup_note else "")
+        return f"{app} (TSLR sketch){' ' + dup_note if dup_note else ''}:\n" + "\n".join("• " + x for x in L)
     # compare
     reg = reg or {}
     for who, label in (("fline", "F-Line"), ("fullfield", "full-field patta transfer"), ("chitta", "chitta"), ("appinfo", "application-information")):

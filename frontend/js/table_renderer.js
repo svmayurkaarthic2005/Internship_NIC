@@ -336,20 +336,20 @@ function prepareApplicationsTable(data, isTamil = false) {
         };
     }
 
-    // Standard style. Location columns are trimmed to what actually varies for
-    // this officer's jurisdiction level -- the same rule build_html_response
-    // follows for every other listing in the app (backend/services/rag.py).
-    // Showing District/Taluk/Town on every row for a ward-level officer just
-    // repeats the same value down the whole column and pushes the table into
-    // horizontal scroll for no reason.
-    // District is always shown too -- an officer still wants to see which
-    // district the row belongs to even when it's the same on every line.
-    const jType = (data.jurisdiction_type || 'block').toLowerCase();
-    const locCols = jType === 'district' ? ['District', 'Taluk', 'Town', 'Ward', 'Block']
-        : jType === 'taluk' ? ['District', 'Taluk', 'Town', 'Ward', 'Block']
-        : jType === 'town'  ? ['District', 'Town', 'Ward', 'Block']
-        : jType === 'ward'  ? ['District', 'Ward', 'Block']
-        : ['District', 'Block'];
+    // Standard style. Fixed location column order, narrowest-first: Block,
+    // Ward, Town, Taluk, District -- the administrative unit an officer
+    // actually works in (their block/ward) is the one they scan for first in
+    // a listing, down to the district it sits in. Previously trimmed to
+    // whichever columns varied for the officer's own jurisdiction level, which
+    // dropped Town/Taluk entirely for a ward-level officer; always showing
+    // all five keeps the column set the same no matter who is asking.
+    // An officer can ask for a different order ("order columns as district,
+    // taluk, ward, block") -- backend/services/chatbot.py reads that request
+    // off the message and sends it back as `loc_column_order`; this just
+    // takes whatever order it is given, defaulting when none was asked for.
+    const locCols = Array.isArray(data.loc_column_order) && data.loc_column_order.length === 5
+        ? data.loc_column_order
+        : ['Block', 'Ward', 'Town', 'Taluk', 'District'];
     const engCols = ['Application Number', 'Type', 'Survey Number', 'Sub-Divisions', ...locCols, 'Status', 'Stage', 'Submitted Date'];
     const tamCols = _translateCols(engCols, isTamil);
     const rows = apps.map(app => {
@@ -759,16 +759,34 @@ function cellClass(col, strVal) {
 }
 
 // Backend enum values (pending / in_progress / approved / ...) arrive as-is
-// in the 'Status' column -- this is the "status-badge logic" the comment
-// above refers to, turning e.g. "in_progress" into a styled "In Progress" pill
-// instead of the raw enum string. table_styles.css has a .status-<key> class
-// for every value STATUS_LABELS_EN in rag.py can produce.
+// in the 'Status' column -- this turns e.g. "in_progress" into the readable
+// "In Progress" label. Plain text, by request: the colored status-badge pill
+// (table_styles.css's .status-<key> classes) was removed because every status
+// -- not just "pending" -- read as an unwanted color highlight in a listing
+// this size; the label formatting is kept, the coloring is not.
 function statusBadge(strVal) {
     if (!strVal || strVal === 'N/A' || strVal === '-') return escapeHtml(strVal || 'N/A');
-    const key = strVal.trim().toLowerCase().replace(/\s+/g, '_');
-    const cssKey = key.replace(/_/g, '-');
     const label = strVal.trim().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    return `<span class="status-badge status-${cssKey}">${escapeHtml(label)}</span>`;
+    return escapeHtml(label);
+}
+
+// Shared by the initial render and by handlePagination()'s page-forward/back
+// re-render, so a later page's cells (application-number link, status label,
+// wrap class) never drift from page 1's -- they used to, because pagination
+// had its own stripped-down `<td>` builder that dropped all three.
+function renderRowCells(row, columns) {
+    return columns.map(col => {
+        const val = row[col];
+        const strVal = String(val !== undefined && val !== null ? val : 'N/A');
+        const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD)\/\w+\/\d+\/\d+$/i.test(strVal);
+        if (isAppNo && strVal !== 'N/A') {
+            return `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
+        }
+        if (col === 'Status') {
+            return `<td>${statusBadge(strVal)}</td>`;
+        }
+        return `<td${cellClass(col, strVal)}>${escapeHtml(strVal)}</td>`;
+    }).join('');
 }
 
 function createTableHTML(config) {
@@ -807,20 +825,9 @@ function createTableHTML(config) {
     const visibleRows = paginationEnabled ? rows.slice(0, rowsPerPage) : rows;
 
     let headersHTML = columns.map(c => `<th>${escapeHtml(c)}</th>`).join('');
-    
+
     let rowsHTML = visibleRows.map(row => {
-        let cells = columns.map(col => {
-            const val = row[col];
-            const strVal = String(val !== undefined && val !== null ? val : 'N/A');
-            const isAppNo = col === 'Number' || col === 'Application Number' || /^\d{4}\/\d+\/\d+\/\d+$/.test(strVal) || /^(ISD|NISD)\/\w+\/\d+\/\d+$/i.test(strVal);
-            if (isAppNo && strVal !== 'N/A') {
-                return `<td><a href="javascript:void(0)" class="app-table-link" onclick="window.handleAppClick('${escapeHtml(strVal)}')" style="color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;">${escapeHtml(strVal)}</a></td>`;
-            }
-            if (col === 'Status') {
-                return `<td>${statusBadge(strVal)}</td>`;
-            }
-            return `<td${cellClass(col, strVal)}>${escapeHtml(strVal)}</td>`;
-        }).join('');
+        let cells = renderRowCells(row, columns);
         return `<tr>${cells}</tr>`;
     }).join('');
 
@@ -920,10 +927,7 @@ function handlePagination(event) {
     const visibleRows = state.allRows.slice(fromIdx, toIdx);
     
     tbody.innerHTML = visibleRows.map(row => {
-        let cells = state.columns.map(col => {
-            const val = row[col];
-            return `<td>${escapeHtml(String(val !== undefined && val !== null ? val : 'N/A'))}</td>`;
-        }).join('');
+        let cells = renderRowCells(row, state.columns);
         return `<tr>${cells}</tr>`;
     }).join('');
     

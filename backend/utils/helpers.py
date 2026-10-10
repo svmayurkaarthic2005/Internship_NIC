@@ -419,11 +419,11 @@ def describe_service_code(code: str, is_tamil: bool = False, brief: bool = False
         if is_tamil:
             return (
                 f"சேவை குறியீடு {code} = {name} ({short}) — TAMILNILAM நகர்ப்புற சேவை, "
-                f"{visit_ta}. இது SIS பதிவேட்டில் கையாளப்படாத குறியீடு."
+                f"{visit_ta}. இந்த குறியீட்டின் கோப்புகள் உங்கள் பதிவேட்டில் உள்ளன."
             )
         return (
             f"Service code {code} = {name} ({short}) — TAMILNILAM urban service, "
-            f"{visit_en}. Not handled by the SIS register (only 0153/0154 are)."
+            f"{visit_en}. Files under it are held in your register."
         )
 
     if detail:
@@ -461,18 +461,19 @@ def describe_service_code(code: str, is_tamil: bool = False, brief: bool = False
 
     visit_en = "requires a field visit" if info["requires_field_visit"] else "needs no field visit"
     visit_ta = "கள ஆய்வு தேவை" if info["requires_field_visit"] else "கள ஆய்வு தேவையில்லை"
+    # The register holds every service code; only the detailed ISD / NISD tracking is limited to 0153 / 0154.
     if is_tamil:
         return (
             f"சேவை குறியீடு {code} = {name} ({short}) — TAMILNILAM நகர்ப்புற சேவை, {visit_ta}.\n"
-            f"இது SIS உரையாடல் கையாளும் இரண்டு குறியீடுகளில் (0153 / 0154) ஒன்று அல்ல, "
-            f"எனவே உங்கள் பதிவேட்டில் {code} விண்ணப்பங்கள் எதுவும் இல்லை."
+            f"{code} கோப்புகள் உங்கள் பதிவேட்டில் நிலை, கட்டம், சர்வே மற்றும் பணிப்பாய்வு பதிவுடன் உள்ளன; "
+            f"கள ஆய்வு திட்டமிடல் மற்றும் தாமத கண்காணிப்பு 0153 / 0154-க்கு மட்டுமே. "
+            f"\"{code} கோப்புகள் எத்தனை\" என்று கேளுங்கள்."
         )
     return (
-        f"Service code {code} = {name} ({short}) — a TAMILNILAM urban service that "
-        f"{visit_en}.\nIt is not one of the two application types the schema even "
-        f"admits (0153 NISD / 0154 ISD — the only types a row can ever "
-        f"be, whether or not any exist yet), so there are no {code} applications in "
-        f"your workload."
+        f"Service code {code} = {name} ({short}) — a TAMILNILAM urban service that {visit_en}.\n"
+        f"Files under {code} are held in your register with their status, stage, survey and workflow log; "
+        f"field-visit scheduling and the overdue flag are tracked only for 0153 (NISD) / 0154 (ISD). "
+        f"Ask \"how many {code} files\" or \"show my {code} applications\" to see them."
     )
 
 
@@ -488,3 +489,49 @@ def service_code_one_liner(code: str, is_tamil: bool = False) -> Optional[str]:
         return f"{code} = {info['short']} ({info['name']}){tail}."
     tail = f" — {detail['summary']}" if detail else ""
     return f"{code} = {info['short']} ({info['name']}){tail}."
+
+
+
+# "which code is used for TSLR Extract with Sketch", "what is the code for Modification", "ULC Land Subdivision
+# entha service code" -- a service NAME asked for its code. Without this the record modules took the name as a
+# record word (TSLR, modification) and answered about whichever application was last in the conversation.
+_CODE_ASK_RE = re.compile(r"\b(?:which|what|entha|endha)\b.{0,30}\b(?:co?de?|cod)\b|\bco?de?\s+(?:for|of|is\s+used)\b|"
+                          r"\bservice\s+cod\w*\s+(?:handles|for)\b|கோடு|குறியீடு", re.IGNORECASE)
+
+
+def _name_tokens(s: str) -> List[str]:
+    s = re.sub(r"\bf[\s_-]*line\b", "fline", s.lower())
+    return [w for w in re.findall(r"[a-z]+", s) if len(w) >= 3 and w not in ("and", "the", "with", "only", "for", "what", "which")]
+
+
+def _tok_hit(a: str, words: List[str]) -> bool:
+    """Name token `a` is in the message: exactly, as a slip, or cut short ("Sketc", "Modificatio")."""
+    from backend.utils.fuzzy import is_token_typo_match
+    for w in words:
+        if w == a:
+            return True
+        if len(a) >= 5 and len(w) >= 5 and (w.startswith(a[:-1]) or a.startswith(w[:-1]) or is_token_typo_match(w, a)):
+            return True
+    return False
+
+
+def code_for_name(message: str, is_tamil: bool = False) -> Optional[str]:
+    """'<service name> is service code NNNN', or None when no service name is asked about."""
+    m = message or ""
+    if not _CODE_ASK_RE.search(m) or re.search(r"\d{4}/\d{3,4}/|(?<!\d)0?1[5-9]\d(?!\d)", m):
+        return None
+    words = _name_tokens(m)
+    best = None
+    for code, info in SIS_URBAN_SERVICES.items():
+        for cand in (info["name"], info["short"].replace("_", " ")):
+            toks = _name_tokens(cand)
+            if toks and all(_tok_hit(t, words) for t in toks):
+                score = (len(toks), len(cand))
+                if not best or score > best[0]:
+                    best = (score, code, info)
+    if not best:
+        return None
+    _, code, info = best
+    if is_tamil:
+        return f"{info['name']} — சேவை குறியீடு {code} ({info['short']})."
+    return f"{info['name']} is service code {code} ({info['short']})."

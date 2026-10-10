@@ -44,10 +44,11 @@ day morning afternoon evening night working
 assigned jurisdiction my mine officer sis desk queue workload
 field visit visits scheduled unscheduled rescheduled
 sorted sort order ordered ascending descending asc desc oldest newest
-along along add include including exclude excluding except other others rest remaining
+along along add include including exclude excluding except other others rest remaining left matching match matches
+service services across register size
 up down out off off around about approx approximately
 one ones both can code codes row rows second third fourth fifth sixth seventh eighth ninth tenth half
-ftom frm fom fro hav hve hv per
+ftom frm fom fro hav hve hv per r u hw mny
 aana ana en enoda ennoda enaku enakku iruku irukku irukka iruka evalo pathi patri la irunthu irundhu oda ku kku ellam ella elam vandha vantha venum pannu panni sollunga kaattunga thevai mattum ah um
 igrs tahsildar dsc zdt hqdt patta chitta deed sketch remarks litigation encroachment
 here kaattu kaami kaatu sollu enna evlo evvalavu edhu ethu yaar eppo epdi
@@ -80,6 +81,14 @@ def listing_shaped(message: str) -> bool:
 def unknown_words(message: str) -> List[str]:
     """Words of a list-shaped request that nothing here knows how to filter by."""
     if not listing_shaped(message) or re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", message) or _TA.search(message):
+        return []
+    # "F-Line applications" names a real service code (0178) by its official
+    # name, but splits on the hyphen into the single letter "f" -- too short
+    # for any word-level budget -- and the whole-name lookup below only ever
+    # sees "line", so it was flagged as an unrecognised filter word. A message
+    # that names a service code by digit or name is never judged word-by-word.
+    from backend.utils.helpers import find_service_codes
+    if find_service_codes(message):
         return []
     known = _known()
     out: List[str] = []

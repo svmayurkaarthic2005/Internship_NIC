@@ -40,18 +40,28 @@ _EXACT = {
     "pvt": "private", "no": "number", "num": "number", "numbr": "number", "divison": "division", "sis": "sis", "dis": "dis",
     "remark": "remarks", "remraks": "remarks", "resaon": "reason", "reasn": "reason", "extnt": "extent",
 }
-_VOCAB = ["recommendation", "remarks", "reason", "verify", "boundary", "sketch", "transaction", "status", "applicant",
-          "survey", "extent", "application", "schedule", "private", "government"]
+_VOCAB = ["recommendation", "remarks", "reason", "verify", "verification", "boundary", "sketch", "transaction", "status",
+          "applicant", "survey", "extent", "application", "schedule", "private", "government"]
+# "transition" is two edits from "transaction" -- well within this module's 8+-letter fuzzy
+# budget -- so "final workflow transition" canonicalised to "...transaction..." and this F-Line
+# module claimed an ordinary ISD workflow question, answering "no F-Line record held" for a file
+# that was never asked about F-Line at all. Same trap CLAUDE.md documents for "register"/
+# "registrar" and "last"/"least" elsewhere in this codebase -- a real, distinct word that happens
+# to sit inside another word's typo budget must be excluded explicitly.
+_NEVER_TYPO = {"transition"}
 
 
 def _canon(tok: str) -> str:
     if tok in _EXACT:
         return _EXACT[tok]
+    if tok in _NEVER_TYPO:
+        return tok
     if tok.isascii() and tok.isalpha() and len(tok) >= 6:
         hits = {w for w in _VOCAB if is_token_typo_match(tok, w)}
         if len(hits) == 1:
             h = next(iter(hits))
-            return {"recommendation": "rec", "government": "govt"}.get(h, h)
+            # "verfication" / "verificatio" are slips of "verification", the same column as "verify"
+            return {"recommendation": "rec", "government": "govt", "verification": "verify"}.get(h, h)
     return tok
 
 
@@ -73,7 +83,7 @@ TXN, BOUND, SKETCH, SKETCH_DIS, SCHED, APPTYPE, LT_CODE = (
 SPECIFIC = {TXN, BOUND, SKETCH, SKETCH_DIS, SCHED, APPTYPE, LT_CODE}
 
 
-def parse(message: str, fline_app: bool = False) -> Dict[str, Any]:
+def parse(message: str) -> Dict[str, Any]:
     if "everyfield" in (message or "").lower() and "f-line" in (message or "").lower():  # "which fields are blank": every column, the blanks are picked out afterwards
         return {"keys": [SURVEY, SUBDIV, PATTA, LAND_TYPE, EXTENT, GOVT, TXN, BOUND, SKETCH, SCHED, APPTYPE, LT_CODE]
                 + [(d, k) for d in ("sis", "dis") for k in ("rec", "remarks", "reason", "date", "user")], "fline": True}
@@ -97,8 +107,18 @@ def parse(message: str, fline_app: bool = False) -> Dict[str, Any]:
                 add((d, "reason"))
             if "verify" in ws or ("date" in ws and "schedule" not in ws):
                 add((d, "date"))
-            if "user" in ws:
+            if "user" in ws or "who" in ws:
                 add((d, "user"))
+    # "who verified it?" / "what date was it verified?" name no desk at all -- an officer
+    # does not always know (or need to say) whether SIS or DIS did the verifying. Without
+    # this, those questions carried no key, `answer()` returned "", and the turn fell all
+    # the way through to the generic application-details card -- the answer existed in the
+    # row (sis_verify_date / sis_username) but was never looked at.
+    if not ({"sis", "dis"} & ws):
+        if "who" in ws and ("verify" in ws or fline):
+            add(("auto", "user"))
+        if ("verify" in ws or ("date" in ws and "schedule" not in ws and fline)) and "who" not in ws:
+            add(("auto", "date"))
     if "sketch" in ws:
         if "dis" in ws and not ({"rec", "remarks", "reason", "user"} & ws):
             add(SKETCH_DIS)
@@ -134,8 +154,13 @@ def parse(message: str, fline_app: bool = False) -> Dict[str, Any]:
 
 def claims(message: str) -> bool:
     p = parse(message)
+    # A bare mention of F-Line ("F-Line verification date") names no desk
+    # (sis/dis), so `keys` stays empty -- claim it anyway, so a non-0178 file
+    # gets the "no F-Line record" refusal instead of the generic details card.
+    if p["fline"]:
+        return True
     # "scheduled date" alone is ordinary field-visit talk ("visits past their scheduled date"), not an F-Line column
-    return bool(p["keys"]) and (p["fline"] or any(k in SPECIFIC and k != SCHED for k in p["keys"]))
+    return bool(p["keys"]) and any(k in SPECIFIC and k != SCHED for k in p["keys"])
 
 
 def claims_for_fline_app(message: str) -> bool:
@@ -149,14 +174,21 @@ async def load(db, app: str) -> Optional[Dict[str, Any]]:
            "submit_date, govt_pri, transaction_status, total_boundary, (sketch_file IS NOT NULL AND sketch_file <> '') AS has_sketch, "
            "sis_rec, sis_remarks, sis_reason, sis_verify_date, sis_username, dis_rec, dis_remarks, dis_reason, dis_verify_date, "
            "dis_username, land_type_code, (sketch_file_dis IS NOT NULL AND sketch_file_dis <> '') AS has_sketch_dis, "
-           "tobe_scheduled_date FROM f_line_service_urban WHERE appl_id = :a LIMIT 1")
+           "tobe_scheduled_date FROM f_line_service_urban WHERE appl_id = :a ORDER BY row_id")
     try:
         async with db.begin_nested():
-            r = (await db.execute(text(sql), {"a": app})).mappings().first()
-            return dict(r) if r else None
+            rows = [dict(r) for r in (await db.execute(text(sql), {"a": app})).mappings().all()]
     except Exception as exc:
         logger.warning(f"fline_qa: could not read f_line_service_urban ({type(exc).__name__})")
         return None
+    if not rows:
+        return None
+    # One row per parcel (000892 has four). Desk columns (SIS / DIS, sketch, boundaries) sit on
+    # whichever row carries them, so each takes the first non-blank value; the per-parcel columns
+    # stay per parcel in "_parcels" -- one row read alone dropped every other parcel's patta.
+    out = {k: next((r[k] for r in rows if _v(r.get(k)) or r.get(k) is True), rows[0].get(k)) for k in rows[0]}
+    out["_parcels"] = rows
+    return out
 
 
 def _v(x) -> Optional[str]:
@@ -168,6 +200,23 @@ def _v(x) -> Optional[str]:
 
 def _t(ta, en, tamil):
     return tamil if ta else en
+
+
+def _per_parcel(row: Dict[str, Any], col: str, nr: str) -> str:
+    """One value when every parcel agrees, else each parcel's value by sub-division."""
+    parcels = row.get("_parcels") or [row]
+    vals = [_v(p.get(col)) for p in parcels]
+    if len({v for v in vals}) <= 1:
+        return vals[0] or nr
+    return "; ".join(f"{v or nr} (sub-div {_v(p.get('subdiv_no')) or '-'})" for p, v in zip(parcels, vals))
+
+
+def _extent(p: Dict[str, Any]) -> Optional[str]:
+    try:
+        ha, ar, sq = (float(p.get(c) or 0) for c in ("extent_u1", "extent_u2", "extent_u3"))
+    except (TypeError, ValueError):
+        return None
+    return f"{ha:g} ha {ar:g} ares {sq:g} sq.m = {10000 * ha + 100 * ar + sq:g} sq.m"
 
 
 def _day(x) -> Optional[str]:
@@ -186,6 +235,10 @@ def answer(keys: List[Any], app: str, row: Optional[Dict[str, Any]], ta: bool) -
     for k in keys:
         if isinstance(k, tuple):
             d, f = k
+            if d == "auto":
+                # No desk named -- report whichever desk actually has this field recorded,
+                # SIS first (the earlier verification step), DIS only if SIS has none.
+                d = "sis" if _v(row.get(f"sis_{'verify_date' if f == 'date' else 'username'}")) else "dis"
             D = d.upper()
             val = {"rec": _v(row.get(f"{d}_rec")), "remarks": _v(row.get(f"{d}_remarks")), "reason": _v(row.get(f"{d}_reason")),
                    "date": _day(row.get(f"{d}_verify_date")), "user": _v(row.get(f"{d}_username"))}[f]
@@ -196,22 +249,31 @@ def answer(keys: List[Any], app: str, row: Optional[Dict[str, Any]], ta: bool) -
                 val = {"Y": _t(ta, "Recommended (Y)", "பரிந்துரைத்தது (Y)"), "N": _t(ta, "Not recommended (N)", "பரிந்துரைக்கவில்லை (N)")}.get(val.upper(), val)
             lines.append(f"{D} {lab}: {val or nr}")
         elif k == SURVEY:
-            lines.append(_t(ta, "Survey no: ", "சர்வே எண்: ") + (_v(row.get("survey_no")) or nr))
+            # The survey number alone does not identify a parcel in this register --
+            # the sub-division number always rides along with it (shown together as
+            # "27 / 0" elsewhere), so a bare "what is the survey number" is answered
+            # the same way instead of naming only half of the identifier.
+            lines.append(_t(ta, "Survey no: ", "சர்வே எண்: ")
+                         + f"{_per_parcel(row, 'survey_no', nr)} / {_per_parcel(row, 'subdiv_no', nr)}")
         elif k == SUBDIV:
-            lines.append(_t(ta, "Sub-division no: ", "உட்பிரிவு எண்: ") + (_v(row.get("subdiv_no")) or nr))
+            if SURVEY in keys:
+                continue  # already shown combined with the survey number above
+            lines.append(_t(ta, "Sub-division no: ", "உட்பிரிவு எண்: ") + _per_parcel(row, "subdiv_no", nr))
         elif k == PATTA:
-            lines.append(_t(ta, "Patta no: ", "பட்டா எண்: ") + (_v(row.get("patta_no")) or nr))
+            lines.append(_t(ta, "Patta no: ", "பட்டா எண்: ") + _per_parcel(row, "patta_no", nr))
         elif k == LAND_TYPE:
-            lines.append(_t(ta, "Land type code: ", "நில வகை குறியீடு: ") + (_v(row.get("land_type")) or nr))
+            lines.append(_t(ta, "Land type code: ", "நில வகை குறியீடு: ") + _per_parcel(row, "land_type", nr))
         elif k == LT_CODE:
             lines.append(_t(ta, "Land type code (record): ", "நில வகை குறியீடு (பதிவு): ") + (_v(row.get("land_type_code")) or nr)
                          + (_t(ta, f"; land type {row['land_type']}", f"; நில வகை {row['land_type']}") if _v(row.get("land_type")) else ""))
         elif k == EXTENT:
-            try:
-                ha, ar, sq = (float(row.get(c) or 0) for c in ("extent_u1", "extent_u2", "extent_u3"))
-                lines.append(_t(ta, "Extent: ", "பரப்பளவு: ") + f"{ha:g} ha {ar:g} ares {sq:g} sq.m = {10000 * ha + 100 * ar + sq:g} sq.m")
-            except (TypeError, ValueError):
-                lines.append(_t(ta, "Extent: ", "பரப்பளவு: ") + nr)
+            parcels = row.get("_parcels") or [row]
+            ext = [_extent(p) for p in parcels]
+            if len(parcels) > 1:
+                lines.append(_t(ta, "Extent: ", "பரப்பளவு: ") + "; ".join(
+                    f"{_t(ta, 'sub-div', 'உட்பிரிவு')} {_v(p.get('subdiv_no')) or '-'}: {e or nr}" for p, e in zip(parcels, ext)))
+            else:
+                lines.append(_t(ta, "Extent: ", "பரப்பளவு: ") + (ext[0] or nr))
         elif k == GOVT:
             g = _v(row.get("govt_pri"))
             lines.append(_t(ta, "Govt / private code: ", "அரசு / தனியார் குறியீடு: ") + (g or nr) +

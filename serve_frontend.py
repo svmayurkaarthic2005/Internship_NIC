@@ -33,7 +33,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 
-with socketserver.TCPServer(("", PORT), NoCacheHandler) as httpd:
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+with ThreadingHTTPServer(("", PORT), NoCacheHandler) as httpd:
     print(f"✅ Frontend dev server running at http://127.0.0.1:{PORT}/chatbot.html")
     print(f"   Serving: {DIRECTORY}")
     print(f"   Cache-Control: no-store (JS changes load immediately)")

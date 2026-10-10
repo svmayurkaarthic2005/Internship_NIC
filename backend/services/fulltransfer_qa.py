@@ -40,9 +40,11 @@ _EXACT = {
     "legal": "legal", "court": "court", "purchased": "purchased", "purchase": "purchased", "unit": "unit", "category": "category",
     "catagory": "category", "direct": "direct", "tranfer": "transfer", "regstered": "registration", "registered": "registration",
     "zdt": "zdt", "sis": "sis", "tax": "tax", "taxrate": "taxrate", "door": "door", "street": "street", "group": "group", "u1": "u1", "u2": "u2", "u3": "u3",
+    "transfe": "transfer", "oder": "order", "ordr": "order", "remarkks": "remarks", "statuz": "status", "recomend": "rec", "recommen": "rec",
+    "recommend": "rec", "recommended": "rec",
 }
 _VOCAB = ["registration", "document", "reason", "transaction", "certificate", "succession", "recommendation", "correction", "category",
-          "purchased", "subdivision", "survey", "extent", "remarks", "status", "street", "boundary"]
+          "purchased", "subdivision", "survey", "extent", "remarks", "status", "street", "boundary", "transfer"]
 
 
 def _canon(tok: str) -> str:
@@ -75,7 +77,21 @@ def normalise(message: str) -> str:
     "court_name", "purchased", "txn_code", "street", "sis_rec", "sis_remarks", "sis_reason", "door", "tot_tax", "group", "owner_corr",
     "trans_type", "direct", "land_cat")
 DISTINCT = {OLDPATTA, REGDOC, REGPLACE, REGYEAR, REGDATE, ZDTPATTA, TXNSTATUS, ZDTORDER, ZDTREMARKS, SUCCNO, SUCCISS,
-            LEGALHEIR, COURTNO, COURTDATE, COURTNAME, PURCHASED, TXNCODE, TOTTAX, TRANSTYPE, DIRECT, LANDCAT}
+            LEGALHEIR, COURTNO, COURTDATE, COURTNAME, PURCHASED, TXNCODE, TOTTAX, TRANSTYPE, DIRECT, LANDCAT,
+            # "sis" + "rec" together (SIS recommendation) is as unambiguous a
+            # match as any of the above -- there is no other "SIS
+            # recommendation"-shaped field this could be confused with. Without
+            # it here, claims_strong() (used by _cm_strong's OR-gate) never
+            # claimed a bare "what was the SIS recommendation?" follow-up, so a
+            # question _cm_strong's own docstring says should resolve from
+            # chat_history ("the reading must keep using chat_history the way
+            # it always has") instead fell to general_query -- the LLM/agent
+            # fallback, which on a field this register never populates for any
+            # application, sometimes produced a confident but unhelpful answer
+            # built from unrelated documents instead of "not recorded".
+            SISREC,
+            # Same gap, same fix, for "SIS remarks".
+            SISREMARKS}
 
 
 def parse(message: str) -> Dict[str, Any]:
@@ -122,6 +138,20 @@ def parse(message: str) -> Dict[str, Any]:
         add(ZDTORDER)
     if "zdt" in ws and "remarks" in ws:
         add(ZDTREMARKS)
+    # the officer's words for the same ZDT columns: "transfer order number / date", "order remarks",
+    # "new patta" (the patta the order generates), "transfer status", "when was the transfer completed"
+    if "order" in ws and "court" not in ws:
+        add(ZDTREMARKS if "remarks" in ws else ZDTORDER)
+    if "transfer" in ws and ws & {"completed", "complete", "done", "finished"}:
+        add(ZDTORDER)
+    if "new" in ws and "patta" in ws:
+        add(ZDTPATTA)
+    if "transfer" in ws and "status" in ws:
+        add(TXNSTATUS)
+    if "transfer" in ws and "type" in ws:
+        add(TRANSTYPE)
+    if "sis" in ws and "rec" in ws and "why" in ws:
+        add(SISREASON)
     if "submit" in ws or ("application" in ws and "submitted" in ws) or "submission" in ws:
         add(SUBMIT)
     if "update" in ws and ("date" in ws or "last" in ws):

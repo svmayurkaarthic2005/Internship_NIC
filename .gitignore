@@ -58,12 +58,23 @@ alembic/versions/*.pyc
 # Office temp/lock files
 ~$*
 
-# Trained model checkpoints (>100MB, exceed GitHub's limit; kept on Google Drive instead)
-sis-qlora-adapter/checkpoint-*/
-sis-qlora-adapter/*.safetensors
+# QLoRA training data and adapter -- moved out of the project folder to
+# C:\lora_data\ (694MB adapter + 44MB training data don't belong in a git
+# checkout); these paths are now directory junctions pointing there, kept so
+# every script under backend/sample_db/ and lora_training/ that references
+# them by relative path still works unmodified.
+lora_training/
+sis-qlora-adapter/
 *.safetensors
 *.pt
 base-models/
+
+# The lora dataset-build scripts themselves (backend/sample_db/lora/) moved
+# alongside the data they build, for one QLoRA-related location instead of
+# two. backend/sample_db/lora/ is a junction to C:\lora_data\sample_db_lora\;
+# the scripts' own Path(__file__).absolute().parents[3] root-finding does not
+# follow it (.absolute() keeps the junctioned path; .resolve() would not).
+backend/sample_db/lora/
 
 # Local GGUF model cache (multi-GB, exceeds GitHub's limit)
 models_cache/

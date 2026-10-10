@@ -223,11 +223,16 @@ DOCUMENT_CONFIG = {
         "language": "english",
         "source": "sis_upload"
     },
-    "database_structure_reference.txt": {
-        "category": "database_reference",
-        "language": "english",
-        "source": "system_documentation"
-    },
+    # "database_structure_reference.txt" deliberately NOT ingested: it's a
+    # developer-facing schema reference (raw column/table names like
+    # "survey_number_id", "survey_numbers") meant for engineers, not SIS
+    # officers. When a question's words happened to match it ("survey
+    # number"), it was retrieved as RAG context, and the model regurgitated
+    # the literal identifier back -- "I'm sorry, but the survey number
+    # survey_number is not found or not accessible" -- a nonsense answer the
+    # officer could easily mistake for a real (wrong) one. Schema reference
+    # belongs in this file and in code comments, never in the officer-facing
+    # retrieval corpus.
     "sample_sis_site_note.pdf": {
         "category": "field_report",
         "language": "english",

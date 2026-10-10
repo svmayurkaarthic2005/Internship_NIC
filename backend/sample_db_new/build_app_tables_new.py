@@ -227,11 +227,27 @@ def load_master_names(cx) -> dict:
 
 
 def humanise(username: str) -> str:
-    """tut_kvenkatesan -> 'K. Venkatesan' (best effort, for display only)."""
+    """tut_kvenkatesan -> 'K. Venkatesan' (best effort, for display only).
+
+    "kabgjnprs" is a consonant whitelist -- a username starting with one of
+    these letters, followed by another consonant, reads as "initial +
+    surname" (the actual government convention this is modelling). 'a' was
+    in that string by mistake: it is a vowel, so "arun_m" (first name Arun,
+    not an initial at all) matched the same branch and came out as "A.
+    Run_m" -- read verbatim by an officer asking "who am I?" as their own
+    name, which is exactly the "it tells my username" complaint this
+    function exists to avoid.
+
+    The fallback (anything that is not an initial+surname username) used to
+    just capitalise the stem with its underscore intact ("marun_chn" ->
+    "Marun_chn") -- also still username-shaped. Splitting on "_" and
+    title-casing each piece ("Marun Chn") reads as a name, not a login.
+    """
     stem = username.replace("tut_", "")
-    if len(stem) > 4 and stem[0] in "kabgjnprs" and stem[1] not in "aeiou":
-        return f"{stem[0].upper()}. {stem[1:].capitalize()}"
-    return stem.capitalize()
+    if len(stem) > 4 and stem[0] in "kbgjnprs" and stem[1] not in "aeiou":
+        rest = " ".join(p.capitalize() for p in stem[1:].split("_") if p)
+        return f"{stem[0].upper()}. {rest}"
+    return " ".join(p.capitalize() for p in stem.split("_") if p)
 
 
 def _coerce_dt(v):

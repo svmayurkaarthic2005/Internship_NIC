@@ -36,6 +36,13 @@ EN = {
         "gets a red flag on your dashboard, you receive escalation notices, it counts in your performance metrics and you must justify "
         "the delay. It applies to ISD only; NISD has no field visit. It is a different clock from the service SLA (NISD 15-20, ISD "
         "30-35 working days from submission to completion)."),
+    "pending_vs_overdue": (
+        "No, they are not the same thing. 'Pending' is a STATUS -- one of pending / in_progress / escalated / approved / rejected -- "
+        "it just means the file is still open. 'Overdue' is a separate flag that only applies to an ISD file whose field visit has not "
+        "been completed within 15 working days of submission; NISD has no field visit, so an NISD file can never be overdue. A pending "
+        "file is usually NOT overdue -- it only becomes overdue once that 15-working-day clock runs out. And a visit being past its own "
+        "SCHEDULED date is a different, earlier state again, not the same as the file itself being overdue. Ask \"show my pending "
+        "applications\" for the status, or \"show my overdue applications\" for the deadline flag -- they can give very different counts."),
     "noshow": (
         "The reference documents do not describe a separate procedure for an applicant who does not turn up. What they do say: the "
         "visit must still be completed within 15 working days of submission or the file goes overdue and you must justify the delay; "
@@ -126,6 +133,11 @@ TA = {
         "15 வேலை நாள் விதி: ISD விண்ணப்பத்தின் கள ஆய்வை சமர்ப்பித்த 15 வேலை நாட்களுக்குள் (திங்கள்-வெள்ளி) திட்டமிட வேண்டும். அதற்குள் முடியாவிட்டால் "
         "கோப்பு 'overdue' ஆகும்: டாஷ்போர்டில் சிவப்புக் குறி, எஸ்கலேஷன் அறிவிப்பு, செயல்திறன் அளவீட்டில் பாதிப்பு; தாமதத்துக்கு காரணம் தர வேண்டும். "
         "இது ISD-க்கு மட்டும். சேவை SLA (NISD 15-20, ISD 30-35 வேலை நாட்கள்) தனி கணக்கு."),
+    "pending_vs_overdue": (
+        "இல்லை, இவை ஒன்றல்ல. 'Pending' என்பது ஒரு நிலை (status) -- pending / in_progress / escalated / approved / rejected ஆகியவற்றில் ஒன்று; "
+        "கோப்பு இன்னும் திறந்திருக்கிறது என்று மட்டும் பொருள். 'Overdue' என்பது தனி கொடி -- ISD கோப்பின் கள ஆய்வு 15 வேலை நாட்களுக்குள் முடிக்கப்படாவிட்டால் "
+        "மட்டுமே பொருந்தும்; NISD-க்கு கள ஆய்வு இல்லை என்பதால் அது ஒருபோதும் overdue ஆகாது. pending கோப்பு பொதுவாக overdue ஆகாது -- 15 நாள் கெடு "
+        "முடிந்த பின்னரே overdue ஆகும். ஆய்வுக்கு நிர்ணயிக்கப்பட்ட தேதியை தாண்டியது என்பதும் வேறு, முந்தைய நிலை."),
     "noshow": (
         "விண்ணப்பதாரர் வராவிட்டால் என்ன செய்ய வேண்டும் என்று ஆவணங்களில் தனி நடைமுறை இல்லை. உள்ளவை: 15 வேலை நாட்களுக்குள் ஆய்வை முடிக்க வேண்டும் "
         "(இல்லையெனில் overdue, காரணம் தர வேண்டும்); ஆய்வு தேதி மாற்ற தாசில்தாரின் ஒப்புதல் தேவை; விண்ணப்பதாரர், கூட்டு உரிமையாளர் கையொப்பம் ஆய்வின்போது பெறப்படும்."),
@@ -172,15 +184,34 @@ TA = {
 _CUES: List[Tuple[str, str, str]] = [
     ("aadhaar_all", r"\b(?:aadhaar|aadhar)\b.{0,30}\b(?:all|every|each)\b|\b(?:all|every)\b.{0,30}\b(?:aadhaar|aadhar)\b|\b(?:aadhaar|aadhar)\s+numbers?\s+of\b",
      r"ஆதார்.{0,25}(?:அனைத்து|எல்லா)"),
-    ("approve_without_visit", r"\b(?:approve|approval|sanction)\w*\b.{0,40}\bwithout\b.{0,25}\bfield\s*visit|\bwithout\b.{0,25}\bfield\s*visit.{0,30}\b(?:approve|allowed|possible)",
-     r"கள\s*ஆய்வு\s*இல்லாமல்|field\s*visit\s*illama|visit\s*illama"),
+    ("approve_without_visit", r"\b(?:approve|approval|sanction)\w*\b.{0,40}\bwithout\b.{0,25}\bfield\s*visit|\bwithout\b.{0,25}\bfield\s*visit.{0,30}\b(?:approve|allowed|possible)|"
+                              r"\b(?:isd|nisd|involving\s+sub[\s-]?division)\b.{0,30}\b(?:need|needs|require|requires|mandatory|compulsory)\b.{0,20}\b(?:field|site)\s*(?:visit|inspection)|"
+                              r"\b(?:field|site)\s*(?:visit|inspection)\b.{0,25}\b(?:need|needs|required|mandatory|compulsory)\b.{0,20}\b(?:isd|nisd)\b",
+     r"கள\s*ஆய்வு\s*இல்லாமல்|field\s*visit\s*illama|visit\s*illama|"
+     r"(?:isd|nisd|உட்பிரிவு|involving\s*sub[\s-]?division).{0,30}(?:site\s*visit|field\s*visit|கள\s*ஆய்வு).{0,15}(?:pannanuma|venuma|theva|அவசியமா|தேவையா)"),
+    ("pending_vs_overdue", r"\bis\b.{0,10}\bpending\b.{0,20}\b(?:same\s+as|equal\s+to|the\s+same)\b.{0,10}\boverdue\b|"
+                          r"\bis\b.{0,10}\boverdue\b.{0,20}\b(?:same\s+as|equal\s+to|the\s+same)\b.{0,10}\bpending\b|"
+                          r"\bdifference\b.{0,15}\bbetween\b.{0,10}\bpending\b.{0,10}\b(?:and|&)\b.{0,10}\boverdue\b|"
+                          r"\bdifference\b.{0,15}\bbetween\b.{0,10}\boverdue\b.{0,10}\b(?:and|&)\b.{0,10}\bpending\b|"
+                          r"\bpending\b.{0,8}\bvs\.?\b.{0,8}\boverdue\b|\boverdue\b.{0,8}\bvs\.?\b.{0,8}\bpending\b",
+     r"pending.{0,15}(?:overdue|தாமத).{0,15}ஒன்றுதானா|pending.{0,10}overdue.{0,10}same\s*a|"
+     r"pending.{0,15}overdue.{0,15}(?:vithyasam|vittiyasam|difference)"),
     ("rule15", r"\b15[\s-]*(?:working[\s-]*)?day\b.{0,30}\brule\b|\brule\b.{0,20}\b15[\s-]*(?:working[\s-]*)?days?\b|\bexplain\b.{0,25}\b15\s*(?:working\s*)?days?\b",
      r"15\s*(?:வேலை\s*)?நாள்?\s*விதி|15\s*(?:naal|day)\s*(?:vidhi|rule)"),
     ("noshow", r"\b(?:applicant|owner|party)\b.{0,30}\b(?:does\s*n[o']?t|do\s*not|not|fails?\s+to)\b.{0,15}\b(?:turn|show|come|attend|available)\b|\bno[\s-]?show\b",
      r"(?:விண்ணப்பதாரர்|உரிமையாளர்).{0,25}(?:வராவிட்டால்|வரவில்லை)|(?:applicant|owner)\s+(?:varala|varaama|vara\s*maattaanga)"),
     ("tahsildar_time", r"\b(?:how\s+(?:many\s+days|long)|average|avg)\b.{0,30}\btahsildar\b.{0,25}\b(?:sign|take|approve|time)|\btahsildar\b.{0,30}\b(?:take|takes)\b.{0,15}\b(?:to\s+sign|days)",
      r"தாசில்தார்.{0,25}(?:எத்தனை\s*நாள்|சராசரி)"),
-    ("sketch", r"\b(?:sub[\s-]?division|subdiv)\s+(?:sketch|drawing|plan)\b.{0,40}\b(?:prepared|made|created|drawn|prepare|make)\b|\b(?:how|explain)\b.{0,30}\b(?:sub[\s-]?division\s+)?sketch\b.{0,25}\b(?:prepared|made|created|work)",
+    ("sketch", r"\b(?:sub[\s-]?division|subdiv)\s+(?:sketch|drawing|plan)\b.{0,40}\b(?:prepared|made|created|drawn|prepare|make)\b|\b(?:how|explain)\b.{0,30}\b(?:sub[\s-]?division\s+)?sketch\b.{0,25}\b(?:prepared|made|created|work)|"
+               r"\bsketch\b.{0,40}\b(?:after|once|then|next)\b.{0,30}\b(?:senior\s+draughtsman|\bsd\b)|\bwhat\s+happens\b.{0,40}\bsketch\b|"
+               # "how are sub-division numbers assigned", "does the temporary
+               # number become the final one" -- the same numbering fact this
+               # topic already states (145 -> 145/1A, 145/1B; T-number ->
+               # final on approval), just asked without the word "sketch".
+               r"\bhow\s+(?:are|is)\b.{0,30}\bsub[\s-]?division\b.{0,20}\b(?:numbers?|assigned|numbered)\b|"
+               r"\bsub[\s-]?division\b.{0,20}\bnumbers?\b.{0,20}\bassigned\b|"
+               r"\b(?:does|do)\b.{0,10}\bthe\b.{0,20}\btemporary\b.{0,20}\b(?:number|subdivision)\b.{0,20}\bfinal\b|"
+               r"\btemporary\s+numbers?\b.{0,20}\bbecome\b.{0,20}\bfinal\b",
      r"உட்பிரிவு\s*வரைபடம்|sub\s*division\s*sketch\s*(?:epdi|eppadi|ready)|sketch\s*(?:epdi|eppadi)"),
     ("steps_nisd", r"\bsteps?\b.{0,40}\bnisd\b|\bnisd\b.{0,40}\bsteps?\b|\bnisd\b.{0,25}\b(?:process|procedure|workflow)\b.{0,20}\b(?:explain|steps|from)\b",
      r"NISD.{0,25}(?:படிகள்|படி)"),
@@ -189,7 +220,7 @@ _CUES: List[Tuple[str, str, str]] = [
              r"\bwhat\b.{0,15}\b(?:documents?|docs)\b.{0,20}\b(?:needed|required)\b",
      r"(?:ஆவணங்கள்?|documents?)\s*(?:என்ன\s*)?(?:தேவை|வேண்டும்|vendum|venum|thevai)|patta\s*transfer\s*ku\s*enna\s*documents?"),
     ("field_visit", r"\b(?:what\s+is|what's|explain|define|meaning\s+of)\b.{0,25}\bfield\s*(?:visit|inspection)\b|\bfield\s*visit\b.{0,25}\b(?:involve|involves|mean|means|meaning|check|checks)\b|"
-                    r"\bwhat\b.{0,20}\bshould\s+i\s+check\b.{0,25}\bvisit",
+                    r"\bwhat\b.{0,20}\bshould\s+(?:i|you|we|an?\s+officer)\s+check\b.{0,30}\bfield\s*(?:visit|inspection)\b",
      r"கள\s*ஆய்வு\s*என்றால்|field\s*visit\s*(?:endral|enna\s*nu)"),
     ("speed_up", r"\b(?:speed\s*up|expedite|clear\s+faster|fast(?:er)?)\b.{0,25}\b(?:pending|files|applications)\b|\bhow\s+(?:can|do)\s+i\s+(?:clear|finish)\b.{0,20}\bpending\b",
      r"pending\s*files?\s*(?:vegama|vegamaa|speed)"),
@@ -197,7 +228,8 @@ _CUES: List[Tuple[str, str, str]] = [
     ("litigation_implies", r"\b(?:litigation|court\s+case|stay\s+order|legal\s+dispute)\b.{0,50}\b(?:imply|implies|mean|means|effect|impact|consequence|affect)\b.{0,30}\b(?:applications?|transfer|processing|filings?)\b",
      r"வழக்கு.{0,30}(?:என்ன\s*அர்த்தம்|பாதிக்க|விளைவு)"),
     ("rejection_reasons", r"\b(?:common|usual|main|typical|frequent|possible)\s+(?:rejection\s+)?reasons?\b.{0,25}\breject|\b(?:rejection\s+reasons?|reasons?\s+for\s+rejection)\b|"
-                          r"\bwhy\s+(?:are|were|do|get|is)\s+(?:most\s+|the\s+)?(?:applications?|files)\b.{0,20}\breject",
+                          r"\bwhy\s+(?:are|were|do|get|is)\s+(?:most\s+|the\s+)?(?:applications?|files)\b.{0,20}\breject|"
+                          r"\bwhat\s+kind\s+of\b.{0,30}\b(?:issues?|problems?)\b.{0,30}\b(?:can|could|might)\b.{0,20}\b(?:block|stop|prevent|delay|reject)\b",
      r"நிராகரிப்பு\s*காரணங்கள்|நிராகரிக்கப்பட்ட.{0,25}ஏன்|reject\w*\s+(?:enna\s+)?reason"),
     ("officer_names", r"\bwho\s+is\s+(?:my|the)\s+(?:district\s+officer|collector|tahsildar|dis|sd|senior\s+draughtsman|supervisor|superior|boss|reporting\s+officer)\b|"
                       r"\b(?:tahsildar|collector|district\s+officer)\b.{0,12}\b(?:of\s+my\s+(?:ward|block|district|taluk))\b|\bmy\s+(?:supervisor|superior|boss|reporting\s+officer)\b",
@@ -231,8 +263,14 @@ def match(message: str, history_text: str = "") -> Optional[str]:
         return "litigation_implies"   # "...and what does that imply for new applications", right after a litigation answer
     for topic, en, ta in _CUES:
         if en.search(text) or ta.search(text):
+            if topic == "field_visit" and _FV_FIELD.search(text):
+                continue              # "what is the (proposed) field visit date" asks for a value, not what a visit is
             return topic
     return None
+
+
+_FV_FIELD = re.compile(r"\bproposed\b|\bfield\s*visit\w*\s+(?:date|dt|status|statuz|notes?|remarks?|schedul\w*|time|day|record|details?)\b"
+                       r"|\b(?:date|status|notes|remarks)\s+(?:of|for)\s+(?:the\s+)?field\s*visit", F)
 
 
 def answer(message: str, ta: bool = False, history_text: str = "") -> Optional[Tuple[str, str]]:

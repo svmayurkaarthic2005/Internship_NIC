@@ -273,8 +273,57 @@ async def _rows(db, sql: str, app: str) -> List[Dict[str, Any]]:
         return []
 
 
+_ORM_PLOT_SQL = """
+    SELECT asd.temporary_sub_division_no AS temp_sub_div_no,
+           asd.proposed_sub_division_no AS new_sub_div_no,
+           asd.proposed_sub_division_no AS _proposed,
+           asd.temporary_sub_division_no AS _temporary,
+           asd.proposed_area_sqm AS area_sqmtr,
+           sn.survey_no AS survey_no,
+           w.ward_number AS ward_code,
+           b.block_number AS block_code
+    FROM application_sub_divisions asd
+    JOIN applications a ON a.id = asd.application_id
+    JOIN survey_numbers sn ON sn.id = a.survey_number_id
+    JOIN blocks b ON b.id = sn.block_id
+    JOIN wards w ON w.id = b.ward_id
+    WHERE a.application_number = :app
+    ORDER BY asd.created_at"""
+
+
 async def load_plots(db, application_number: str) -> List[Dict[str, Any]]:
-    return await _rows(db, _PLOT_SQL, application_number)
+    """The plot rows for one application.
+
+    `areg_temp_subdivclub` (read by `_PLOT_SQL`) is the richer extract --
+    land type, soil, tax, patta numbers, group/clubbed-split fields -- none
+    of which `application_sub_divisions` carries. But a newer batch of
+    applications (seeded by a later data-loading pass) has rows in
+    `application_sub_divisions` with NO matching `areg_temp_subdivclub` row
+    at all: `_PLOT_SQL` then reported "no sub-division plots are recorded"
+    for a file that genuinely has one, recorded in the table every other
+    sub-division handler (get_application_detail, get_visit_plan) already
+    treats as authoritative. Falling back to `application_sub_divisions`
+    when the raw extract has nothing closes that gap: it answers with
+    exactly the fields that table carries (temporary/new sub-division
+    number, survey/ward/block) and leaves every field only the raw extract
+    ever had (patta numbers, land type, soil, tax, group fields) absent --
+    reported as "not recorded", never invented from a field that was never
+    loaded for this application in the first place.
+    """
+    rows = await _rows(db, _PLOT_SQL, application_number)
+    if rows:
+        return rows
+    orm_rows = await _rows(db, _ORM_PLOT_SQL, application_number)
+    for r in orm_rows:
+        # The "new" (final) number is only ever real once it DIFFERS from the
+        # temporary one -- the same rule get_application_detail() applies --
+        # otherwise this would claim a final number exists for a file that is
+        # still open or was rejected.
+        if r.get("_proposed") == r.get("_temporary"):
+            r["new_sub_div_no"] = None
+        r.pop("_proposed", None)
+        r.pop("_temporary", None)
+    return orm_rows
 
 
 async def load_owners(db, application_number: str) -> List[Dict[str, Any]]:

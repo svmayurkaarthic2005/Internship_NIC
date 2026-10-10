@@ -115,10 +115,23 @@ def explicit_attachment_signal(message: str, docs: Sequence[ChatAttachment]) -> 
     """The message itself says it is about the file: its name, a document word, or
     an overview request ("what it contains", "summary")."""
     low = (message or "").lower()
+    # "the patta number attached to survey 144" links a record to a parcel; it does not point at an upload
+    low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
     return bool(mentions_filename(message, docs)
                 or _PAGE_OR_FILETYPE_RE.search(low)
-                or any(w in low for w in _DOC_WORDS)
+                or any(w in low_words for w in _DOC_WORDS)
                 or is_overview_request(message))
+
+
+_ATTACHED_TO_RECORD_RE = re.compile(
+    r"\b(?:attached|linked|connected)\s+(?:to|with)\s+(?:the\s+|this\s+|that\s+)?"
+    r"(?:survey|surv\w*|application|appl\w*|ward|block|patta|parcel|sub[\s-]?div\w*|file\s+(?:no|number))\b"
+    # "SD attachment" is the Senior Draughtsman's sketch-PDF RECORD in the SIS
+    # register (see sdattach_qa.py) -- an officer's own domain term, not a use
+    # of the word "attachment" meaning a chat-uploaded file. Left unstripped,
+    # "what is sd attachment?" matched the bare _DOC_WORDS "attachment" and
+    # was claimed as a question about an upload, even with none active.
+    r"|\bsd\s+attachments?\b")
 
 
 async def _last_focused_document(db: AsyncSession, session_id: str) -> Optional[str]:
@@ -224,9 +237,55 @@ def _outline_text(doc, headings: List[str], language: str) -> str:
             f"Ask about any section for its details.")
 
 
+# A short document with no markdown/numbered/ALL-CAPS headings for
+# `document_outline` to list (a plain memo, a letter) has nothing an outline
+# can show. "About X.pdf" still deserves a real answer, not a refusal or a
+# free-text LLM guess at a "question" that was really just the file's name --
+# the opening text itself, verbatim, is the safest possible answer and needs
+# no model at all.
+def _preview_text(doc, body: str, language: str) -> str:
+    ta = language in ("ta", "tanglish")
+    snippet = body.strip()
+    if len(snippet) > 900:
+        snippet = snippet[:900].rsplit(" ", 1)[0] + "…"
+    head = f"{doc.filename} — opening text:" if not ta else f"{doc.filename} — தொடக்க உரை:"
+    return f"{head}\n{snippet}"
+
+
 def is_broad_request(message: str) -> bool:
     low = (message or "").lower()
     return any(w in low for w in _BROAD_WORDS)
+
+
+# Words left behind once the filename itself is stripped out of a message that
+# only ever named the file ("About X.pdf", "re: X.pdf", "tell me X.pdf").
+_BARE_FILE_REF_STOPWORDS = frozenset((
+    "about", "regarding", "re", "the", "this", "that", "a", "an", "is", "are",
+    "was", "were", "tell", "me", "show", "please", "what", "whats", "describe",
+    "file", "document", "doc", "attached", "attachment", "uploaded", "pdf",
+    "csv", "txt", "docx",
+))
+
+
+def is_bare_file_reference(message: str, filenames: Sequence[str]) -> bool:
+    """"About X.pdf" / "re: X.pdf" -- the officer named the file and asked
+    nothing else.
+
+    `retrieve_evidence` already strips the filename out of the question before
+    scoring it against the chunks (a filename tokenises into a compound word
+    that never appears in the document's own prose, and would otherwise cost
+    the question a whole lexical-score group just for naming its own file).
+    Once stripped, "About X.pdf" has no content words left at all, so every
+    chunk scores 0 and the officer got "I could not find this in the uploaded
+    document" for a question that named the file correctly and asked for
+    exactly what an overview answers. Treated the same as `is_overview_request`
+    at the call site: the opening chunks answer it instead of a refusal that
+    reads as a failed search.
+    """
+    from backend.services import attachment_store
+    stripped = attachment_store.strip_filenames(message or "", filenames)
+    words = re.findall(r"[a-zA-Z]{3,}", stripped.lower())
+    return not any(w not in _BARE_FILE_REF_STOPWORDS for w in words)
 
 
 # A question about a specific page / line / paragraph / table carries almost
@@ -316,7 +375,12 @@ def targets_attachment(message: str, intent: str,
     low = (message or "").lower()
     if mentions_filename(message, docs):
         return True
-    if any(w in low for w in _DOC_WORDS) or _PAGE_OR_FILETYPE_RE.search(low):
+    # "SD attachment" (the sketch-PDF record) collides with the bare word
+    # "attachment" in _DOC_WORDS -- stripped the same way
+    # `explicit_attachment_signal` already does, so this check and that one
+    # agree on what counts as a real upload reference.
+    low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
+    if any(w in low_words for w in _DOC_WORDS) or _PAGE_OR_FILETYPE_RE.search(low):
         return True
     if _APPLICATION_NO_RE.search(message or ""):
         # An explicit register reference outranks attachment context. The file
@@ -869,7 +933,13 @@ async def _answer_from_selected(
     # ── "what does it contain / summarise / tell short" ─────────────────────
     # Answered from the file's own section headings: no search terms exist to
     # retrieve on, and nothing here is written by the model.
-    if len(selected) == 1 and is_overview_request(message) and not location_reference(message):
+    # "About X.pdf" (named the file, asked nothing else) is the same shape --
+    # handing it to the LLM as a free-text "question" with no real ask in it
+    # produced an invented refusal unrelated to the file's own content
+    # ("I could not find the fee..." for a memo that never mentions a fee).
+    if (len(selected) == 1 and not location_reference(message)
+            and (is_overview_request(message)
+                 or is_bare_file_reference(message, [selected[0].filename]))):
         doc = selected[0]
         if doc.file_ext == ".csv":
             headers, rows = await attachment_store.csv_data(db, doc)
@@ -888,6 +958,19 @@ async def _answer_from_selected(
             return AttachmentPlan(
                 kind=KIND_DETERMINISTIC, text=_outline_text(doc, heads, language),
                 sources=[doc.filename], document_ids=[str(doc.id)])
+        # No headings for the outline to list (a plain memo, a letter) -- a
+        # genuine "summarise this" still goes to the model below for a real
+        # summary, but a bare "About X.pdf" asked nothing to summarise, so the
+        # opening text itself is the honest, deterministic answer instead of
+        # sending a near-empty "question" to the LLM.
+        if is_bare_file_reference(message, [doc.filename]):
+            preview = await attachment_store.leading_chunks(
+                db, officer_id, session_id, [doc.id], per_document=2)
+            if preview:
+                body = "\n\n".join(p.content for p in preview)
+                return AttachmentPlan(
+                    kind=KIND_DETERMINISTIC, text=_preview_text(doc, body, language),
+                    sources=[doc.filename], document_ids=[str(doc.id)])
 
     # ── A named page / line / paragraph / table: fetch it by position ────
     evidences: List[Evidence] = []
@@ -923,7 +1006,8 @@ async def _answer_from_selected(
         evidences = await attachment_store.retrieve_evidence(
             db, officer_id, session_id, [d.id for d in selected], message)
 
-    if not evidences and (is_broad_request(message) or is_overview_request(message)):
+    if not evidences and (is_broad_request(message) or is_overview_request(message)
+                           or is_bare_file_reference(message, [d.filename for d in selected])):
         evidences = await attachment_store.leading_chunks(
             db, officer_id, session_id, [d.id for d in selected],
             per_document=max(1, settings.UPLOAD_RETRIEVAL_TOP_K // max(1, len(selected))))
@@ -966,9 +1050,10 @@ def _maybe_expired_notice(message: str, language: str) -> Optional[AttachmentPla
     low = (message or "").lower()
     if _APPLICATION_NO_RE.search(low) or any(m in low for m in _DB_ONLY_MARKERS):
         return None
+    low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
     if not (typed_filenames(message)
             or _PAGE_OR_FILETYPE_RE.search(low)
-            or any(w in low for w in _DOC_WORDS if w not in _VAGUE_DOC_WORDS)):
+            or any(w in low_words for w in _DOC_WORDS if w not in _VAGUE_DOC_WORDS)):
         return None
     minutes = settings.UPLOAD_RETENTION_MINUTES
     if language in ("ta", "tanglish"):

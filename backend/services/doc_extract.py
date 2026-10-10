@@ -2,9 +2,11 @@
 
 Supported: ``.txt``, ``.csv``, ``.pdf``, ``.docx``. The legacy binary ``.doc``
 format is not (no safe pure-Python reader is bundled) -- callers ask the
-officer to save it as .docx or PDF. Scanned / image-only PDFs stay
-unsupported by design: there is no OCR here, and a page with no selectable
-text comes back as ``no_extractable_text`` rather than as an empty answer.
+officer to save it as .docx or PDF. A PDF page with no selectable text is
+tried through OCR (Tesseract, the same engine and Tamil+English language
+pack `backend/ingest.py` uses for the offline reference corpus -- see
+`_ocr_pdf_fallback`) before it is given up on; only a page OCR also finds
+nothing in comes back as part of ``no_extractable_text``.
 
 Every unit of text carries the location it came from -- a PDF page, a DOCX
 paragraph range or table, a CSV row range, a TXT line range. That location is
@@ -421,12 +423,74 @@ def _from_pdf(raw: bytes) -> ExtractedDocument:
         if body:
             doc.segments.append(Segment(body, {"kind": "page", "page": i + 1}))
     if not doc.has_text:
+        ocr_doc = _ocr_pdf_fallback(raw, page_count)
+        if ocr_doc is not None:
+            return ocr_doc
         doc.status = STATUS_NO_TEXT
         doc.detail = (
+            "No selectable text found in this PDF, and OCR found nothing "
+            "readable either — it may be blank, or too low quality to read. "
+            "Upload a clearer scan, a text PDF, or paste the text into the chat."
+            if _tesseract_available() else
             "No selectable text found in this PDF — it looks like a scan or a "
-            "set of page images. This assistant does not read images or run "
-            "OCR. Upload a text PDF, or paste the text into the chat.")
+            "set of page images, and the OCR engine (Tesseract) is not "
+            "installed on this server. Upload a text PDF, or paste the text "
+            "into the chat.")
     return doc
+
+
+def _tesseract_available() -> bool:
+    """Whether the Tesseract OCR binary can actually be reached -- used only to
+    pick which refusal message is accurate, never to decide whether to try."""
+    try:
+        import pytesseract
+        import os as _os
+        cmd = _os.environ.get("TESSERACT_CMD")
+        if cmd:
+            pytesseract.pytesseract.tesseract_cmd = cmd
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
+def _ocr_pdf_fallback(raw: bytes, page_count: int) -> Optional["ExtractedDocument"]:
+    """OCR fallback for a scanned PDF pypdf found no selectable text in.
+
+    Reuses the exact OCR pipeline `backend/ingest.py` already runs for the
+    offline reference corpus (`_ocr_page` / `_ocr_image`) -- the same engine
+    selection (`OCR_ENGINE`, Tesseract by default; PaddleOCR was deliberately
+    never adopted here -- see the origin note beside `OCR_ENGINE` in
+    ingest.py), the same Tamil+English language pack, the same
+    `TESSERACT_CMD` override, and the same graceful no-op when the Tesseract
+    binary is not installed -- never a guess at what a page said. Each page
+    is attempted independently, so a bad page does not drop the whole file;
+    a chunk OCR produced carries no different citation shape than a normal
+    text page (`citation_label` only ever reads `kind` / `page`), so nothing
+    downstream needs to know the text came from OCR rather than a selectable
+    layer.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return None
+    try:
+        from backend.ingest import _ocr_page
+    except Exception:
+        return None
+    try:
+        pdf = fitz.open(stream=raw, filetype="pdf")
+    except Exception:
+        return None
+    doc = ExtractedDocument(page_count=page_count)
+    try:
+        for i, page in enumerate(pdf):
+            text = (_ocr_page(page) or "").strip()
+            if text:
+                doc.segments.append(Segment(text, {"kind": "page", "page": i + 1}))
+    finally:
+        pdf.close()
+    return doc if doc.has_text else None
 
 
 def _from_docx(raw: bytes) -> ExtractedDocument:

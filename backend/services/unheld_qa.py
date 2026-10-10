@@ -103,8 +103,11 @@ def answer_app(message: str, chat_history, ta: bool):
                 return None
             if en == "the Aadhaar number":  # held, but never displayed
                 return (("ஆதார் எண் ஒருபோதும் காட்டப்படாது. உரிமையாளருக்கு ஆதார் பதிவாகியுள்ளதா என்று மட்டும் கேளுங்கள்.", app.group(0)) if ta else
+                        # Generic across every owner-record module (old/new/IGRS/natham) -- this helper has
+                        # no way to know which one applies to {app}, so it must not assume "new owner" when
+                        # the file in view might be an ISD old-owner (chitta) or any other owner record.
                         (f"Aadhaar numbers are never shown by this assistant. I can say only whether one is recorded for an owner of {app.group(0)} "
-                         "(ask: is the Aadhaar recorded for the new owner).", app.group(0)))
+                         "(ask: is the Aadhaar recorded for the owner).", app.group(0)))
             if ta:
                 return f"{tam} பற்றிய தகவல் இந்த பதிவேட்டில் இல்லை ({app.group(0)}). பதிவில் உள்ளது: {held_ta}.", app.group(0)
             return f"{en[0].upper()}{en[1:]} is not held in the SIS register for {app.group(0)}. What is held: {held_en}.", app.group(0)

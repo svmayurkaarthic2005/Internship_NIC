@@ -26,7 +26,8 @@ from backend.services.chatbot import (
     process_chat_stream,
     create_chat_session,
     get_session_history,
-    get_officer_sessions
+    get_officer_sessions,
+    save_chat_messages,
 )
 from backend.models import AuditLog, ChatSession
 from backend.utils.logger import get_logger
@@ -309,12 +310,22 @@ async def upload_chat_file(
         raw=raw, extracted=extracted)
 
     if doc.extraction_status == doc_extract.STATUS_NO_TEXT:
+        no_text_msg = (doc.status_detail or
+                        "No selectable text found — this assistant does not read images.")
+        # Recorded as a chat turn (see the note below the main upload reply)
+        # so a follow-up right after a no-text upload still knows the
+        # conversation moved to this file, not to whatever application was
+        # discussed before it.
+        await save_chat_messages(
+            db=db, session_id=session_id, user_message=f"[Uploaded: {name}]",
+            assistant_message=no_text_msg, language="en", response_time_ms=0,
+            officer_id=current_officer.officer_id,
+            structured_context={"entity": "attachment", "document_ids": [str(doc.id)]})
         return StandardResponse.success_response(
             data={"supported": True, "document_id": str(doc.id), "filename": name,
                   "extraction_status": doc.extraction_status, "chars": 0,
                   "attached_files": [], "attached_count": 0},
-            message=doc.status_detail or
-                    "No selectable text found — this assistant does not read images.")
+            message=no_text_msg)
 
     active = await attachment_store.active_documents(
         db, current_officer.officer_id, session_id)
@@ -326,6 +337,26 @@ async def upload_chat_file(
     if doc.csv_row_count is not None:
         msg += (f" {doc.csv_row_count} data row(s) stored, so counts and totals "
                 f"are computed from the rows themselves.")
+    retired = getattr(doc, "retired_filenames", None) or []
+    if retired:
+        msg += (f" This session keeps only the newest "
+                 f"{settings.UPLOAD_MAX_DOCS_PER_SESSION} file(s) active, so "
+                 f"{'the oldest' if len(retired) == 1 else f'the {len(retired)} oldest'} "
+                 f"({', '.join(retired)}) {'is' if len(retired) == 1 else 'are'} "
+                 f"no longer answerable — re-upload it if you still need it.")
+    # An upload never went through process_chat(), so it never wrote a
+    # chat_messages row -- every context mechanism that reads "the newest
+    # assistant turn" (attachment_qa.attachment_topic_active,
+    # _last_focused_document, and chatbot._load_followup_context) was blind to
+    # it. A bare follow-up right after an upload ("explain what it is") then
+    # fell through to whatever application was last discussed, appended that
+    # application's number to the message, and answered about the wrong
+    # thing entirely. Recording this turn closes the gap.
+    await save_chat_messages(
+        db=db, session_id=session_id, user_message=f"[Uploaded: {name}]",
+        assistant_message=msg, language="en", response_time_ms=0,
+        officer_id=current_officer.officer_id,
+        structured_context={"entity": "attachment", "document_ids": [str(doc.id)]})
     return StandardResponse.success_response(
         data={"supported": True, "document_id": str(doc.id), "filename": name,
               "extraction_status": doc.extraction_status,
@@ -333,7 +364,8 @@ async def upload_chat_file(
               "chunks": doc.chunk_count, "csv_rows": doc.csv_row_count,
               "truncated": extracted.truncated,
               "attached_files": names, "attached_count": len(names),
-              "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION},
+              "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION,
+              "retired_files": retired},
         message=msg)
 
 

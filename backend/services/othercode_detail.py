@@ -119,7 +119,8 @@ async def card(db, app: str, reg: Dict[str, Any], ta: bool) -> str:
         L.append("")
         L.append(t("Workflow steps:", "பணிப்பாய்வு படிகள்:"))
         for w in wf:
-            a, b = _ROLE.get(str(w["action_from"]), f"role {w['action_from']}"), _ROLE.get(str(w["action_to"]), f"role {w['action_to']}")
+            a, b = _ROLE.get(str(w["action_from"]), t(f"role {w['action_from']} (a desk the register does not name)", f"role {w['action_from']} (பதிவேடு பெயரிடாத மேசை)")), \
+                   _ROLE.get(str(w["action_to"]), t(f"role {w['action_to']} (a desk the register does not name)", f"role {w['action_to']} (பதிவேடு பெயரிடாத மேசை)"))
             rem = _v(w.get("remarks"))
             L.append(f"  {w['slno']}. {a} → {b}  {w['action_date'] or ''}"
                      + (f"  [{w['recommend']}]" if _v(w.get("recommend")) else "") + (f"  {rem[:70]}" if rem else ""))
@@ -173,6 +174,52 @@ _HIST = {"1": "Submission", "44": "Sub Inspector Surveyor", "42": "Sub Inspector
          "59": "ZDT / DRO", "53": "ZDT / DRO", "0": "Completed"}
 
 
+def _hist(role: str, ta: bool) -> str:
+    """_HIST.get(role), or the same "(a code the register does not define)" flag every
+    other undefined code in this module gets, instead of a bare, unexplained "role 25"
+    that reads like a name the register actually has."""
+    name = _HIST.get(role)
+    if name:
+        return name
+    return (f"role {role} (a desk the register does not name)" if not ta
+            else f"role {role} (பதிவேடு பெயரிடாத மேசை)")
+
+
+async def stage_reached(app: str, reg: Dict[str, Any], ta: bool) -> str:
+    """"has it reached the completed stage?" / "is it at the final stage?" -- a
+    yes/no against the register's own coarse `stage` field (Open / Completed),
+    not the detailed workflow desk `current_stage()` reports. A file whose
+    stage is Completed may still be either approved or rejected, so the status
+    is named alongside the verdict rather than left implied by it."""
+    stage = str((reg or {}).get("stage") or "")
+    status = str((reg or {}).get("status") or "")
+    reached = stage.strip().lower() == "completed"
+    if ta:
+        verdict = "ஆம்" if reached else "இல்லை"
+        return f"{verdict} — {app} தற்போது '{stage}' நிலையில் உள்ளது (நிலை: {status})."
+    verdict = "Yes" if reached else "No"
+    return f"{verdict} -- {app} is currently at the '{stage}' stage (status: {status})."
+
+
+async def current_stage(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]:
+    """"current stage?" / "where is it" / "which desk": the file's present position only, not the
+    step-by-step log `workflow()` gives. A bare stage question used to get the full "Workflow history
+    for X (N step(s)): ..." card even when nothing was asked about the history -- answered, but not the
+    question that was asked."""
+    wf = await _all(db, "SELECT action_from, action_to FROM application_workflow WHERE appl_id = :a "
+                         "ORDER BY slno DESC LIMIT 1", app)
+    if not wf:
+        return None
+    to_ = str(wf[0]["action_to"])
+    status = str((reg or {}).get("status") or "")
+    if to_ == "0":
+        return (f"{app} முடிந்தது — {status}." if ta else f"{app} is closed -- {status}.")
+    desk = _hist(to_, ta)
+    stage = (reg or {}).get("stage")
+    return (f"தற்போதைய நிலை: {desk} (நிலை {status})." if ta
+            else f"Current stage: {desk} (status {status}" + (f", {stage}" if stage else "") + ").")
+
+
 async def workflow(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]:
     """The movement of a file under another service code, in the same shape as an ISD / NISD file's workflow history:
     "Workflow history for X (N step(s)):" then one dated line per step, then where the file is now."""
@@ -182,8 +229,8 @@ async def workflow(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]
         return None
     L = [f"Workflow history for {app} ({len(wf)} step(s)):" if not ta else f"{app}-ன் பணிப்பாய்வு வரலாறு ({len(wf)} படி):"]
     for w in wf:
-        a = _HIST.get(str(w["action_from"]), f"role {w['action_from']}")
-        b = _HIST.get(str(w["action_to"]), f"role {w['action_to']}")
+        a = _hist(str(w["action_from"]), ta)
+        b = _hist(str(w["action_to"]), ta)
         rem = _v(w.get("remarks"))
         rec = _v(w.get("recommend"))
         L.append(f"  {w['slno']}. {w['action_date'] or ''} — {a} → {b}"
@@ -194,9 +241,33 @@ async def workflow(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]
     if last == "0":
         L.append(("Closed — " if not ta else "முடிந்தது — ") + status)
     else:
-        L.append((f"Currently at: {_HIST.get(last, 'role ' + last)} (status {status}, stage {(reg or {}).get('stage')})." if not ta
-                  else f"தற்போது: {_HIST.get(last, 'role ' + last)} (நிலை {status})."))
+        L.append((f"Currently at: {_hist(last, ta)} (status {status}, stage {(reg or {}).get('stage')})." if not ta
+                  else f"தற்போது: {_hist(last, ta)} (நிலை {status})."))
     return "\n".join(L)
+
+
+async def attachments(db, app: str, ta: bool) -> str:
+    """The documents attached to a file, from the source `file_attachment` extract (any service code).
+    `application_documents` is synthesised at build time (pending => nothing uploaded), so it told an
+    officer that a pending file with six attachments was missing its sale deed. Bodies are never read."""
+    rows = await _all(db, "SELECT attachmentname, verifieddoc FROM file_attachment WHERE appl_id = :a ORDER BY row_id", app)
+    names: Dict[str, bool] = {}
+    for r in rows:
+        n = (r.get("attachmentname") or "").strip()
+        if n:
+            names[n] = names.get(n, False) or str(r.get("verifieddoc") or "").lower() == "true"
+    if not names:
+        return (f"{app}-க்கு இணைக்கப்பட்ட ஆவணம் எதுவும் பதிவில் இல்லை." if ta
+                else f"No document attachment is recorded for {app}.")
+    nver = sum(names.values())
+    head = (f"{app}-க்கு இணைக்கப்பட்ட ஆவணங்கள் ({len(names)}):" if ta
+            else f"Documents attached to {app} ({len(names)}):")
+    lines = [f"  • {n}" + ((" (சரிபார்க்கப்பட்டது)" if ta else " (verified)") if v else "") for n, v in names.items()]
+    tail = ((f"{nver} சரிபார்க்கப்பட்டதாகக் குறிக்கப்பட்டுள்ளன; மற்றவற்றுக்கு சரிபார்ப்பு குறி இல்லை." if nver
+             else "எந்த ஆவணமும் சரிபார்க்கப்பட்டதாகக் குறிக்கப்படவில்லை.") if ta else
+            (f"{nver} marked verified; the rest carry no verification mark." if nver
+             else "None is marked verified in the register."))
+    return "\n".join([head, *lines, tail])
 
 
 async def decider(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]:
@@ -206,11 +277,11 @@ async def decider(db, app: str, reg: Dict[str, Any], ta: bool) -> Optional[str]:
     if not wf:
         return None
     last = wf[-1]
-    desk = _HIST.get(str(last["action_from"]), f"role {last['action_from']}") if str(last["action_to"]) == "0" else None
+    desk = _hist(str(last["action_from"]), ta) if str(last["action_to"]) == "0" else None
     if status in ("approved", "rejected") and desk:
         rem = _v(last.get("remarks"))
         return (f"{app} was {status} on {last['action_date']} at the {desk} desk" + (f' (remark: "{rem[:80]}")' if rem else "") +
                 ". The register holds desks, not officer names, so I cannot say which person did it.") if not ta else (
             f"{app} {last['action_date']} அன்று {desk} மேசையில் {status}. பதிவேட்டில் அலுவலர் பெயர்கள் இல்லை.")
-    where = _HIST.get(str(last["action_to"]), f"role {last['action_to']}")
+    where = _hist(str(last["action_to"]), ta)
     return f"{app} is not decided yet ({status}); it is at the {where} desk. Officer names are not held in the register."

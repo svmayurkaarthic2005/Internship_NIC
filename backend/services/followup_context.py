@@ -180,7 +180,17 @@ def build_context(intent: Optional[str],
     # here and fell back to whatever application the officer had looked at
     # earlier in the session -- answering a request to re-explain a service
     # code with an unrelated application's detail card.
-    if sd.get("service_code_filter") and not (isinstance(sd.get("applications"), list) and sd["applications"]):
+    #
+    # Gated on the "applications" KEY being absent, not just falsy: a register
+    # listing scoped to one service code (all_service_code_applications) always
+    # carries that key, even as [] when nothing matched (e.g. "code 0172
+    # applications" -- the code exists but nothing in this officer's
+    # jurisdiction uses it yet). Checking truthiness alone could not tell that
+    # apart from a bare "what is 0172?" definition lookup, which never sets the
+    # key at all -- so a zero-row listing's own follow-up ("how many of them
+    # are approved?") fell all the way through to the officer's whole
+    # jurisdiction total instead of correctly answering "0 of 0".
+    if sd.get("service_code_filter") and "applications" not in sd:
         return FollowupContext(
             entity=ENTITY_SERVICE_CODE,
             filters={**filters, "service_code": sd["service_code_filter"]},
@@ -262,6 +272,34 @@ def build_context(intent: Optional[str],
             intent=intent,
         )
 
+    # The field-visit PRIORITIZATION queue ("which application should I visit
+    # next?") carries its rows under "overdue" / "awaiting" / "scheduled",
+    # not the flat "field_visits" list the plain visit-table intents use.
+    # Recorded the same way -- a list, so "the second overdue visit", "show
+    # the next one" and a bare field follow-up resolve against the rows the
+    # officer was just shown -- but overdue numbers are stored FIRST, in
+    # their displayed order, so an ordinal naming "overdue" lands on the
+    # right section via the existing ordinal_pick() machinery with no
+    # further change there; `fv_overdue_count` records where the awaiting
+    # section starts, for any caller that needs to offset into it.
+    if intent == "fv_visit_plan":
+        _fv_overdue = [str(e.get("application_number")).upper() for e in (sd.get("overdue") or [])
+                       if e.get("application_number")]
+        _fv_awaiting = [str(e.get("application_number")).upper() for e in (sd.get("awaiting") or [])
+                        if e.get("application_number")]
+        _fv_scheduled = [str(e.get("application_number")).upper() for e in (sd.get("scheduled") or [])
+                         if e.get("application_number")]
+        _fv_numbers = list(dict.fromkeys(_fv_overdue + _fv_awaiting + _fv_scheduled))[:MAX_CARRIED]
+        if _fv_numbers:
+            return FollowupContext(
+                entity=ENTITY_APPLICATION_LIST,
+                application_numbers=_fv_numbers,
+                filters={**filters, "about_visit": True, "fv_overdue_count": len(_fv_overdue),
+                         "fv_awaiting_count": len(_fv_awaiting)},
+                query_type=sd.get("query_type") or "Field Visit Plan",
+                intent=intent,
+            )
+
     # A field-visit summary carries its rows under "field_visits". Recorded as a
     # list (about visits) so "the 2nd one", "when is that scheduled?" and "what
     # about the third" resolve against the rows on screen, not "nothing shown".
@@ -272,16 +310,29 @@ def build_context(intent: Optional[str],
                                filters={**filters, "about_visit": True},
                                query_type=sd.get("query_type") or "Field Visits", intent=intent)
     if isinstance(fv_rows, list) and fv_rows:
-        numbers = []
+        # Overdue-first, same convention `fv_visit_plan` above already uses --
+        # a plain "Show the field-visit queue" lists every visit in table
+        # (chronological) order, so "the second OVERDUE visit" picked
+        # whatever row happened to sit second in that order, including a
+        # COMPLETED one from months ago. Each row already carries its own
+        # `is_overdue` flag (`get_field_visits()` computes it per visit), so
+        # the same reordering `fv_visit_plan`'s rows get can be applied here
+        # too, with no change needed to the ordinal-picking code itself.
+        _od, _rest = [], []
         for r in fv_rows[:MAX_CARRIED]:
             n = r.get("application_number") if isinstance(r, dict) else None
-            if n and n != "N/A" and str(n).upper() not in numbers:
-                numbers.append(str(n).upper())
+            if not n or n == "N/A":
+                continue
+            n = str(n).upper()
+            if n in _od or n in _rest:
+                continue
+            (_od if isinstance(r, dict) and r.get("is_overdue") else _rest).append(n)
+        numbers = _od + _rest
         if numbers:
             return FollowupContext(
                 entity=ENTITY_APPLICATION_LIST,
                 application_numbers=numbers,
-                filters={**filters, "about_visit": True},
+                filters={**filters, "about_visit": True, "fv_overdue_count": len(_od)},
                 query_type=sd.get("query_type") or "Field Visits",
                 intent=intent,
             )
@@ -556,6 +607,15 @@ _NEVER_CORRECT = frozenset({
     # the greeting/small-talk classifier instead of answering the officer's
     # own name and post.
     "naan",
+    # "least" is one edit from "last" (insert one letter) -- the same trap
+    # CLAUDE.md documents for rag.py's comparison parser, just reached here
+    # via the generic typo-fixer instead. "which service has the LEAST
+    # applications?" was silently rewritten to "...the LAST applications?",
+    # which then matched the follow-up cue vocabulary's recency word and the
+    # whole question was answered as "my most recent application" --  a
+    # ranking question about the fewest count, answered as if it named no
+    # ranking at all.
+    "least",
 })
 
 
@@ -883,7 +943,7 @@ _SINGULAR_FIELD_CUES = (
     # reference, and fell to the LLM, which invented a value. "name" and "owner"
     # already covered "the owner's name" / "who is the owner"; these cover the
     # rest of the register's owner columns.
-    "gender", "sex", "relationship", "relative", "father", "husband", "wife",
+    "gender", "sex", "relationship", "relation", "relative", "father", "husband", "wife",
     "spouse", "aadhaar", "aadhar", "share", "ownership",
     # Owner columns the register does NOT project (ration card, voter ID/EPIC,
     # PIN, occupation code, CIN, assignment number, owner/relation serial,
@@ -923,7 +983,7 @@ _SINGULAR_FIELD_CUES = (
 )
 
 _AGGREGATE_RE = re.compile(
-    r"\bhow\s+many\b|\bcount\b|\btotal\b|\bsum\b|\baverage\b|\bmean\b"
+    r"\bhow\s+many\b|\bcount\b|\btotal\b|\bsum\b|\baverage\b|\bmean\b|\bcompar\w*\b"
     r"|\bwhich\s+(?:one|ones|is|are|of)\b|\boldest\b|\bnewest\b|\blatest\b"
     r"|\bearliest\b|\bmost\s+recent\b|\bany\s+of\b|\bboth\b|\ball\s+of\s+them\b"
     # Superlatives over the rows on screen. "which took the longest?" after a
@@ -965,6 +1025,12 @@ _REFINE_RE = re.compile(
     r"\b(?:show|list|give|filter|keep)\s+(?:me\s+)?(?:only|just)\b"
     r"|\bonly\s+(?:the\s+)?(?:isd|nisd|approved|rejected|pending|overdue)\b"
     r"|\bjust\s+(?:the\s+)?(?:isd|nisd|approved|rejected|pending|overdue)\b"
+    # "from isd?" right after "from sro" continues the same "from <scope>"
+    # idiom the officer just used for the channel -- without this it matched
+    # nothing here, `classify()` returned NONE, and the fragment was routed as
+    # a FRESH question (the officer's whole jurisdiction-wide ISD count),
+    # silently dropping the SRO scope the officer was narrowing from.
+    r"|\bfrom\s+(?:the\s+)?(?:isd|nisd|approved|rejected|pending|overdue)\b"
     r"|\bwhat\s+about\s+(?:the\s+)?(?:isd|nisd)\b"
     # "show the pending one(s)" -- no "only"/"just", but "the <status>
     # one(s)" is the same request: filter the list just shown to that
@@ -1373,7 +1439,16 @@ _PROJECT_FIELDS = (
 # "along" ("along with district") -- see `field_projections`'s own use of
 # this for why it gets the standard listing columns prepended instead of
 # narrowing to just the named field(s), unlike every other trigger.
-_ALONG_RE = re.compile(r"\balong\b|\badd(?:ing)?\b|\bserth\w*\b|\bsethu\w*\b|\bcherthu\w*\b|சேர்|\badhuvodu\b|\badhu\s*udan\b", re.IGNORECASE)
+_ALONG_RE = re.compile(
+    r"\balong\b|\badd(?:ing)?\b|\binclude\b|\bserth\w*\b|\bsethu\w*\b|\bcherthu\w*\b|சேர்|\badhuvodu\b|\badhu\s*udan\b"
+    # "with district" / "with taluk too" (no "along") -- `_PROJECT_TRIGGER_RE`
+    # already documents this as "the same column-add shorthand" as "along",
+    # but only the trigger check read it that way; this branch, which decides
+    # ADD-to-what's-shown vs NARROW-to-just-this-field, did not, so "with
+    # taluk" after a listing replaced the whole table with a lone Taluk
+    # column instead of adding one.
+    r"|\bwith\s+(?:the\s+)?(?:district|taluk|town|ward|block)s?\b",
+    re.IGNORECASE)
 
 # The opposite request -- "not along ward", "without the status column",
 # "exclude taluk", "hide the ward column", "remove stage" -- drop a column
@@ -1498,8 +1573,11 @@ _PROJECT_TRIGGER_RE = re.compile(
     # chatbot.py, which used to read the same word as a cross-jurisdiction
     # request and refuse it outright.
     # "adhuvodu" / "adhu udan" -- Tanglish for "along with that", the same
-    # inclusion request as "along" in a different script.
-    r"|\balong\b|\badhuvodu\b|\badhu\s*udan\b"
+    # inclusion request as "along" in a different script. "add"/"include" are
+    # the same ask in plainer English ("add the taluk", "include taluk") --
+    # safe as a broad trigger for the same reason "only"/"just" are: it only
+    # produces a result once an actual field needle is ALSO found below.
+    r"|\balong\b|\badhuvodu\b|\badhu\s*udan\b|\badd(?:ing)?\b|\binclude\b"
     # "with district" (no "along") after a listing -- the same column-add
     # shorthand, just without the word "along" in front of it. Scoped to the
     # geography columns only: "with" alone is too common a word to trust as a
@@ -1532,7 +1610,21 @@ _PROJECT_TRIGGER_RE = re.compile(
     # "names kaatu", "பெயர்களை காட்டு".
     r"|\b(?:wards|blocks|districts|taluks|towns|statuses|applicants|names|mobiles|"
     r"channels|types|fees|dates|numbers)\s+(?:enna|sollu|sollunga|kaatu|kaattu|kaamii?)\b"
-    r"|(?:பெயர்களை|எண்களை|வார்டுகளை|தொகுதிகளை)\s*(?:காட்டு|சொல்லு|சொல்லுங்கள்)",
+    r"|(?:பெயர்களை|எண்களை|வார்டுகளை|தொகுதிகளை)\s*(?:காட்டு|சொல்லு|சொல்லுங்கள்)"
+    # "change the column order to district, taluk, ward" / "reorder to ..." /
+    # "put district before ward" / "in that order" -- naming several fields
+    # is itself the signal here, so a bare "reorder" trigger alone (with no
+    # field named) is left to fall through same as any other trigger.
+    r"|\breorder\b|\bre-order\b|\brearrange\b|\bchange\s+the\s+order\b|\bcolumn\s+order\b"
+    r"|\bin\s+(?:that|this)\s+order\b|\bput\s+\w+\s+(?:before|after)\s+\w+\b",
+    re.IGNORECASE,
+)
+# "reorder to district, taluk, ward" -- an explicit request to change which
+# order the named columns appear in, not just add one. Distinguished from
+# "along" (which only ever APPENDS) by these verbs.
+_REORDER_RE = re.compile(
+    r"\breorder\b|\bre-order\b|\brearrange\b|\bchange\s+the\s+order\b|\bcolumn\s+order\b"
+    r"|\bin\s+(?:that|this)\s+order\b|\bput\s+\w+\s+(?:before|after)\s+\w+\b",
     re.IGNORECASE,
 )
 
@@ -1564,6 +1656,16 @@ _APP_NO_ONLY_RE = re.compile(
 # whether they said "their". A real queue runs to a couple of dozen files, so
 # the ceiling is now above that rather than under it.
 MAX_PER_ROW_ANSWER = 25
+
+# "can you add district too" -- the bare "can" needle (for can_number) is a
+# real word-boundary match on the MODAL verb here, not the Citizen Access
+# Number. Stripped before the needle loop runs so a polite "can you ..." /
+# "could you ..." opener never gets read as a CAN-number request.
+_CAN_MODAL_RE = re.compile(r"\b(?:can|could)\s+(?:you|i|we)\b|\b(?:you|we|i)\s+can\b", re.IGNORECASE)
+
+
+def _strip_can_modal(text: str) -> str:
+    return _CAN_MODAL_RE.sub(" ", text)
 
 
 def _needle_hit(needle: str, lowered: str, message: str) -> bool:
@@ -1636,7 +1738,7 @@ def field_projection(message: str) -> Optional[str]:
     if not message:
         return None
     message = _correct_typos(message)
-    lowered = message.lower()
+    lowered = _strip_can_modal(message.lower())
     if not _PROJECT_TRIGGER_RE.search(lowered):
         return None
     for key, needles in _PROJECT_FIELDS:
@@ -1668,7 +1770,7 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
     if not message:
         return None
     message = _correct_typos(message)
-    lowered = message.lower()
+    lowered = _strip_can_modal(message.lower())
     # Checked AFTER the field-needle scan below, not before: "only" is a
     # substring match with no look-ahead, so "show only application no AND
     # STATUS with SUBMITTED DATE" matched "only application no" on its own
@@ -1733,6 +1835,15 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
     if _is_exclude:
         base = along_base if along_base else _STANDARD_LISTING_COLUMNS
         return [k for k in base if k not in result]
+    # "reorder to district, taluk, ward" / "put district before ward" --
+    # changes the ORDER of columns already on screen, rather than adding one
+    # ("along") or narrowing to just the named field(s) (every other
+    # trigger). The named fields take the order they were typed in; any
+    # other column already on screen that was not named keeps its old
+    # relative position, appended after.
+    if result and _REORDER_RE.search(lowered):
+        base = along_base if along_base else _STANDARD_LISTING_COLUMNS
+        return result + [k for k in base if k not in result]
     # "along with district" / "show all applications along district" --
     # Indian-English "along" means "in addition to", not "only". Every other
     # trigger phrasing ("their district", "district only") narrows the
@@ -1742,7 +1853,14 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
     # (App No + District) instead of adding a column to what was there.
     if _ALONG_RE.search(lowered):
         base = along_base if along_base else _STANDARD_LISTING_COLUMNS
-        result = [k for k in base if k not in result] + result
+        # Only a field genuinely NOT already on screen is appended. A column
+        # restated in a later "along" ("along with taluk" then "along with
+        # ward too", and ward was already a standard column) used to be
+        # stripped out of `base` and re-appended at the end just because it
+        # also appeared in `result` -- so every earlier "along" addition
+        # visibly shuffled position on the next one, even though nothing
+        # about it had actually changed.
+        result = list(base) + [k for k in result if k not in base]
     return result
 
 # An explicit pointer back at ONE record. Present or not, the fragment still
@@ -1863,6 +1981,44 @@ def is_sort_fragment(message: str) -> bool:
     if _OWN_SUBJECT_RE.search(_APP_NUMBER_WORD_RE.sub(" ", text)):
         return False
     return extract_sort_order(text) is not None
+
+
+# "order columns as district, taluk, ward, block" / "show district first" /
+# "put block before ward" -- a request to re-render the list on screen with a
+# different column order, not a new question. `chatbot.py`'s
+# `_requested_loc_column_order()` reads the actual order out of the message;
+# this only needs to recognise the SHAPE so `classify()` treats it as a list
+# follow-up instead of routing it as a fresh, number-less question (which
+# asked for the application number the message never named).
+_COLUMN_REORDER_TRIGGER_RE = re.compile(
+    r"\border\w*\b|\bcolumn\w*\b|\bfirst\b|\blast\b|\bbefore\b|\bafter\b|\bthen\b|\brearrange\w*\b|\bsequence\b|\bsort\w*\s+column")
+_LOC_COLUMN_WORD_RE = re.compile(r"\bblo?ck\b|\bward\b|\btown\b|\btaluk\w*\b|\bdistrict\b")
+
+
+def is_column_reorder_fragment(message: str) -> bool:
+    """A reorder FRAGMENT names no subject of its own ("show ward before
+    block"). The trigger words here (first/last/before/after/then) are also
+    some of the most ordinary words in English, so a fresh, fully-formed
+    question that happens to carry one of them plus a ward/block number --
+    "which applications are in ward 002 and block 005 before the deadline"
+    -- matched the same shape and was read as a request to re-order columns.
+    Guarded the same way `is_sort_fragment` beside it already is: a short cap
+    (a real reorder request is a handful of words) and the own-subject test,
+    which "ward 002" / "applications" / an explicit application number all
+    trip.
+    """
+    text = (message or "").strip().lower()
+    if not text or len(text.split()) > 9 or not _COLUMN_REORDER_TRIGGER_RE.search(text):
+        return False
+    if _OWN_SUBJECT_RE.search(text):
+        return False
+    hits = len(_LOC_COLUMN_WORD_RE.findall(text))
+    if hits >= 2:
+        return True
+    # A single location word only resolves with "first"/"last" ("show
+    # district first") -- "before"/"after"/"then" need a SECOND word to be
+    # before/after/then relative to.
+    return hits == 1 and bool(re.search(r"\bfirst\b|\blast\b", text))
 
 
 # "what about this", "and that one", "field visit of this", "is it completed" --
@@ -1994,12 +2150,20 @@ def classify(message: str) -> str:
         return FOLLOWUP_SINGULAR
     if is_sort_fragment(text):
         return FOLLOWUP_LIST_REFINE
+    if is_column_reorder_fragment(text):
+        return FOLLOWUP_LIST_REFINE
     if len(words) <= 8 and (is_bare_deictic(text) or is_deictic_field(text) or is_what_is_it(text)
                             or is_negated_ref(text)):
         return FOLLOWUP_SINGULAR
     if len(words) <= 8 and re.match(r"why\b.*\b(?:pending|delayed|late|overdue|stuck|not\s+approved)\b", lowered):
         return FOLLOWUP_SINGULAR
-    if (len(words) <= 4 and re.match(r"(?:only|just)\b", lowered) or re.search(r"\b(?:only|mattum)$", lowered)) \
+    # "from sro" / "from csc" is the same channel-scoping request as "only
+    # sro" -- without "from" here it matched nothing in this block, fell
+    # through every other check, and landed on FOLLOWUP_SINGULAR by default:
+    # a bare channel fragment with a multi-row list in view read as "point at
+    # ONE of these rows", and the officer was asked "which one do you mean?"
+    # for a question that named a filter, not a row.
+    if (len(words) <= 4 and re.match(r"(?:only|just|from)\b", lowered) or re.search(r"\b(?:only|mattum)$", lowered)) \
             and len(words) <= 4 and refinement(text)["submission_channel"]:
         return FOLLOWUP_LIST_REFINE
     _neg = negation_normalise(lowered)
@@ -2007,7 +2171,19 @@ def classify(message: str) -> str:
         return FOLLOWUP_LIST_REFINE
     if len(words) <= 3 and re.fullmatch(r"(?:not|except)\s+" + _NEG_WORD + r"(?:\s+ones)?", lowered.strip(" ?.!")):
         return FOLLOWUP_LIST_REFINE
-    if _REFINE_RE.search(lowered):
+    # Every other branch here is guarded by word count -- this one was not,
+    # and "from isd" / "from nisd" (meant for a short fragment like "from
+    # isd?" continuing a channel-scoping idiom) also matches as a plain
+    # substring inside a full, self-contained sentence: "no of applications
+    # from isd and nisd" is a complete fresh question (it already has its
+    # own subject, "applications from isd and nisd"), not a 2-word scope
+    # fragment, but it was classified as FOLLOWUP_LIST_REFINE anyway and
+    # answered as a narrowing of whatever list was last on screen --
+    # "9 of those 47 are NISD", silently dropping the "isd and" half and
+    # ignoring that the officer named no previous list at all. The docstring
+    # above already states the design rule this enforces: "a follow-up is a
+    # fragment... a long sentence... is a question in its own right."
+    if len(words) <= 6 and _REFINE_RE.search(lowered):
         return FOLLOWUP_LIST_REFINE
     # "remove row 2" / "exclude the first one" / "drop 2026/0154/28/001167" --
     # an exclude-trigger word PLUS a row reference (ordinal, a run of rows, or
@@ -2023,7 +2199,12 @@ def classify(message: str) -> str:
     # some -- both re-render the table over a different set of the carried
     # numbers -- so `resolve()` only needs to compute a different set to
     # keep, not a new code path to render it with.
-    if _EXCLUDE_TRIGGER_RE.search(lowered) and (
+    # Length-guarded for the same reason as the ordinal/slice branches below:
+    # "excluding the first one, which applications are pending in ward 002"
+    # is a fresh, self-contained question (it names its own subject) that
+    # happens to open with an exclude word and an ordinal, not a request to
+    # drop a row from a table already on screen.
+    if len(words) <= 8 and _EXCLUDE_TRIGGER_RE.search(lowered) and (
             mentions_ordinal(message) or mentions_slice(message)
             or re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", message or "")):
         return FOLLOWUP_LIST_REFINE
@@ -2036,13 +2217,21 @@ def classify(message: str) -> str:
             and not mentions_slice(message)
             and re.search(r"\b(?:isd|nisd)\b|\bapplications\b|\bapps\b", lowered)):
         return FOLLOWUP_NONE
-    if mentions_ordinal(message) and not _AGGREGATE_RE.search(lowered):
+    # Same trap as `_REFINE_RE` above: "first" / "second" / "the last two" is
+    # exactly as ordinary a word in a long, self-contained question ("What is
+    # the first application submitted this month under service code 0178?")
+    # as it is in the short fragment this branch exists for ("what about the
+    # first application" -- see the comment two blocks up). Length is the
+    # only thing that tells them apart; an ordinal word alone is not enough.
+    if len(words) <= 8 and mentions_ordinal(message) and not _AGGREGATE_RE.search(lowered):
         return FOLLOWUP_SINGULAR
     # A run of rows ("the last two") points back just as squarely as "the 2nd
     # one" does, and names no subject of its own. `resolve` turns it into the
     # rows; it is checked here only so the own-subject gate below cannot claim
-    # it as a fresh question.
-    if mentions_slice(message):
+    # it as a fresh question. Same length guard, same reason: "Show me the
+    # last two applications approved by the Tahsildar this week" names its
+    # own subject and must not be read as "point at the last two rows shown".
+    if len(words) <= 8 and mentions_slice(message):
         return FOLLOWUP_SINGULAR
     # "not along application no" -- the own-subject gate below reads
     # "application no" as naming a fresh subject (the same test that lets a
@@ -2095,9 +2284,18 @@ def classify(message: str) -> str:
     ):
         return FOLLOWUP_NONE
     # An own subject makes it a fresh question -- but only when it is not
-    # merely a back-reference ("what is its ward" names "ward", not a subject).
+    # merely a back-reference ("what is its ward" names "ward", not a
+    # subject) OR a position into a carried list ("the second overdue
+    # visit" points at a row exactly as concretely as "it" does). Without
+    # the ordinal/slice exemption, "application"/"applications" naming the
+    # ROW ("the application number ... of the second overdue visit",
+    # "... for all three overdue visits") was read as naming a fresh
+    # subject and the whole message was dropped as FOLLOWUP_NONE before the
+    # ordinal/slice logic further down ever got a chance to resolve it --
+    # not a multi-field-specific gap, the same trap for ANY ordinal/slice
+    # follow-up that happens to also use the word "application(s)".
     if _has_own_subject(lowered) and not _BACKREF_RE.search(lowered) \
-            and not plural:
+            and not plural and not mentions_ordinal(message) and not mentions_slice(message):
         return FOLLOWUP_NONE
     # "what does X mean" / "what is the meaning of X" -- a definition
     # question, not a count. Bare "mean" is in `_AGGREGATE_RE` for its
@@ -2110,6 +2308,17 @@ def classify(message: str) -> str:
     if re.search(r"\bwhat\s+(?:does|is|do)\b.{0,40}\bmean(?:s|ing)?\b"
                 r"|\bmeaning\s+of\b", lowered):
         return FOLLOWUP_NONE
+    # "what is A district" / "what is AN application" -- the indefinite
+    # article asks for a DEFINITION of the word, not the value of that field
+    # on the application in view ("what is ITS district" / "what is THE
+    # district" / bare "district?" still reach the field-cue branch below
+    # unchanged). Without this, "district" -- a real field AND an ordinary
+    # glossary word -- matched `_SINGULAR_FIELD_CUES` as a bare substring and
+    # a standalone definition question got answered with that application's
+    # entire details card, for a question that named no application and
+    # meant none.
+    if re.search(r"\bwhat(?:'s|\s+is|\s+are)\s+(?:a|an)\s+\w", lowered):
+        return FOLLOWUP_NONE
     if _AGGREGATE_RE.search(lowered):
         return FOLLOWUP_LIST_AGGREGATE
     # "their wards", "the status of each", "the CAN number column",
@@ -2118,7 +2327,14 @@ def classify(message: str) -> str:
     # older singular `field_projection()`) so the empty-list "app no only"
     # case is recognised too: `is not None` is deliberately not `bool(...)`,
     # since [] is falsy but still means "yes, a projection follow-up".
-    if field_projections(message) is not None:
+    # Same own-subject exemption as the cue-word branch below and
+    # `wants_full_details` just past it: "other than the first application
+    # what documents are missing in ward 002" names "documents", a real
+    # per-row field, but it also names its own subject (an application, a
+    # ward) and is a fresh question, not a bare "what documents?" pointing at
+    # the row on screen.
+    if field_projections(message) is not None and not (
+            _has_own_subject(lowered) and not _BACKREF_RE.search(lowered)):
         return FOLLOWUP_LIST_AGGREGATE
     # "show their details", "show details", "full details" -- a request for the
     # RECORDS behind the rows on screen. `resolve` has had a branch for this
@@ -2145,9 +2361,39 @@ def classify(message: str) -> str:
     # and answered with a survey-number table for rows nobody asked about.
     # A genuine fragment is short, a question, or opens with an interrogative
     # / imperative -- an unrelated declarative sentence is none of those.
+    #
+    # `words[0]` is sliced from `text` (original case), but `_FRAGMENT_OPENERS`
+    # is an all-lowercase set -- a naturally-capitalised sentence ("Show the
+    # survey number and subdivision number of the second overdue visit.")
+    # never matched it, only the un-capitalised "show the ..." did. A typed
+    # interrogative happened to survive this anyway via the "?" branch just
+    # before it ("What is the subdivision number ...?"), which is exactly why
+    # this was invisible until an IMPERATIVE, multi-field, period-terminated
+    # phrasing ("Show X and Y of the second overdue visit.") exposed it --
+    # every other officer-typed sentence starting with a capital letter and
+    # ending without "?" hits the same gap, not only the multi-field ones.
     if any(cue in lowered for cue in _SINGULAR_FIELD_CUES):
+        # The "?" and FRAGMENT_OPENERS disjuncts below carry no length cap of
+        # their own, unlike every other branch in this function -- a genuine
+        # multi-field imperative ("Show the survey number and subdivision
+        # number of the second overdue visit.") can run past
+        # `_MAX_FRAGMENT_WORDS`, so a bare word count was never going to be
+        # the right fence here. But a long, fully-formed question that merely
+        # ENDS in "?" and happens to contain a cue substring ("application",
+        # "code", ...) is not that -- "What is the first application
+        # submitted this month under service code 0178?" matched "code" and
+        # the "?" disjunct and was read as a bare follow-up pointing at
+        # whatever row was last on screen. The same own-subject-minus-
+        # back-reference test `classify()` already applies two branches up
+        # (for `wants_full_details`) tells the two apart: it is False for
+        # "the second overdue visit" (no number, no "my", "this" excluded as
+        # a period word) and True for a question that names "application" /
+        # "ward 002" / etc. as a subject of its own, unless that naming is
+        # itself a back-reference ("this application").
+        if _has_own_subject(lowered) and not _BACKREF_RE.search(lowered):
+            return FOLLOWUP_NONE
         if (len(words) <= _MAX_FRAGMENT_WORDS or "?" in text
-                or words[0].strip(".,!") in _FRAGMENT_OPENERS):
+                or words[0].strip(".,!").lower() in _FRAGMENT_OPENERS):
             return FOLLOWUP_SINGULAR
         return FOLLOWUP_NONE
     return FOLLOWUP_NONE
@@ -2324,9 +2570,35 @@ _NEG_SUFFIX_RE = re.compile(
     re.IGNORECASE)
 
 
+# "do not exclude rejected applications" / "include rejected applications
+# too" / "add rejected back" -- the OPPOSITE of a negation: a status/type
+# already being left out should be let back IN. Two bugs met here:
+#   1. "do not exclude rejected" carries the substring "exclude rejected",
+#      which `_NEG_VERB_RE` matched regardless of the "do not" in front of
+#      it, so the double negative was read as the single negative it
+#      contains -- "not rejected" -- the literal opposite of what was asked.
+#   2. "include rejected too" has no negation cue AT ALL ("include" is not
+#      in `_NEG_VERB_RE`), so it reached the caller's plain status-word scan
+#      naming "rejected" as the ONLY status wanted, instead of a status
+#      being added back to whatever was already shown.
+# Both are rewritten to name every register status together ("pending
+# approved rejected applications"): `_requested_status_filter_for_register`
+# already collapses a request naming all three to "no filter" (the whole
+# register), which is the correct effect of "un-excluding" one of them,
+# without this layer needing to know exactly what else was excluded before.
+_UNNEGATE_RE = re.compile(
+    rf"(?:\b(?:do\s*n'?t|don'?t|do\s+not|never|stop|no\s+longer)\s+"
+    rf"(?:exclude|excluding|hide|skip|ignore|leave\s+out|remove|drop|filter\s+out)"
+    rf"|\b(?:include|add|bring\s+back|also\s+show|show\s+also))"
+    rf"\s+(?:the\s+|all\s+|any\s+)?{_NEG_WORD}\b"
+    rf"(?:\s+(?:ones?|too|also|back|again|any\s*more|anymore))*",
+    re.IGNORECASE)
+
+
 def negation_normalise(text: str) -> str:
     """"exclude rejected" / "rejected illama" -> "not rejected", the form the
     refinement rules already read."""
+    text = _UNNEGATE_RE.sub(lambda m: "all pending approved rejected", text or "")
     # "other than ISD and NISD" excludes both: "not ISD and not NISD", never "not ISD and NISD"
     text = _NEG_VERB_RE.sub(
         lambda m: "not " + " and not ".join([m.group(1)] + re.findall(_NEG_WORD, m.group("chain") or "", re.IGNORECASE)),
@@ -2486,6 +2758,56 @@ def ordinal_pick(message: str, numbers: List[str]) -> Optional[str]:
     if idx is not None and 1 <= idx <= len(numbers):
         return numbers[idx - 1]
     return None
+
+
+# "Show only those with a subdivision recorded." / "Now show those without
+# a recorded subdivision." -- a FILTER over the carried list by whether a
+# per-row field is present, not a request about one specific application.
+# Matched by shape (a listing verb + a plural/"those" pointer + a field cue +
+# a with/without polarity cue), the same discipline every other fragment
+# check in this module uses, so an ordinary declarative sentence that merely
+# mentions "subdivision" is not swept up by this.
+_PRESENCE_LISTING_RE = re.compile(
+    r"\b(?:show|list|display|give|filter)\b.*\b(?:those|these|the\s+ones?|applications?|apps?)\b",
+    re.IGNORECASE)
+_PRESENCE_FIELD_CUES = (
+    ("subdivision", re.compile(r"\bsub[\s-]?divisions?\b", re.IGNORECASE)),
+    ("field_visit_scheduled", re.compile(
+        r"\b(?:a\s+)?(?:scheduled\s+(?:field\s+)?visit|field\s+visit\s+scheduled)\b", re.IGNORECASE)),
+    ("workflow_remarks", re.compile(r"\b(?:workflow\s+)?remarks?\b", re.IGNORECASE)),
+    ("payment", re.compile(r"\bpayment\b|\bchallan\b", re.IGNORECASE)),
+)
+_PRESENCE_NEG_RE = re.compile(
+    r"\bwithout\b|\bno\s+recorded\b|\blacking\b|\bnot\s+(?:have|having|recorded)\b|"
+    r"\bdon'?t\s+have\b|\bhaven'?t\s+(?:got|recorded)\b|\bnone\s+recorded\b",
+    re.IGNORECASE)
+_PRESENCE_POS_RE = re.compile(
+    r"\bwith\b|\bhaving\b|\bthat\s+have\b|\bwhich\s+have\b|\bhas\s+a\b", re.IGNORECASE)
+
+
+def parse_field_presence_request(message: str) -> Optional[Tuple[str, bool]]:
+    """(field_key, wants_present) for a "show only those with/without X
+    recorded" style request, or None when this message is not that shape.
+
+    `wants_present` is True for "with X" / "having X", False for "without
+    X" / "not having X". The field itself must be one `postgres.
+    get_field_presence` actually knows how to check -- naming any other
+    field here is left unclaimed rather than guessed at.
+    """
+    msg = _correct_typos(message or "").lower()
+    if not _PRESENCE_LISTING_RE.search(msg):
+        return None
+    field_key = None
+    for key, pat in _PRESENCE_FIELD_CUES:
+        if pat.search(msg):
+            field_key = key
+            break
+    if not field_key:
+        return None
+    negated = bool(_PRESENCE_NEG_RE.search(msg))
+    if not negated and not _PRESENCE_POS_RE.search(msg):
+        return None
+    return field_key, not negated
 
 
 def excluded_row_numbers(message: str, numbers: List[str]) -> Optional[List[str]]:
@@ -2677,6 +2999,21 @@ def resolve(message: str,
                 f"{single} பற்றி என்ன தெரிய வேண்டும்? எடுத்துக்காட்டாக நிலை, கள ஆய்வு, "
                 f"கட்டணம், ஆவணங்கள் அல்லது விண்ணப்பதாரர்.",
                 language))
+    # "the first overdue visit" / "the second overdue visit" after a SINGULAR
+    # application answer that was ITSELF resolved from an ordinal against the
+    # field-visit queue (e.g. the previous turn answered "the second overdue
+    # visit") names a DIFFERENT row of that same queue, not the application
+    # now in view. The `named_pos > 1` guard just below already refuses to
+    # answer "the 3rd one" about a lone file -- but named_pos == 1 ("the
+    # FIRST overdue visit") slipped straight past it and was silently
+    # answered using whatever single application happened to be in view,
+    # silently ignoring that the officer pointed at a different row.
+    # Standing aside for ANY ordinal here (not just > 1) lets the message
+    # reach `chatbot._maybe_resolve_fresh_visit_ordinal`, which re-queries
+    # the queue and resolves the position correctly, the same path a
+    # first-turn version of this exact question already uses.
+    if single and mentions_ordinal(message) and asks_about_visit(message):
+        return Resolution()
     if single:
         if named_pos is not None and named_pos > 1:
             # "the 3rd one" against a single-application context -- there is no
@@ -2710,6 +3047,23 @@ def resolve(message: str,
     # ── A list in view ──────────────────────────────────────────────────────
     if context.entity == ENTITY_APPLICATION_LIST and context.application_numbers:
         numbers = context.application_numbers
+        # A field-visit list is carried overdue-first (then awaiting, then
+        # scheduled -- see `build_context`'s `fv_visit_plan` / `field_visits`
+        # branches), so an ordinal naming "overdue" / "awaiting" lands in the
+        # right SECTION only up to that section's own count -- past it, "the
+        # ninth overdue visit" (3 overdue rows, 7 more awaiting behind them)
+        # silently picked an AWAITING row and answered as if it were overdue.
+        # Bounding to the recorded section count means an out-of-range
+        # ordinal hits the ordinary "there is no number N" clarification
+        # below instead of inventing an answer from the wrong section.
+        if about_visit:
+            _od_n = (context.filters or {}).get("fv_overdue_count")
+            _aw_n = (context.filters or {}).get("fv_awaiting_count")
+            _ml = (message or "").lower()
+            if _od_n is not None and re.search(r"\boverdue\b", _ml) and not re.search(r"\bawaiting\b", _ml):
+                numbers = numbers[:_od_n]
+            elif _aw_n is not None and re.search(r"\bawaiting\b", _ml) and not re.search(r"\boverdue\b", _ml):
+                numbers = numbers[(_od_n or 0):(_od_n or 0) + _aw_n]
         _dir = nav_direction(message)
         if _dir:
             _cur = (context.filters or {}).get("cursor")

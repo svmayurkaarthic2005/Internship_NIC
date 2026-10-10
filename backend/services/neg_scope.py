@@ -164,6 +164,63 @@ def _union(message: str) -> str:
     return m
 
 
+def _carry_geo(text: str, prior: Dict) -> str:
+    """Append the prior turn's ward/block scope to a rebuilt question, unless
+    the rebuilt text already names one of its own.
+
+    "exclude rejected applications" names no ward at all, so `_geo_scope()`
+    in chatbot.py -- which only infers a ward from context when the CURRENT
+    message uses the word "ward" -- never saw a reason to carry the prior
+    turn's "ward 001" forward, and the rebuilt question silently widened to
+    the whole jurisdiction. Appending it to the rebuilt TEXT is the same
+    carries-the-fact mechanism the rest of this codebase already uses for an
+    application number (`chatbot._apply_followup_resolution`): every
+    downstream handler already reads a ward number straight out of the
+    message, so naming it here is the whole fix, not a new scoping path.
+    """
+    if not text:
+        return text
+    if re.search(r"\bward\s*\d|\bblock\s*[a-z0-9]", text, re.IGNORECASE):
+        return text
+    tail = []
+    w = (prior or {}).get("ward_number")
+    b = (prior or {}).get("block_number")
+    if w:
+        tail.append(f"ward {w}")
+    if b:
+        tail.append(f"block {b}")
+    return f"{text} in {' '.join(tail)}" if tail else text
+
+
+# "include rejected applications too" / "add rejected back" / "do not exclude
+# rejected applications" -- the OPPOSITE of a negation: a term already being
+# left out of the carried exclusion set should be let back IN, continuing
+# the same list, not re-read as a brand new status filter ("include rejected"
+# has no negation cue at all, so it fell straight through to the ordinary
+# status-filter extraction and was answered "show ONLY rejected" -- ignoring
+# every other status the officer had not excluded a moment ago).
+_INCLUDE_BACK_RE = re.compile(
+    r"^(?:include|add|bring\s+back|also\s+show|show\s+also)\s+(?P<term>.+?)\s*(?:too|also|back|again)?$",
+    re.IGNORECASE)
+_STOP_EXCLUDING_RE = re.compile(
+    r"^(?:do\s*n'?t|don'?t|do\s+not|never|stop|no\s+longer)\s+"
+    r"(?:exclude|hide|skip|remove|leave\s+out|filter\s+out)\s+(?P<term>.+?)\s*(?:any\s*more|anymore)?$",
+    re.IGNORECASE)
+
+
+def _unexclude(message: str, prior_ex: Optional[Dict[str, List[str]]]):
+    """The (kind, value) pairs to remove from `prior_ex`, or None if this
+    message is not that shape."""
+    if not prior_ex:
+        return None
+    msg = re.sub(r"[.?!]+$", "", (message or "").strip())
+    m = _INCLUDE_BACK_RE.match(msg) or _STOP_EXCLUDING_RE.match(msg)
+    if not m:
+        return None
+    terms = _terms(m.group("term"))
+    return terms or None
+
+
 def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,
             list_in_view: bool = False) -> Optional[str]:
     """The positive question to ask instead of `message`, with the exclusions left in EXCLUDE;
@@ -175,6 +232,22 @@ def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,
     message = _NOT_ON_DESK.sub(" not pending and not in progress ", message)   # "not present in SIS" = off the desk
     prior = prior or {}
     prior_ex, prior_base = prior.get("excluded"), prior.get("excluded_base") or "show all applications"
+    prior_base = _carry_geo(prior_base, prior)
+    _un = _unexclude(message, prior_ex)
+    if _un is not None:
+        # "include rejected too" / "do not exclude rejected" -- let it back
+        # in and keep every OTHER exclusion already in force, rather than
+        # dropping the whole filter or reading "rejected" as a new one.
+        ex = {k: set(v) for k, v in prior_ex.items()}
+        for k, v in _un:
+            ex.get(k, set()).discard(v)
+        ex = {k: v for k, v in ex.items() if v}
+        if not ex:
+            EXCLUDE.set(None)
+            return prior_base
+        ex["_base"] = {prior_base}
+        EXCLUDE.set(ex)
+        return prior_base
     if prior_ex and _THEM.fullmatch(message.strip()):
         # "show them" after a count / "show the rest" after a negated list
         ex = {k: set(v) for k, v in prior_ex.items()}
@@ -199,7 +272,7 @@ def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,
     message = united
     ex, residual = parse(message)
     if not ex and not no_visit and not survey:
-        return united if (united != original and _terms(united)) else None
+        return _carry_geo(united, prior) if (united != original and _terms(united)) else None
     if survey:
         ex["_survey"] = {survey}
     if no_visit:
@@ -222,6 +295,7 @@ def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,
         r = _NOUN.sub(lambda m: f"all {m.group(0)}", r, count=1)
     elif not positive and not prior_ex:
         r = _NOUN.sub(lambda m: f"all {m.group(0)}", r, count=1)
+    r = _carry_geo(r, prior)
     # what a later "show them" / "and not X" re-asks: the same question as a listing
     base = re.sub(r"^(?:how\s+many|count(?:\s+of)?|number\s+of)\b\s*", "show ", r, flags=re.IGNORECASE)
     base = re.sub(r"\b(?:mattum|kaattu|kaami|kaatu|only|just)\b", " ", base, flags=re.IGNORECASE)

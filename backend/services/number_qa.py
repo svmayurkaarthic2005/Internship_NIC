@@ -17,8 +17,8 @@ _APP_NO = re.compile(r"\d{4}/\d{3,4}/\d{1,3}/\d+")
 _PCT = re.compile(r"\b(?:percent(?:age)?|pct|fraction|proportion|share)\b|%|சதவீத\w*|சதவிகித\w*", re.IGNORECASE)
 _RATIO = re.compile(r"\bratio\b|விகிதம்", re.IGNORECASE)
 _COUNT = re.compile(r"\b(?:how\s+many|count|number|total|evlo|evvalavu|hw\s+many)\b|எத்தனை|எவ்வளவு", re.IGNORECASE)
-_BREAK = re.compile(r"\b(?:by|per|each|every|wise)\s*[-\s]?(type|status|channel|ward|month|year)s?\b"
-                    r"|\b(type|status|channel|ward|month|year)s?[-\s]?wise\b", re.IGNORECASE)
+_BREAK = re.compile(r"\b(?:by|per|each|every|wise)\s*[-\s]?(type|status|channel|ward|month|year|service\s*code|code)s?\b"
+                    r"|\b(type|status|channel|ward|month|year|service\s*code|code)s?[-\s]?wise\b", re.IGNORECASE)
 _NOUN = re.compile(r"\b(?:applications?|aplications?|apps?|files?)\b|விண்ணப்ப", re.IGNORECASE)
 _ALL_WORDS = re.compile(r"\b(?:in\s+total|total|overall|altogether|in\s+all|do\s+i\s+have|i\s+have|have\s+i|are\s+there|iruku|irukku)\b"
                         r"|உள்ளன|உள்ளது", re.IGNORECASE)
@@ -145,7 +145,10 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
 
     bm = _BREAK.search(text)                                     # "by type", "per month"
     if bm and not _SORT.search(text) and (_COUNT.search(text) or _SPLIT.search(text)):
-        kind = (bm.group(1) or bm.group(2)).lower()
+        kind = re.sub(r"\s+", " ", (bm.group(1) or bm.group(2)).lower()).strip()
+        if kind == "code":
+            kind = "service code"
+        kind = kind.replace(" ", "_")                            # "service code" -> "service_code"
         if kind in ("month", "year"):
             cnt: Counter = Counter()
             for r in rows:
@@ -157,6 +160,11 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
             items = [(k, cnt[k]) for k in sorted(cnt)]
             if kind == "month":
                 items = [(f"{_MONTHS[int(k[5:7])]} {k[:4]}", n) for k, n in items]
+        elif kind == "service_code":
+            cnt = Counter(str(r.get("service_code") or "") for r in rows if r.get("service_code"))
+            if not cnt:
+                return None
+            items = [(_code_name(k), n) for k, n in cnt.most_common()]
         else:
             key = {"type": _type, "status": _status, "channel": lambda r: str(r.get("submission_channel") or ""),
                    "ward": lambda r: str(r.get("ward_number") or "").zfill(3)}[kind]
@@ -165,7 +173,8 @@ def answer(message: str, rows_all: List[dict], rows_view: Optional[List[dict]], 
         body = ", ".join(f"{k} {n}" for k, n in items)
         head = {"type": "வகைவாரியாக" if ta else "by type", "status": "நிலைவாரியாக" if ta else "by status",
                 "channel": "வழிவாரியாக" if ta else "by channel", "ward": "வார்டுவாரியாக" if ta else "by ward",
-                "month": "மாதவாரியாக" if ta else "by month", "year": "ஆண்டுவாரியாக" if ta else "by year"}[kind]
+                "month": "மாதவாரியாக" if ta else "by month", "year": "ஆண்டுவாரியாக" if ta else "by year",
+                "service_code": "சேவை குறியீடுவாரியாக" if ta else "by service code"}[kind]
         return (f"விண்ணப்பங்கள் {head} — {body} (மொத்தம் {total})." if ta
                 else f"Applications {head} — {body} (total {total}).")
 
@@ -273,7 +282,8 @@ how many much what which who is are was were be do does did have has had there i
 on at to for from by with and or nor but not no all any my me i we us you your our total count number no percent percentage pct fraction
 proportion share ratio applications application aplications aplication apps app files file rows row shown show list display give tell
 per each every wise only just also then now please pls kindly still yet already left remaining rest others other than more less most
-least between year years month months week weeks day days by type types status statuses channel channels ward wards
+least between year years month months week weeks day days by type types status statuses channel channels ward wards service code codes
+breakdown down summary distribution split grouped group
 evlo evvalavu enna athula ithula idhula athil ithil iruku irukku irukka ah aa um la ku kku ellam ella elam yaar edhu ethu
 pending approved rejected completed complete overdue escalated progress inprogress isd nisd csc sro citizen registrar sub portal
 january february march april may june july august september october november december

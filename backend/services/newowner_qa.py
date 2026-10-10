@@ -37,7 +37,8 @@ _ALIAS = {
     "uds": "uds", "u.d.s": "uds", "photo": "photo", "photos": "photo", "avalable": "available", "stauts": "status",
     "udsvalue": "uds", "agree": "match", "agrees": "match", "matches": "match", "mismach": "mismatch",
     "consistant": "consistent", "diffrent": "difference", "different": "difference", "differences": "difference",
-    "chitta": "old", "existing": "old", "changed": "change", "changes": "change", "same": "same",
+    "chitta": "old", "existing": "old", "previous": "old", "previou": "old", "prev": "old", "former": "old", "earlier": "old",
+    "changed": "change", "changes": "change", "same": "same",
     "relashionship": "relation", "relationship": "relation", "relashion": "relation", "applcation": "application",
     "numbr": "number", "no": "number", "nam": "name", "aadhar": "aadhaar", "adress": "address",
     "return": "return", "returned": "return", "retunred": "return", "retuned": "return", "retruned": "return",
@@ -272,8 +273,12 @@ _LABEL = {
 
 def answer_fields(keys: List[str], app: str, rows: List[Dict[str, Any]], ta: bool, old: bool = False) -> str:
     if not rows:
-        return _t(ta, f"No {'old' if old else 'new'}-owner record is held for application {app}. Only a full-field patta transfer (NISD) carries one.",
-                  f"விண்ணப்பம் {app}-க்கு {'பழைய' if old else 'புதிய'} உரிமையாளர் பதிவு இல்லை. முழு புல பட்டா மாற்றத்துக்கு (NISD) மட்டுமே அது இருக்கும்.")
+        # the extract carries these rows for some full-field transfers only (some 0153 NISD and 0165 files),
+        # so "only an NISD file has one" was wrong both ways -- said even about an NISD file without rows
+        return _t(ta, f"No {'old' if old else 'new'}-owner record is held for application {app}. The full-field transfer "
+                      f"owner records exist only for some NISD (0153) and owner-name-correction (0165) files.",
+                  f"விண்ணப்பம் {app}-க்கு {'பழைய' if old else 'புதிய'} உரிமையாளர் பதிவு இல்லை. இந்த பதிவுகள் சில NISD (0153) "
+                  f"மற்றும் 0165 கோப்புகளுக்கு மட்டுமே உள்ளன.")
     nr = _nr(ta)
     out: List[str] = []
     dup = len({str(x.get("owner_num")) for x in rows}) < len(rows)

@@ -309,7 +309,17 @@
 .message-content:has(table) {
     display: block;
     max-width: 100%;
-    overflow: hidden;
+    /* Backend listing tables (<table class='data-table'> straight from
+       chatbot.py) ship with no .data-table-container wrapper of their own --
+       only the JS-built detail cards get one. `overflow: hidden` here silently
+       clipped any column past the bubble's width with no way to reach it
+       (reported: an "along with taluk" column added past Ward/Block was
+       simply invisible). Horizontal scroll on the bubble itself is the one
+       scroll box for that raw-HTML case; vertical stays hidden so a tall
+       table does not fight the page's own scroll. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
 }
 
 .message-user .message-content-wrapper {

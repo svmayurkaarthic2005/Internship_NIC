@@ -23,6 +23,7 @@ _TAMIL = [
     ("உரிமையாளர்", " owner "), ("சொந்தக்காரர்", " owner "), ("பட்டா", " patta "), ("சர்வே", " survey "),
     ("கணக்கெண்", " survey "), ("உட்பிரிவு", " subdivision "), ("புதிய", " new "), ("தற்போதுள்ள", " existing "),
     ("உறவு குறியீடு", " relation code "), ("உறவு", " relation "), ("தந்தை", " relative "), ("கணவர்", " relative "),
+    ("உறவினர்", " relative "), ("மற்றும்", " and "),
     ("பங்கு", " share "), ("பரப்பளவு", " extent "), ("பரப்பு", " extent "), ("அளவு", " extent "),
     ("ஆணா", " male "), ("பெண்ணா", " female "), ("ஆண்", " male "), ("பெண்", " female "), ("பாலினம்", " sex "),
     ("ஒப்பிடு", " compare "), ("பொருந்து", " match "), ("வேறுபாடு", " different "), ("முரண்", " conflict "),
@@ -138,7 +139,13 @@ def attributes(message: str) -> List[str]:
     ws = set(whole)
     if "applicant" in ws:
         return []
-    ownerish = bool(ws & {"owner", "chitta", "u1", "u2", "u3", "relative"}) or (
+    # "share?" / "extent?" bare, right after an owner answer -- these are owner-row
+    # fields with no application-level equivalent to fall back to (unlike "status?"
+    # or "survey?", which correctly answer from the application itself when asked
+    # bare), so without this they fell through to the generic application-details
+    # card instead of continuing the owner record. newowner_qa's own soft-claim set
+    # already treats EXTENT/SHARE the same way; this keeps the two modules consistent.
+    ownerish = bool(ws & {"owner", "chitta", "u1", "u2", "u3", "relative", "relation", "share", "extent"}) or (
         "both" in ws and bool(ws & {"table", "tables", "record", "records"}))
     if not ownerish:
         return []
@@ -368,6 +375,29 @@ def _compare(message: str, app: str, o, subs, ta: bool) -> str:
     return "\n".join(out)
 
 
+def _owner_label(i: int, r: Dict[str, Any], ta: bool) -> str:
+    name = _v(r.get("owner_name" if ta else "owner_ename")) or _v(r.get("owner_name")) or _v(r.get("owner_ename"))
+    prefix = _t(ta, f"Owner {i}", f"உரிமையாளர் {i}")
+    return f"{prefix} — {name}" if name else prefix
+
+
+def _single_field_value(field_key: str, r: Dict[str, Any], subs, ta: bool) -> tuple[str, str]:
+    """Returns (label, value) using the existing _field_lines() implementation."""
+    nr = _nr(ta)
+    fl = _field_lines([field_key], r, subs, ta)
+    if not fl:
+        return field_key, nr
+    line = fl[0]
+    colon_pos = line.find(": ")
+    if colon_pos != -1:
+        label = line[:colon_pos].strip()
+        val = line[colon_pos + 2:].strip()
+        if field_key == SURVEYSUB:
+            label = _t(ta, "Survey / Sub-division no", "சர்வே / உட்பிரிவு எண்")
+        return label, val
+    return field_key, line.strip()
+
+
 def answer(message: str, attrs: Sequence[str], app: str, owner_rows, subs, ta: bool) -> str:
     if not owner_rows:
         return _t(ta, f"No old-owner (chitta) record is held for application {app}.",
@@ -379,12 +409,47 @@ def answer(message: str, attrs: Sequence[str], app: str, owner_rows, subs, ta: b
         n = len(owner_rows)
         return _t(ta, f"Yes — {n} old-owner record(s) held for {app}: {_v(o.get('owner_name')) or '-'}.",
                   f"ஆம் — {app}-க்கு {n} பழைய உரிமையாளர் பதிவு உள்ளது: {_v(o.get('owner_name')) or '-'}.")
-    lines: List[str] = []
-    for r in owner_rows:
-        lines += _full(r, subs, ta) if FULL in attrs else _field_lines(attrs, r, subs, ta)
-        if len(owner_rows) > 1:
-            lines.append("")
+
+    multi = len(owner_rows) > 1
+    is_full = FULL in attrs
+    single_field = not is_full and len(attrs) == 1
+
+    # Single-field query across multiple owners: emit "Owner i — Name: value" lines
+    # under a single card header stating the requested field, avoiding repeating
+    # the field label for each owner while keeping owner identity clear.
+    if multi and single_field:
+        field_attr = attrs[0]
+        field_label, _ = _single_field_value(field_attr, owner_rows[0], subs, ta)
+        head = _t(
+            ta,
+            f"Old-owner record for {app} — {field_label}:",
+            f"{app} — பழைய உரிமையாளர் பதிவு — {field_label}:",
+        )
+        lines = []
+        for idx, r in enumerate(owner_rows, 1):
+            owner_label = _owner_label(idx, r, ta)
+            _, val = _single_field_value(field_attr, r, subs, ta)
+            lines.append(f"{owner_label}: {val}")
+        return head + "\n" + "\n".join("• " + l for l in lines)
+
+    # Multi-field or FULL query across multiple owners: group by owner section
+    # to avoid repeating field labels without owner attribution.
+    if multi:
+        lines: List[str] = []
+        for idx, r in enumerate(owner_rows, 1):
+            owner_label = _owner_label(idx, r, ta)
+            lines.append(f"{owner_label}:")
+            row_lines = _full(r, subs, ta) if is_full else _field_lines(attrs, r, subs, ta)
+            lines.extend("• " + l for l in row_lines)
+            if idx < len(owner_rows):
+                lines.append("")
+        head = _t(ta, f"Old-owner record for {app}:", f"{app} — பழைய உரிமையாளர் பதிவு:")
+        return head + "\n" + "\n".join(lines)
+
+    # Single owner
+    r = owner_rows[0]
+    row_lines = _full(r, subs, ta) if is_full else _field_lines(attrs, r, subs, ta)
+    if len(row_lines) == 1 and not is_full:
+        return f"{row_lines[0]}  [{app}]"
     head = _t(ta, f"Old-owner record for {app}:", f"{app} — பழைய உரிமையாளர் பதிவு:")
-    if len(lines) == 1 and not FULL in attrs:
-        return f"{lines[0]}  [{app}]"
-    return head + "\n" + "\n".join("• " + l if l else l for l in lines)
+    return head + "\n" + "\n".join("• " + l for l in row_lines)

@@ -32,10 +32,20 @@ async def refresh_overdue_flags(db, today: date | None = None) -> int:
     apps = (await db.execute(
         select(Application.id, Application.application_type, Application.submission_date,
                Application.current_status, Application.is_overdue))).all()
+    # "A completed visit stops the clock at the visit date" means the date it
+    # was actually done -- `actual_date` -- not the date it had been
+    # scheduled for. A visit rescheduled or completed later than planned
+    # (ordinary in practice) was stopping the clock on the OLD scheduled
+    # date here, which could mark a file on-time when the real visit date
+    # was already past the 15-working-day deadline. Falls back to
+    # scheduled_date only for the data-entry gap of a 'completed' row with
+    # no actual_date recorded, rather than dropping it from the clock-stop
+    # calculation entirely.
     done = {}
-    for app_id, when in (await db.execute(
-            select(FieldVisit.application_id, FieldVisit.scheduled_date)
+    for app_id, sched, actual in (await db.execute(
+            select(FieldVisit.application_id, FieldVisit.scheduled_date, FieldVisit.actual_date)
             .where(FieldVisit.status == "completed"))).all():
+        when = actual or sched
         if when and (app_id not in done or when < done[app_id]):
             done[app_id] = when
     turn_on, turn_off = [], []
