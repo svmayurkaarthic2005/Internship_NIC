@@ -65,7 +65,8 @@ def check_routing() -> int:
         if got != REGISTER:
             bad += 1
             print(f"  FAIL bare workload follow-up: {message!r} -> {got} (wanted {REGISTER})")
-    print(f"routing: {len(ROUTING) + 1 - bad}/{len(ROUTING) + 1} ok")
+    checks = len(ROUTING) + 1 + 5
+    print(f"routing: {checks - bad}/{checks} ok")
     return bad
 
 
