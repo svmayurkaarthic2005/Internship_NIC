@@ -57,6 +57,14 @@ def check_routing() -> int:
     if got != REGISTER:
         bad += 1
         print(f"  FAIL routing: bare date after a register list -> {got}")
+
+    # A bare display command immediately after a workload summary must open the
+    # same all-service-code register, rather than being rejected as an orphan fragment.
+    for message in ("show", "list", "display", "please show", "காட்டு"):
+        got = parse_intent(message, prev_intent="officer_workload")
+        if got != REGISTER:
+            bad += 1
+            print(f"  FAIL bare workload follow-up: {message!r} -> {got} (wanted {REGISTER})")
     print(f"routing: {len(ROUTING) + 1 - bad}/{len(ROUTING) + 1} ok")
     return bad
 
@@ -152,11 +160,3 @@ if __name__ == "__main__":
     if "--routing" not in sys.argv:
         failures += asyncio.run(check_database())
     sys.exit(1 if failures else 0)
-
-# A bare display command immediately after a workload summary must open the
-# same all-service-code register, rather than being rejected as an orphan fragment.
-for _message in ("show", "list", "display", "please show", "காட்டு"):
-    got = parse_intent(_message, prev_intent="officer_workload")
-    if got != REGISTER:
-        bad += 1
-        print(f"  FAIL bare workload follow-up: {_message!r} -> {got} (wanted {REGISTER})")
