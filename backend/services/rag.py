@@ -3858,6 +3858,20 @@ def _is_register_wide_listing(message: str, prev_intent: Optional[str]) -> bool:
 
 def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False) -> str:
     """Route a message to an intent (see `_parse_intent_core`), then widen a
+    generic application listing to every service code.
+
+    A one-word display request after a workload summary means the officer wants
+    to inspect the files counted in that summary. Keep this narrowly scoped to
+    the immediate workload follow-up; other bare commands must not become
+    register-wide listings without a clear subject.
+    """
+    _display_only = re.fullmatch(
+        r"\\s*(?:please\\s+)?(?:show|list|display|view|open|காட்டு|காண்பி|பட்டியல்)\\s*[?.!]*\\s*",
+        message or "", re.IGNORECASE)
+    if _display_only and prev_intent == "officer_workload":
+        return "all_service_code_applications"
+
+    """Route a message to an intent (see `_parse_intent_core`), then widen a
     generic application listing to every service code."""
     if re.search(r"\bhow\s+many\b.{0,40}\b(?:awaiting|waiting\s+for|need(?:ing)?|require|requiring|without|no)\b.{0,25}\bfield\s*visit|"
                  r"\bwhich\b.{0,40}\b(?:have|has|with)\s+no\s+field\s*visit\s*(?:scheduled|booked|fixed)?|\bno\s+field\s*visit\s+(?:scheduled|booked)\b",
