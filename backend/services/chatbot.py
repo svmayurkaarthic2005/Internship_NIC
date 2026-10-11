@@ -15547,6 +15547,16 @@ def _is_bare_fragment_without_context(message: str, context, chat_history=None) 
     from imagination."""
     if context:
         return False
+    # The workload summary is not an application list, so it correctly leaves
+    # no FollowupContext. A bare "show" immediately after it is nevertheless a
+    # valid request to open the all-service-code register, not an orphan
+    # follow-up. Let parse_intent use the previous turn's intent for that one
+    # narrow case; the same guard is mirrored in process_chat_stream below.
+    _display_only = re.fullmatch(
+        r"\\s*(?:please\\s+)?(?:show|list|display|view|open|காட்டு|காண்பி|பட்டியல்)\\s*[?.!]*\\s*",
+        message or "", re.IGNORECASE)
+    if _display_only and _resolve_prev_intent(chat_history) == "officer_workload":
+        return False
     if _BARE_REF_RE.match((message or "").strip()) or _is_capability_question(message):
         return False
     if _VAGUE_OPENER_RE.match((message or "").strip()):
