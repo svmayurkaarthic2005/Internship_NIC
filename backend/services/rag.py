@@ -3863,6 +3863,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
         r"\s*(?:please\s+)?(?:show|list|display|view|open|காட்டு|காண்பி|பட்டியல்)\s*[?.!]*\s*",
         message or "", re.IGNORECASE)
     if _display_only and prev_intent == "officer_workload":
+        # "workload" counts active cases, so the implicit display request must
+        # preserve that status scope instead of showing every historical row.
         return "all_service_code_applications"
     if re.search(r"\bhow\s+many\b.{0,40}\b(?:awaiting|waiting\s+for|need(?:ing)?|require|requiring|without|no)\b.{0,25}\bfield\s*visit|"
                  r"\bwhich\b.{0,40}\b(?:have|has|with)\s+no\s+field\s*visit\s*(?:scheduled|booked|fixed)?|\bno\s+field\s*visit\s+(?:scheduled|booked)\b",
