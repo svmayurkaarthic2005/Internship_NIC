@@ -23871,7 +23871,12 @@ async def _process_chat_stream_impl(
                     and not fctx.is_bare_deictic(_original_message)):
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
+        _workload_display_followup = bool(
+            re.fullmatch(r"\s*(?:please\s+)?(?:show|list|display|view|open|காட்டு|காண்பி|பட்டியல்)\s*[?.!]*\s*",
+                         _original_message or "", re.IGNORECASE)
+            and _resolve_prev_intent(chat_history) == "officer_workload")
         if (not _followup.resolved and not _followup.ambiguous
+                and not _workload_display_followup
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
                      or _is_bare_fragment_without_context(_original_message, _followup_ctx, chat_history))):
