@@ -4583,13 +4583,20 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             or (_fee_msg_words and _fee_msg_words[0].strip(".,!") in (
                 "what", "how", "is", "was", "are", "does", "do", "did",
                 "show", "list", "give", "tell", "can", "could")))
-    # Generic money words ("cost", "price", "payment", "money", "rupees",
-    # "revenue") are also ordinary trivia ("flight ticket price to delhi",
-    # "how do I lose weight" has none of these, but "what is the cost of a
-    # flight" does) -- they need a domain word alongside them before this is
-    # read as a question about the SIS fee schedule.
+    # Generic money words ("cost", "price", "payment", "money", "rupees")
+    # are also ordinary trivia ("flight ticket price to delhi", "how do I
+    # lose weight" has none of these, but "what is the cost of a flight"
+    # does) -- they need a domain word alongside them before this is read as
+    # a question about the SIS fee schedule. "revenue" deliberately excluded:
+    # unlike the others, it reads just as naturally in ordinary business
+    # prose that has nothing to do with a fee ("quarterly revenue report"),
+    # so pairing it with a bare domain word like "application" elsewhere in
+    # a long message is not strong evidence of a fee question -- "what is
+    # the status of my pending applications?" followed by an unrelated
+    # revenue-report paragraph was answered as a fee summary instead of the
+    # actual question asked.
     _fee_money_words = [
-        "cost", "costs", "price", "prices", "payment", "rupees", "money", "revenue",
+        "cost", "costs", "price", "prices", "payment", "rupees", "money",
         "charge", "charges", "tariff",
         "ரூபாய்", "பணம்", "panam", "rupaai", "விலை", "vilai", "vila",
     ]

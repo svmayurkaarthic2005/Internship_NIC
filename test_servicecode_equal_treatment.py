@@ -138,6 +138,7 @@ from backend.models import SISOfficer, ServiceRegisterEntry, Ward
 from backend.schemas import OfficerContext
 from backend.services import chatbot
 from backend.services import rag
+from backend.services import calc_qa
 from backend.services import followup_context as fctx
 from backend.services.auth_service import get_officer_jurisdiction_ids
 from backend.utils.helpers import SIS_URBAN_SERVICES
@@ -211,6 +212,50 @@ def test_requested_service_code_filter_used_in_standalone_presence():
           chatbot._requested_service_code_filter("which service code 0154 applications have no subdivision recorded") is None)
 
 
+def test_field_visit_catalog_topic():
+    # Defect 8: "which service codes require a field visit" answered ONLY
+    # about ISD/NISD (2 of the 19 codes that actually require one) --
+    # `_field_visit_rule_topic` is a hardcoded ISD/NISD-only topic that this
+    # specific phrasing shape must not reach.
+    check("'which service codes require a field visit' routes to the new catalog topic",
+          chatbot._field_visit_rule_topic("which service codes require a field visit") == "fv_needed_catalog")
+    check("the negative form routes to the catalog topic too",
+          chatbot._field_visit_rule_topic("which service codes do not require a field visit") == "fv_not_needed_catalog")
+    check("the ISD/NISD 'types of applications' framing is unaffected (still the old rule text)",
+          chatbot._field_visit_rule_topic("which types of applications need a field visit") == "fv_needed")
+    import backend.utils.helpers as _h
+    _n_yes = sum(1 for v in _h.SIS_URBAN_SERVICES.values() if v.get("requires_field_visit"))
+    _n_no = len(_h.SIS_URBAN_SERVICES) - _n_yes
+    ans_yes = chatbot._igrs_can_rule_answer("fv_needed_catalog", "en")
+    check("the catalog answer's count matches SIS_URBAN_SERVICES exactly",
+          ans_yes.startswith(f"{_n_yes} service codes require"), ans_yes[:60])
+    ans_no = chatbot._igrs_can_rule_answer("fv_not_needed_catalog", "en")
+    check("the negative catalog answer's count matches too",
+          ans_no.startswith(f"{_n_no} service codes do not require"), ans_no[:60])
+    check("yes + no counts reconcile to the full catalog",
+          _n_yes + _n_no == len(_h.SIS_URBAN_SERVICES))
+
+
+def test_codes_with_applications():
+    # Defect 9: "which services have non-zero counts" fell to the LLM
+    # (general_query), which fabricated "there are 2 service codes in your
+    # jurisdiction: 0153 and 0154" -- a register that actually has 11.
+    for q in ("Which services have non-zero counts?", "which service codes have applications",
+              "which service codes are in use"):
+        check(f"{q!r} is recognised by the new deterministic trigger",
+              bool(calc_qa._CODES_WITH_APPS_RE.search(q)), q)
+    check("'which service codes have no applications' is recognised too",
+          bool(calc_qa._CODES_WITH_APPS_RE.search("which service codes have no applications")))
+    # Unit-level check of the function itself against synthetic rows.
+    rows = [{"service_code": "0158"}, {"service_code": "0158"}, {"service_code": "0160"}]
+    got = calc_qa.codes_with_applications("which service codes have applications", rows, False)
+    check("codes_with_applications lists exactly the codes present in the rows",
+          "0158" in got and "0160" in got and "0153" not in got, got)
+    got_zero = calc_qa.codes_with_applications("which service codes have no applications", rows, False)
+    check("the zero-count variant lists codes NOT present in the rows",
+          "0158" not in got_zero and "0153" in got_zero, got_zero[:200])
+
+
 def test_catalog_question_routing():
     # Defect 7: a bare catalog question ("what service codes are there")
     # used to fall through to the generic "what is <field>" fallback and
@@ -262,6 +307,17 @@ def test_standalone_presence_imperative_shape():
         "Which service code 0158 applications have no subdivision recorded?")
     check("the original interrogative 'which ... have' skeleton is unaffected",
           got3 == ("register", "subdivision", False), got3)
+    # Caught by test_sequence_c_table_ops.py as a live regression: a plain
+    # COLUMN-SELECTION request ("show applications ... with <column list>")
+    # trivially contains "show...applications" + a bare "with" + the word
+    # "subdivision" (as a column NAME, not a presence check), and was first
+    # misread as this same imperative shape. The "recorded"/"scheduled"
+    # requirement in the fix is what tells the two apart.
+    got4 = fctx.parse_standalone_field_presence_request(
+        "Show applications in ward 001 as a table with application number, "
+        "status, survey number, subdivision number, and submission date.")
+    check("a column-selection request (no 'recorded'/'scheduled') is never misread as a presence filter",
+          got4 is None, got4)
 
 
 def test_routing() -> int:
@@ -271,6 +327,8 @@ def test_routing() -> int:
     test_excluded_service_code_filter()
     test_standalone_presence_imperative_shape()
     test_catalog_question_routing()
+    test_field_visit_catalog_topic()
+    test_codes_with_applications()
     test_requested_service_code_filter_used_in_standalone_presence()
     bad = sum(1 for _, ok, _ in _results if not ok)
     print(f"\nrouting/unit: {len(_results) - bad}/{len(_results)} ok")
@@ -411,7 +469,7 @@ async def live_main():
     #    (fully-applicable) case for a field-visit population --
     r4, _, _ = await turn(ctx, "Which applications awaiting a visit have no subdivision recorded?")
     check("4. a population where the field IS applicable still gets a real all/none assertion",
-          re.search(r"(All|None) of the applications awaiting a visit \d+ application\(s\) have a subdivision recorded\.", r4) is not None,
+          re.search(r"(All|None) of the \d+ application\(s\) awaiting a visit have a subdivision recorded\.", r4) is not None,
           strip_html(r4))
 
     # -- 5. zero-record codes still answer truthfully, never "unsupported" --
@@ -480,6 +538,11 @@ async def live_main():
     r9c, i9c, _ = await turn(ctx, "Show applications for service code 0164 with payment information recorded.")
     check("9c. the same imperative phrasing works for an unrelated code (0164)",
           i9c == "field_presence_filter" and "0164" in r9c, strip_html(r9c))
+
+    # -- 10. the catalog-question defect, live --
+    r10, i10, _ = await turn(ctx, "what service codes are there")
+    check("10. 'what service codes are there' answers the catalog, never asks for an application number",
+          i10 != "application_status" and "application number" not in r10.lower(), strip_html(r10))
 
 
 def main() -> None:

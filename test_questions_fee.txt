@@ -58,11 +58,11 @@ SECTION 2: FEE SCHEDULE / SERVICE CHARGE GUIDE (12 Questions)
 15. What is the CSC service charge?
     CSC சேவை கட்டணம் என்ன?
 
-16. What is the government fee for a MERGE application?
-    MERGE விண்ணப்பத்திற்கான அரசு கட்டணம் என்ன?
+16. What is the government fee for service code 0155?
+    சேவை குறியீடு 0155-க்கான அரசு கட்டணம் என்ன?
 
-17. Compare the fees for 0153, 0154 and 0155
-    0153, 0154, 0155 கட்டணங்களை ஒப்பிடு
+17. Compare the fees for 0153 and 0154
+    0153, 0154 கட்டணங்களை ஒப்பிடு
 
 18. Is there any fee difference between ISD and NISD?
     ISD மற்றும் NISD இடையே கட்டண வேறுபாடு உள்ளதா?

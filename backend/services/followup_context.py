@@ -1135,6 +1135,68 @@ _LAST_ONE_RE = re.compile(
 )
 
 
+def _all_ordinal_indices(message: str) -> List[int]:
+    """Every distinct 1-based position named as a word ordinal, in the order
+    they appear ("the first, second and third" -> [1, 2, 3]; "the first and
+    fourth" -> [1, 4]). Digit ordinals ("2nd", "row 7") are deliberately not
+    folded in here -- they are rare enough combined with a word ordinal in
+    the same breath that the extra false-positive risk is not worth it."""
+    if not message:
+        return []
+    message = _correct_typos(message)
+    lowered = message.lower()
+    hits: List[Tuple[int, int]] = []  # (position in text, ordinal value)
+    for word, idx in _WORD_ORDINALS_EN.items():
+        for m in re.finditer(rf"\b{word}\b", lowered):
+            hits.append((m.start(), idx))
+    for word, idx in _WORD_ORDINALS_TANGLISH.items():
+        for m in re.finditer(rf"\b{re.escape(word)}\b", lowered):
+            hits.append((m.start(), idx))
+    for word, idx in _WORD_ORDINALS_TA.items():
+        pos = message.find(word)
+        if pos != -1:
+            hits.append((pos, idx))
+    hits.sort()
+    seen = set()
+    out = []
+    for _pos, idx in hits:
+        if idx not in seen:
+            seen.add(idx)
+            out.append(idx)
+    return out
+
+
+def mentions_multi_ordinal(message: str) -> bool:
+    """True when the message names TWO OR MORE distinct ordinal positions
+    explicitly ("the first, second and third overdue visits", "the first and
+    fourth pending visits") -- as opposed to one position (`mentions_ordinal`)
+    or a contiguous run named by count (`mentions_slice`, "the first two").
+
+    Without this, `ordinal_index()` -- built for the single-position case --
+    returned only the FIRST ordinal word it found, so "the first and fourth
+    pending visits" silently answered about row 1 alone and never mentioned
+    that "fourth" had been dropped.
+    """
+    return len(_all_ordinal_indices(message)) >= 2
+
+
+def multi_ordinal_pick(message: str, numbers: List[str]) -> Optional[Tuple[List[str], List[int]]]:
+    """The rows named by an explicit list of positions, in the order the
+    positions were named, plus the full list of positions asked for.
+
+    Returns None when the message does not name 2+ distinct positions at
+    all. When it does, the caller compares `len(picked) == len(indices)`:
+    equal means every named position was in range; otherwise at least one
+    was not, and `indices` (not `picked`) has the complete, honest list of
+    what was actually asked for, for the clarification message.
+    """
+    indices = _all_ordinal_indices(message)
+    if len(indices) < 2:
+        return None
+    picked = [numbers[i - 1] for i in indices if 1 <= i <= len(numbers)]
+    return picked, indices
+
+
 def ordinal_index(message: str) -> Optional[int]:
     """The 1-based row position the officer named ("the 7th one" -> 7), or None.
 
@@ -1431,6 +1493,18 @@ _PROJECT_FIELDS = (
     # bare substring match on "can" mistook every applicant-name question
     # for a CAN-number one), and a word boundary does not fall inside a
     # plural "wards"/"blocks" the way a substring check silently did.
+    # The row's own identity column. Asking for it explicitly is unusual --
+    # the row is normally already named by its own number -- but it is a
+    # real field like any other ("the application number, survey number and
+    # subdivision number of the second overdue visit" names it alongside two
+    # ordinary data columns). Without an entry here, this one field alone
+    # fell through every per-row projection path below and reached generic
+    # intent routing instead, where the literal words "field visit" appended
+    # by `_apply_followup_resolution` (see chatbot.py) matched the bare
+    # `field_visits` LISTING intent and answered with the officer's whole
+    # year of visits -- ignoring the picked row entirely.
+    ("application_number", ("application number", "application no", "application numbers",
+                            "app number", "app no", "விண்ணப்ப எண்", "விண்ணப்ப எண்கள்")),
     ("ward", ("ward", "wards", "வார்டு")),
     ("block", ("block", "blocks", "பிளாக்")),
     ("district", ("district", "districts", "மாவட்டம்")),
@@ -1580,9 +1654,17 @@ _STANDARD_LISTING_COLUMNS = (
 # "show the full table again" / "show all columns" / "reset the columns" --
 # back to this default set, with no field of its own to act as a trigger.
 _COLUMN_RESET_RE = re.compile(
-    r"\b(?:full|whole|complete|entire|original)\s+table\b"
+    r"\b(?:full|whole|complete|entire|original)\s+(?:table|format)\b"
     r"|\ball\s+columns?\b|\bevery\s+column\b|\breset\s+(?:the\s+)?columns?\b"
-    r"|\bdefault\s+columns?\b|\ball\s+(?:the\s+)?fields?\b",
+    r"|\bdefault\s+columns?\b|\ball\s+(?:the\s+)?fields?\b"
+    # "restore the original format" right after a narrowed column view --
+    # same shape as "show the full table again", just said with the word
+    # "format" and a "restore" verb instead of "show"/"table". The trailing
+    # noun is mandatory (unlike the optional qualifier before it): a bare
+    # "restore" with no format/table/view/columns word must not match --
+    # "restore the application to pending" is a (refused) mutation request,
+    # not a display reset.
+    r"|\brestore\b.{0,20}\b(?:original|previous|default\s+)?(?:format|table|view|columns?)\b",
     re.IGNORECASE)
 _PROJECT_TRIGGER_RE = re.compile(
     r"\bcolumn\b|\bof each\b|\bfor each\b|\beach\s+(?:one|application|file|row)\b"
@@ -1910,6 +1992,19 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
         # empty table.
         return None
     result = [key for _pos, key in hits]
+    # The row key itself is always the listing's own anchor column, shown
+    # whether or not it is named -- `_STANDARD_LISTING_COLUMNS` excludes it
+    # for the same reason. Naming it explicitly ("application number and
+    # subdivision number") narrows to the fields named BESIDE it, not to a
+    # projection that would need it added. Stripped here rather than left out
+    # of `_PROJECT_FIELDS` entirely: `fields_for_each()` (the per-ROW-pick
+    # sibling of this function, used once an ordinal/slice has already
+    # chosen ONE row) reads the same table and needs the recognised field, or
+    # "the application number ... of the second overdue visit" matches no
+    # field at all and falls through to generic intent routing instead of
+    # picking that one row's own number.
+    if "application_number" in result:
+        result = [k for k in result if k != "application_number"]
     # A survey number on its own is ambiguous in this domain -- an ISD
     # application splits ONE survey number into several sub-divisions, so
     # "show application no with survey no" without also saying which
@@ -2218,9 +2313,24 @@ def classify(message: str) -> str:
     if not text:
         return FOLLOWUP_NONE
     words = text.split()
-    if len(words) > _MAX_FOLLOWUP_WORDS:
-        return FOLLOWUP_NONE
     lowered = text.lower()
+    if len(words) > _MAX_FOLLOWUP_WORDS:
+        # An ordinal/slice reference with no subject of its own ("the second
+        # overdue visit") points at a carried row exactly as concretely as a
+        # 3-word fragment does -- the words just went to naming several
+        # fields instead ("the application number, survey number, and
+        # subdivision number of the second overdue visit"). The flat word cap
+        # exists to keep a long, SELF-CONTAINED question ("what is the first
+        # application submitted this month under service code 0178?") from
+        # being misread as a follow-up; it was never meant to catch a request
+        # that still names no subject of its own just because it lists three
+        # fields instead of one. Same exemption the own-subject gate already
+        # grants further down, applied here too so a multi-field ordinal
+        # follow-up is not dropped before any of that logic runs.
+        if not ((mentions_ordinal(message) or mentions_slice(message)
+                 or mentions_multi_ordinal(message))
+                and not _has_own_subject(lowered)):
+            return FOLLOWUP_NONE
 
     # A plural pointer back ("how many of them are ISD?") is a list question,
     # and a stored list answers it over exactly the rows the officer saw. It
@@ -2898,7 +3008,23 @@ def ordinal_pick(message: str, numbers: List[str]) -> Optional[str]:
 # check in this module uses, so an ordinary declarative sentence that merely
 # mentions "subdivision" is not swept up by this.
 _PRESENCE_LISTING_RE = re.compile(
-    r"\b(?:show|list|display|give|filter)\b.*\b(?:those|these|the\s+ones?|applications?|apps?)\b",
+    r"\b(?:show|list|display|give|filter)\b.*\b(?:those|these|the\s+ones?|applications?|apps?)\b"
+    # "(tell me) which [of them] have a field visit scheduled" over a carried
+    # list -- no "show"/"applications" needed, since "which have" already
+    # names the filter directly. Without this, a compound request ("...count
+    # them, and tell me which have a field visit scheduled") answered this
+    # clause with the generic ambiguous-singular clarification ("Which one do
+    # you mean?") instead of filtering the 8 carried rows, because this verb
+    # check failed before the field cue / polarity checks below ever ran.
+    r"|\bwhich\s+(?:of\s+(?:them|these|those))?\s*(?:have|has)\b"
+    # "Only those without a recorded subdivision." -- the exact natural
+    # phrasing an officer uses to narrow a list already on screen, with no
+    # listing verb at all ("only" already says "narrow what's shown", the
+    # same way "show"/"list"/"give" do above). Without this, the whole
+    # function returned None before the field-cue/polarity checks ever ran,
+    # and the filter silently did nothing -- the list stayed unfiltered
+    # with no indication the request was never applied.
+    r"|\bonly\s+(?:those|these|the\s+ones?)\b",
     re.IGNORECASE)
 _PRESENCE_FIELD_CUES = (
     ("subdivision", re.compile(r"\bsub[\s-]?divisions?\b", re.IGNORECASE)),
@@ -2985,7 +3111,7 @@ def parse_standalone_field_presence_request(message: str) -> Optional[Tuple[str,
     m = _STANDALONE_PRESENCE_VERB_RE.match(msg.strip())
     if m:
         scope_text = m.group("scope")
-    elif _PRESENCE_LISTING_RE.search(msg.lower()):
+    elif _PRESENCE_LISTING_RE.search(msg.lower()) and re.search(r"\brecorded\b|\bscheduled\b", msg, re.IGNORECASE):
         # "Show applications for service code 0158 without a recorded
         # subdivision." -- the IMPERATIVE counterpart of "which ... have no
         # X": a fresh listing request (no carried list; Mode A owns that
@@ -2999,6 +3125,17 @@ def parse_standalone_field_presence_request(message: str) -> Optional[Tuple[str,
         # the whole message instead ("show applications awaiting a visit
         # without a subdivision recorded" must still resolve to
         # "awaiting_visit", not fall back to "register").
+        #
+        # The "recorded"/"scheduled" requirement is load-bearing, not
+        # decorative: every genuine field-presence phrasing says "... X
+        # recorded" / "a scheduled field visit", but a column-SELECTION
+        # request ("show applications ... with application number, status,
+        # survey number, subdivision number, and submission date") also
+        # trivially matches "show...applications" plus a bare "with" plus
+        # the word "subdivision" -- and used to be misread as a presence
+        # filter on an ordinary table-column request, answering a question
+        # about which COLUMNS to show as if it asked which rows HAVE a
+        # subdivision.
         scope_text = msg
     else:
         return None
@@ -3258,6 +3395,24 @@ def resolve(message: str,
     # ── A list in view ──────────────────────────────────────────────────────
     if context.entity == ENTITY_APPLICATION_LIST and context.application_numbers:
         numbers = context.application_numbers
+        # "What about the second one?" (a bare ordinal peek, no field of its
+        # own) deliberately leaves the carried TABLE unchanged -- see
+        # `chatbot._followup_out_context`'s `row_peek` -- so "exclude the
+        # second row" right after it still counts against that same table.
+        # But a plain singular back-reference right after it ("Give ITS
+        # application number...") is not another table operation; "its"
+        # names the one row just peeked, and nothing remembered which row
+        # that was, so the question answered over the WHOLE table instead
+        # of the row the conversation was actually about. `last_peeked`
+        # (set by that same `row_peek` path) is consulted ONLY when the
+        # message is a bare backref with no ordinal/slice/plural of its
+        # own -- an ordinal ("the third one now") still means a fresh pick
+        # from the table, not the previously-peeked row.
+        _lp = (context.filters or {}).get("last_peeked")
+        if (_lp and _lp in numbers and _BACKREF_RE.search((message or "").lower())
+                and not _PLURAL_BACKREF_RE.search((message or "").lower())
+                and not mentions_ordinal(message) and not mentions_slice(message)):
+            numbers = [_lp]
         # A field-visit list is carried overdue-first (then awaiting, then
         # scheduled -- see `build_context`'s `fv_visit_plan` / `field_visits`
         # branches), so an ordinal naming "overdue" / "awaiting" lands in the
@@ -3489,11 +3644,93 @@ def resolve(message: str,
         # A singular question against a list of one is unambiguous; against
         # several it is not, and picking the first would be a guess.
         if len(numbers) == 1:
+            # "application number of the first overdue visit" against a
+            # ONE-row carried list named no ordinal position the row picker
+            # below would ever see (there is nothing to pick between), so
+            # this branch always used to return the plain ENTITY_APPLICATION
+            # rewrite -- which every single-application handler can answer,
+            # EXCEPT the one field that is the row's own identity. That field
+            # has no per-field handler of its own (nobody normally asks for
+            # the application number of an application already named by it),
+            # so it fell through to generic intent routing and matched an
+            # unrelated listing intent instead. Same fix as the N>1 branch
+            # just below: when the message names `application_number` among
+            # its fields, answer it the same per-row-projection way instead.
+            #
+            # Widened to EVERY recognised field when the context is about a
+            # visit (`about_visit`): "survey number of the first overdue
+            # visit" hits the identical trap for a different reason --
+            # `_apply_followup_resolution` appends the literal words "field
+            # visit" to a visit-scoped follow-up, and once that phrase is in
+            # the rewritten message, generic intent routing matches the bare
+            # `field_visits` LISTING intent before any per-application field
+            # handler gets a look at it (`subdivision_qa` also declines a
+            # bare "survey" cue on purpose, so nothing else catches it
+            # either). A non-visit single-item follow-up is untouched --
+            # those already have working per-field handlers of their own,
+            # and routing every ordinary field through the generic
+            # projection table here would be a much bigger behaviour change
+            # than the bug being fixed.
+            _row_fields_1 = fields_for_each(message)
+            if _row_fields_1 and (about_visit or "application_number" in _row_fields_1):
+                return Resolution(
+                    kind=FOLLOWUP_LIST_FIELD,
+                    per_row_field=_row_fields_1,
+                    application_number=numbers[0],
+                    application_numbers=[numbers[0]],
+                    entity=ENTITY_APPLICATION_LIST,
+                    about_visit=about_visit,
+                    status=refine["status"],
+                    application_type=refine["application_type"],
+                    submission_channel=refine["submission_channel"],
+                    status_excluded=refine.get("status_excluded"),
+                    type_excluded=refine.get("type_excluded"),
+                    row_peek=True,
+                    context=context,
+                )
             return Resolution(
                 kind=FOLLOWUP_SINGULAR,
                 application_number=numbers[0],
                 application_numbers=list(numbers),
                 entity=ENTITY_APPLICATION,
+                about_visit=about_visit,
+                status=refine["status"],
+                application_type=refine["application_type"],
+                submission_channel=refine["submission_channel"],
+                status_excluded=refine.get("status_excluded"),
+                type_excluded=refine.get("type_excluded"),
+                context=context,
+            )
+        # "the first, second and third overdue visits" / "the first and
+        # fourth pending visits" -- several EXPLICIT positions in one
+        # request, not a contiguous run (`slice_pick`, "the first two") and
+        # not one position (`ordinal_pick`). Checked ahead of both: a message
+        # naming 2+ distinct ordinals is never ambiguous about how many rows
+        # it means, which `ordinal_pick` alone would answer wrong (it finds
+        # only the FIRST ordinal word and silently drops the rest).
+        _multi = multi_ordinal_pick(message, numbers)
+        if _multi is not None:
+            _multi_picked, _multi_indices = _multi
+            if len(_multi_picked) != len(_multi_indices):
+                _bad = [i for i in _multi_indices if not (1 <= i <= len(numbers))]
+                return Resolution(
+                    kind=kind, ambiguous=True, context=context,
+                    clarification=_clarify(
+                        f"That answer listed only {len(numbers)} application(s), so "
+                        f"there is no number {', '.join(str(i) for i in _bad)}. Give "
+                        f"the application numbers you mean, or positions from 1 to "
+                        f"{len(numbers)}.",
+                        f"அந்தப் பதிலில் {len(numbers)} விண்ணப்பங்கள் மட்டுமே "
+                        f"இருந்தன; எனவே {', '.join(str(i) for i in _bad)}-ஆவது "
+                        f"இல்லை. விண்ணப்ப எண்களை, அல்லது 1 முதல் {len(numbers)} "
+                        f"வரையிலான இடங்களைத் தரவும்.",
+                        language))
+            _multi_fields = fields_for_each(message)
+            return Resolution(
+                kind=FOLLOWUP_LIST_FIELD if _multi_fields else FOLLOWUP_LIST_REFINE,
+                per_row_field=_multi_fields,
+                application_numbers=_multi_picked,
+                entity=ENTITY_APPLICATION_LIST,
                 about_visit=about_visit,
                 status=refine["status"],
                 application_type=refine["application_type"],

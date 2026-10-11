@@ -1642,7 +1642,8 @@ _FIELD_PRESENCE_LABELS = {
 
 
 async def _render_field_presence(db, officer, scope: list, field_key: str, wants_present: bool,
-                                  is_tamil: bool, scope_label_en: str = "those", scope_label_ta: str = "அந்த"):
+                                  is_tamil: bool, scope_label_en: str = "those", scope_label_ta: str = "அந்த",
+                                  scope_suffix_en: str = ""):
     """The shared rendering half of a field-presence answer: given the exact
     application numbers already decided to be in scope (by a carried-list
     filter, Mode A, or a freshly queried dataset, Mode B), check the field's
@@ -1656,6 +1657,14 @@ async def _render_field_presence(db, officer, scope: list, field_key: str, wants
     guessed at. "Not applicable" (an NISD file has no subdivision or field
     visit concept at all) is reported separately from "not recorded" too --
     the whole point of this check. Returns (html, matched_numbers).
+
+    `scope_label_en` is a DETERMINER before "N application(s)" ("those",
+    "the") -- a full noun phrase there ("the applications in your
+    jurisdiction") reads as "...of the applications in your jurisdiction 126
+    application(s) have..." once the count and the literal word
+    "application(s)" are spliced in after it. A trailing qualifier
+    ("in your jurisdiction", "under 0158 (...)") belongs in
+    `scope_suffix_en` instead, appended AFTER "application(s)".
     """
     from html import escape as _e
     scope = list(dict.fromkeys(n.upper() for n in scope))
@@ -1696,14 +1705,14 @@ async def _render_field_presence(db, officer, scope: list, field_key: str, wants
             if is_tamil:
                 text = f"{scope_label_ta} {len(scope)} பட்டியலில் {label} பொருந்துமா என்று எதற்கும் தீர்மானிக்க முடியவில்லை."
             else:
-                text = f"{label.capitalize()} does not apply to any of {scope_label_en} {len(scope)} application(s)."
+                text = f"{label.capitalize()} does not apply to any of {scope_label_en} {len(scope)} application(s){scope_suffix_en}."
             return text + _caveat(), matched
         if is_tamil:
             text = f"{scope_label_ta} {determinable} பட்டியலில் {label} கொண்டது எதுவும் இல்லை." if wants_present \
                    else f"{scope_label_ta} {determinable} அனைத்திற்கும் {label} உள்ளது."
         else:
-            text = (f"None of {scope_label_en} {determinable} application(s) have {label}." if wants_present
-                   else f"All of {scope_label_en} {determinable} application(s) have {label}.")
+            text = (f"None of {scope_label_en} {determinable} application(s){scope_suffix_en} have {label}." if wants_present
+                   else f"All of {scope_label_en} {determinable} application(s){scope_suffix_en} have {label}.")
         return text + _caveat(), matched
 
     rows_data = await get_applications_by_numbers(db, officer, matched, include_rejected=True)
@@ -1712,7 +1721,7 @@ async def _render_field_presence(db, officer, scope: list, field_key: str, wants
         intro = f"{scope_label_ta} {len(scope)} இல் {len(matched)} {label} கொண்டவை:"
     else:
         verb = "have" if wants_present else "do not have"
-        intro = f"{len(matched)} of {scope_label_en} {len(scope)} application(s) {verb} {label}:"
+        intro = f"{len(matched)} of {scope_label_en} {len(scope)} application(s){scope_suffix_en} {verb} {label}:"
     intro += _caveat()
     table = _project_field_answer(rows, list(fctx._STANDARD_LISTING_COLUMNS), len(matched), is_tamil) if rows else ""
     if table:
@@ -1775,7 +1784,13 @@ async def _standalone_field_presence_answer(db, officer, message: str, session_i
         rows = plan.get("awaiting" if scope_kind == "awaiting_visit" else "overdue") or []
         numbers = list(dict.fromkeys(
             str(r.get("application_number")).upper() for r in rows if r.get("application_number")))
-        scope_en = "the applications awaiting a visit" if scope_kind == "awaiting_visit" else "the overdue visits"
+        # English: a DETERMINER ("the") + a trailing qualifier, never a full
+        # noun phrase here -- see _render_field_presence's docstring for why
+        # ("...of the applications awaiting a visit 20 application(s) have
+        # X" was the bug). Tamil is untouched (its own templates already
+        # read correctly with a full phrase in this slot).
+        scope_en, scope_suffix = "the", (
+            " awaiting a visit" if scope_kind == "awaiting_visit" else " with an overdue visit")
         scope_ta = "கள ஆய்வுக்காக காத்திருக்கும் விண்ணப்பங்களில்" if scope_kind == "awaiting_visit" else "தாமதமான கள ஆய்வுகளில்"
     else:
         ward_num, block_num = await _geo_scope(db, session_id, message, chat_history, officer)
@@ -1785,19 +1800,39 @@ async def _standalone_field_presence_answer(db, officer, message: str, session_i
         # filter`, so the answer silently widened to every code instead of
         # staying scoped to the one named.
         service_code = _requested_service_code_filter(message)
+        # "which of my PENDING ISD applications have a field visit
+        # scheduled" used to be answered over the WHOLE jurisdiction (every
+        # status, every code) -- this branch read a service code but never a
+        # status or an ISD/NISD type, the same scopes `_register_listing`
+        # already reads for an ordinary listing. Status goes straight into
+        # the query (the register's own column); ISD/NISD is excluded from
+        # `_requested_service_code_filter` by design (it is the type
+        # column there, not a service-code filter -- see that function's own
+        # docstring), so it is read here with the same bare-type-word rule
+        # `rag.py` uses elsewhere and applied as a post-filter on the
+        # `application_type` field those two codes' rows already carry.
+        reg_status = _requested_status_filter_for_register(message)
+        _type_m = [w for w in ("nisd", "isd") if re.search(
+            rf"(?<![a-z0-9]){w}(?![a-z0-9])", message, re.IGNORECASE)]
+        named_type = _type_m[0].upper() if len(_type_m) == 1 else None
         sd = await get_all_service_code_applications(
             db, officer, service_code=service_code, ward_number=ward_num,
-            block_number=block_num, hide_rejected=True)
+            block_number=block_num, status=reg_status, hide_rejected=True)
+        apps = sd.get("applications") or []
+        if named_type:
+            apps = [r for r in apps if r.get("application_type") == named_type]
         numbers = list(dict.fromkeys(
             str(r.get("application_number")).upper()
-            for r in (sd.get("applications") or []) if r.get("application_number")))
+            for r in apps if r.get("application_number")))
+        _scope_bits = ([reg_status] if isinstance(reg_status, str) else []) + ([named_type] if named_type else [])
+        _scope_qualifier = f" that are {' '.join(_scope_bits)}" if _scope_bits else ""
         if service_code:
             from backend.utils.helpers import SIS_URBAN_SERVICES
             _nm = (SIS_URBAN_SERVICES.get(service_code, {}) or {}).get("name") or service_code
-            scope_en = f"the {service_code} ({_nm}) applications"
+            scope_en, scope_suffix = "the", f"{_scope_qualifier} under {service_code} ({_nm})"
             scope_ta = f"{service_code} ({_nm}) விண்ணப்பங்களில்"
         else:
-            scope_en = "the applications in your jurisdiction"
+            scope_en, scope_suffix = "the", f"{_scope_qualifier} in your jurisdiction"
             scope_ta = "உங்கள் அதிகார வரம்பிலுள்ள விண்ணப்பங்களில்"
 
     if not numbers:
@@ -1807,7 +1842,7 @@ async def _standalone_field_presence_answer(db, officer, message: str, session_i
 
     text, matched = await _render_field_presence(
         db, officer, numbers, field_key, wants_present, is_tamil,
-        scope_label_en=scope_en, scope_label_ta=scope_ta)
+        scope_label_en=scope_en, scope_label_ta=scope_ta, scope_suffix_en=scope_suffix)
     return text, matched, scope_kind
 
 
@@ -1856,6 +1891,20 @@ def _fv_followup(original: str, ctx, resolution):
         return None
     if getattr(resolution, "rows_dropped", 0):
         return _ret("show field visits", list(resolution.application_numbers or []))
+    # "the first, second and third overdue visits" / "the first and fourth
+    # pending visits" also lands on FOLLOWUP_LIST_REFINE (no field named) or
+    # FOLLOWUP_LIST_FIELD (a field named alongside the positions) once
+    # `multi_ordinal_pick` has picked the EXACT rows named -- but this
+    # function's whole job below is re-deriving a FRESH, criteria-filtered
+    # query from the fragment's own words ("show field visits <criteria>"),
+    # which has no concept of "position 1 and 4" at all and would silently
+    # answer with every row matching no criteria (the whole table) instead
+    # of the two rows actually named. An explicit multi-ordinal pick already
+    # carries its own `application_numbers`, computed by `resolve()` itself;
+    # standing aside here lets the generic application-list renderer use
+    # them directly instead of this rewrite discarding them.
+    if fctx.mentions_multi_ordinal(original):
+        return None
     if (resolution.kind in (fctx.FOLLOWUP_LIST_REFINE, fctx.FOLLOWUP_LIST_FIELD)
             or fctx.field_projections(original) is not None):
         return _ret(f"show field visits {frag}")
@@ -1875,12 +1924,19 @@ _FV_CRITERIA = (
     ("completed", r"complet|\bdone\b|finish|முடிந்த|முடிக்கப்பட்ட|mudinj|mudint"),
     ("unscheduled", r"unschedul|not\s+scheduled|திட்டமிடப்படாத|thittamidapadatha"),
     ("overdue", r"overdue|\blate\b|தாமத|thamadham"),
+    # Checked ahead of "scheduled": `reschedul` would never match that
+    # pattern's `\bschedul` anyway (no word boundary after "re"), but a
+    # row whose status is literally "rescheduled" is still a DIFFERENT,
+    # narrower thing than a plain "scheduled" one -- "excluding rescheduled
+    # visits" must drop only those, not every visit with a booked date.
+    ("rescheduled", r"reschedul|மாற்றியமைக்க"),
     ("scheduled", r"\bschedul|திட்டமிட"),
     ("open", r"pending|to\s+visit|to\s+be\s+visited|remaining|outstanding|\bopen\b|நிலுவை"),
 )
 _FV_LABELS = {
     "completed": ("completed", "முடிந்தவை"), "unscheduled": ("unscheduled", "திட்டமிடப்படாதவை"),
     "overdue": ("overdue", "தாமதமானவை"), "scheduled": ("scheduled", "திட்டமிடப்பட்டவை"),
+    "rescheduled": ("rescheduled", "மாற்றியமைக்கப்பட்டவை"),
     "open": ("still to visit", "இன்னும் பார்வையிட வேண்டியவை"),
 }
 _FV_NEG_BEFORE_RE = re.compile(r"(?:\bnot|\bnon|n't|\bisn'?t|\baren'?t|illa\w*|இல்லாத)\s+(?:yet\s+|been\s+)*$", re.IGNORECASE)
@@ -1890,6 +1946,7 @@ def _fv_row_matches(row: dict, key: str) -> bool:
     st = row.get("status")
     return {"completed": st == "completed", "unscheduled": st == "unscheduled",
             "scheduled": st in ("scheduled", "rescheduled"), "overdue": bool(row.get("is_overdue")),
+            "rescheduled": st == "rescheduled",
             "open": st != "completed"}[key]
 
 
@@ -1967,7 +2024,7 @@ _NEG_LEAD = (r"(?:not|except|excluding|exclude|without|other\s+than|apart\s+from
              r"(?:show|list|display|include|give)(?:\s+me)?|hide|skip|ignore|drop|remove|leave\s+out)")
 _NEG_TERM_RE = re.compile(
     rf"\b{_NEG_LEAD}\s+(?:the\s+|any\s+|all\s+|of\s+)*(nisd|isd|completed|complete|done|finished|"
-    rf"unscheduled|scheduled|overdue)\b(?:\s+(?:ones?|applications?|apps?|visits?|field\s+visits?|cases|files))?"
+    rf"unscheduled|rescheduled|scheduled|overdue)\b(?:\s+(?:ones?|applications?|apps?|visits?|field\s+visits?|cases|files))?"
     rf"(?:\s+(?:please|pls))?", re.IGNORECASE)
 _NEG_CHANNEL_RE = re.compile(
     rf"\b{_NEG_LEAD}\s+(?:the\s+|any\s+|all\s+|of\s+)*(?:from\s+|via\s+|through\s+)?"
@@ -1976,7 +2033,7 @@ _NEG_EXCLUDE = contextvars.ContextVar("neg_exclude", default=None)
 _RAW_MESSAGE = contextvars.ContextVar("raw_message", default=None)
 _SORT_RESET = contextvars.ContextVar("sort_reset", default=False)
 _VISIT_KEY = {"completed": "completed", "complete": "completed", "done": "completed", "finished": "completed",
-              "unscheduled": "unscheduled", "scheduled": "scheduled", "overdue": "overdue"}
+              "unscheduled": "unscheduled", "rescheduled": "rescheduled", "scheduled": "scheduled", "overdue": "overdue"}
 
 
 def _parse_negation(text: str):
@@ -3505,9 +3562,44 @@ def _unknown_term_reply(word: str, language: str) -> str:
             "explain SIS terms such as ISD, NISD, patta, sub-division, field visit, overdue, CAN or IGRS.")
 
 
+# A whole-answer OUTPUT FORMAT this app's response architecture does not
+# render -- JSON-only, CSV, a bare Markdown table, "paste into Excel" -- as
+# opposed to a column/sort/group change over the carried listing table,
+# which `followup_context.field_projections()` and friends already handle.
+# Left unclaimed, a pure "return valid JSON only" / "return CSV" message
+# names no application, survey, field or filter word, so it fell straight
+# to `general_query` -> the agent layer, which (having nothing to call a
+# tool for) either timed out after the full `AGENT_TIMEOUT_SECONDS` wait or
+# wrote its own answer-system-prompt back as a nonsensical, SELF-REFERENTIAL
+# refusal ("You are not the SIS assistant for the officer who asked the
+# question...") -- the exact "copies its own system prompt back" failure
+# CLAUDE.md already documents for tool ARGUMENTS, happening here for the
+# final answer text instead, on a message with nothing for the model to
+# ground an answer in at all. Answered honestly and instantly instead: this
+# architecture renders a table (with column/sort/group control), not JSON
+# or CSV -- a real, stated limitation, not a guess at what the data is.
+_FORMAT_UNSUPPORTED_RE = re.compile(
+    r"^\s*return\s+(?:valid\s+|only\s+|the\s+(?:result|data|answer)\s+(?:as|in)\s+)*json\b"
+    r"|^\s*return\s+(?:the\s+)?(?:result\s+|data\s+)?(?:as\s+|in\s+)?csv\b"
+    r"|^\s*return\s+(?:a\s+)?markdown\s+table\b"
+    r"|\bformat\s+i\s+can\s+paste\s+into\s+excel\b"
+    r"|^\s*(?:convert|change)\s+(?:it|this|the\s+(?:answer|output|result))\s+(?:into|to)\s+(?:valid\s+)?json\b",
+    re.IGNORECASE)
+
+
+def _format_unsupported_reply(language: str) -> str:
+    if language in ("ta", "tanglish"):
+        return ("இந்த உதவியாளர் பதில்களை அட்டவணையாக (நிரல்களைச் சேர்க்க/அகற்ற/வரிசைப்படுத்த முடியும்) "
+                "தருகிறது -- JSON, CSV அல்லது வெற்று Markdown அட்டவணையாக இன்னும் தர முடியாது.")
+    return ("This assistant renders answers as a table -- you can add, remove, reorder, sort or "
+            "group its columns -- but it cannot return raw JSON, CSV or a bare Markdown table yet.")
+
+
 def _special_scope_kind(message: str):
     if _cm_strong(message) or any(isinstance(k, tuple) for k in _fline_qa.parse(message)["keys"]):
         return None
+    if _FORMAT_UNSUPPORTED_RE.search((message or "").strip()):
+        return "format_unsupported"
     if _fullform_term(message):
         return "fullform"
     if _FULLFORM_BARE_RE.match((message or "").strip()):
@@ -3546,6 +3638,8 @@ def _special_scope_kind(message: str):
 
 
 def _special_scope_reply(message: str, language: str) -> str:
+    if _special_scope_kind(message) == "format_unsupported":
+        return _format_unsupported_reply(language)
     if _special_scope_kind(message) == "fullform_ask":
         return ("எந்தச் சொல்லின் விரிவாக்கம் வேண்டும்? (எ.கா. \"IGRS full form\", \"SRO full form\")" if language in ("ta", "tanglish")
                 else "The full form of which term? For example \"full form of IGRS\" or \"full form of SRO\".")
@@ -4753,7 +4847,16 @@ _FULLFORM_TERM_RE = re.compile(
 _FULLFORM_ASK_RE = re.compile(
     r"^(?:what\s+is\s+)?(?:the\s+)?(?:full\s*form|expansion|abbreviation)\s+(?:of\s+)?([A-Za-z]{2,8})\s*\??$"
     r"|^what\s+does\s+([A-Za-z]{2,8})\s+(?:stand\s+for|mean)\s*\??$"
-    r"|^([A-Za-z]{2,8})\s+(?:full\s*form|expansion)(?:\s+(?:enna|what|is|என்ன))?\s*\??$", re.IGNORECASE)
+    r"|^([A-Za-z]{2,8})\s+(?:full\s*form|expansion)(?:\s+(?:enna|what|is|என்ன))?\s*\??$"
+    # "what is TSLR used for?" asks the practical meaning, not the expansion
+    # wording, but for an abbreviation this guard has no full form for (TSLR:
+    # deliberately unaliased -- it names 5 different codes, see
+    # find_service_code_by_name) it is the same refusal either way. Without
+    # this branch only the "mean"/"stand for" phrasing was caught; "used for"
+    # fell to general_query and the LLM invented a specific, confident wrong
+    # expansion ("TSLR = Town Survey Land Register") for the very term the
+    # "what does TSLR mean?" phrasing of the same question correctly refused.
+    r"|^what\s+is\s+([A-Za-z]{2,8})\s+(?:used|meant)\s+for\s*\??$", re.IGNORECASE)
 _FULLFORMS = {
     "igrs": ("IGRS = Inspector General of Registration and Stamps.",
              "IGRS = Inspector General of Registration and Stamps (பதிவுகள் மற்றும் முத்திரைகள் துறை)."),
@@ -4791,6 +4894,11 @@ def _fullform_followup(message: str, chat_history) -> str:
 
 def _fullform_term(message: str):
     m = _FULLFORM_ASK_RE.match((message or "").strip())
+    # group(4) ("used for" / "meant for") is deliberately NOT read here: it
+    # only exists to catch an UNKNOWN acronym for the refusal below, and must
+    # not short-circuit a KNOWN one (ISD, CAN, CSC, ...) into this terse
+    # one-liner ahead of its existing, richer handler (service_code_lookup,
+    # etc.) -- that handler already answers "what is ISD used for?" fine.
     w = ((m.group(1) or m.group(2) or m.group(3)) if m else "") or ""
     return w.lower() if w.lower() in _FULLFORMS else None
 
@@ -4858,7 +4966,7 @@ def _unknown_fullform(message: str):
     m = _FULLFORM_ASK_RE.match((message or "").strip())
     if not m:
         return None
-    w = (m.group(1) or m.group(2) or m.group(3) or "").lower()
+    w = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").lower()
     return w if w and w not in _KNOWN_ACRONYMS else None
 
 
@@ -11793,6 +11901,23 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
     # register instead and is not narrowed to pending.
     named = _explicit_status_request(ml)
     status = _requested_status_filter_for_register(message)
+    # "Show pending applications for 0158." then "Exclude rejected
+    # applications." -- rewritten upstream to "not rejected applications.",
+    # which `_requested_status_filter_for_register` reads as the COMPLEMENT
+    # of {rejected} across every status (pending/approved/in_progress/
+    # escalated) -- correct in isolation, but this turn named no status of
+    # its own; it only asked to drop rejected FROM THE LIST ALREADY ON
+    # SCREEN. "Exclude rejected" after a pending-only chain should be a
+    # no-op (rejected was never in it), not a broadening to every other
+    # status too. When the carried chain's own starting status is a single
+    # value already inside that complement, the officer's actual scope is
+    # narrower than the negation alone implies -- intersect down to it
+    # rather than handing back the wider complement.
+    if (isinstance(status, list) and len(status) > 1
+            and followup_ctx is not None and followup_ctx.intent == "all_service_code_applications"):
+        _carried_status = (followup_ctx.filters or {}).get("base_query_filters", {}).get("status")
+        if isinstance(_carried_status, str) and _carried_status in status:
+            status = _carried_status
     wants_everything = bool(re.search(
         r"\b(?:all|every|total|new|recent|latest)\b|அனைத்து|மொத்த", ml))
     # neg_scope.rewrite() injects a literal "all" into a negated query ("applications
@@ -11813,6 +11938,29 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
         elif has_range or year or month or channels or service_code or excluded_service_code or wants_everything or (
                 (ward_num or block_num) and re.search(r"\bhow\s+many\b|\bcount\b|\bnumber\s+of\b|எத்தனை", ml)):
             status = None   # a COUNT in a ward / block is over the register, not narrowed to the open queue
+            # "Show pending applications for 0158." then "Exclude rejected
+            # applications." -- the SECOND turn named no status of its own;
+            # `wants_everything` is True only because `neg_scope.rewrite()`
+            # injected the literal word "all" to keep this a register-wide
+            # query rather than the narrower ISD/NISD queue (see the comment
+            # on `wants_rejected_too` below). Taken at face value, that
+            # widened "pending" (10 applications) into "every status except
+            # rejected" (20) for a turn that only asked to drop rejected
+            # files FROM THE LIST ALREADY ON SCREEN -- "exclude rejected"
+            # after a pending-only chain should be a no-op (rejected was
+            # never in it), not a broadening. Carrying the chain's own
+            # starting status forward (same rule ward/block/service_code
+            # already follow above) fixes it; a message that names its own
+            # period/channel/code alongside the negation still correctly
+            # reaches the register unrestricted, since those conditions on
+            # their own already imply `wants_everything` with no rewrite
+            # involved.
+            if (_neg_scope.EXCLUDE.get() and not has_range and not year and not month
+                    and not channels and not service_code and not excluded_service_code
+                    and followup_ctx is not None and followup_ctx.intent == "all_service_code_applications"):
+                _carried_status = (followup_ctx.filters or {}).get("base_query_filters", {}).get("status")
+                if _carried_status:
+                    status = _carried_status
         else:
             status = "pending"
 
@@ -13279,6 +13427,18 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     if not re.search(r"\b(?:which|what)\b", msg) and re.search(r"\b(?:is|are|does|do|should|must|will)\b", msg) and re.search(need, msg) and re.search(
             r"\b(?:field\s*[- ]?visits?)\b", msg) and not re.search(r"\bnisd\b", msg):
         return "fv_needed"
+    # "which SERVICE CODES require a field visit" names the whole 29-code
+    # catalog by its own term, not the ISD/NISD "type" framing the rest of
+    # this topic is built around -- it used to match the generic `kind`
+    # check below and get the same two-sentence ISD/NISD-only prose, so a
+    # question about every code's field-visit flag was answered about just
+    # 2 of the 11 that actually carry one (0158, 0159, 0160, 0164, 0169,
+    # 0178 need a visit too; 0156, 0162, 0165 do not) -- exactly the
+    # hardcoded-allowlist omission this audit looks for. "type(s)"/"kind(s)
+    # of application" keeps the existing ISD/NISD answer: "type" is
+    # overloaded as ISD/NISD everywhere else in this app.
+    if re.search(r"\b(?:which|what)\s+service\s*codes?\b", msg):
+        return "fv_not_needed_catalog" if re.search(r"\b(?:not|no|n't|without|dont|doesnt|don't|doesn't)\b", msg) else "fv_needed_catalog"
     kind = r"(?:services?|types?|application\s+types?|applications?\s+types?|kinds?\s+of\s+applications?|categor\w+)"
     if re.search(rf"\b(?:which|what)\s+{kind}\b", msg):
         return "fv_not_needed" if re.search(r"\b(?:not|no|n't|without|dont|doesnt|don't|doesn't)\b", msg) else "fv_needed"
@@ -13489,6 +13649,20 @@ _CHANNEL_BASIS_TA = {
 def _igrs_can_rule_answer(topic: str, language: str) -> str:
     """The rule, stated. No counts, so nothing here can go stale against data."""
     is_tamil = language in ("ta", "tanglish")
+    if topic in ("fv_needed_catalog", "fv_not_needed_catalog"):
+        # Computed from SIS_URBAN_SERVICES itself -- never a hardcoded
+        # ISD/NISD-only list -- so a code added to the catalog later is
+        # read from there, not forgotten here.
+        from backend.utils.helpers import SIS_URBAN_SERVICES
+        wants = topic == "fv_needed_catalog"
+        codes = sorted(c for c, info in SIS_URBAN_SERVICES.items()
+                       if bool(info.get("requires_field_visit")) == wants)
+        listing = ", ".join(f"{c} ({SIS_URBAN_SERVICES[c]['name']})" for c in codes)
+        if is_tamil:
+            verb = "கள ஆய்வு தேவை" if wants else "கள ஆய்வு தேவையில்லை"
+            return f"{len(codes)} சேவை குறியீடுகளுக்கு {verb}: {listing}."
+        verb = "require a field visit" if wants else "do not require a field visit"
+        return f"{len(codes)} service codes {verb}: {listing}."
     if topic in _FV_RULE_ANSWERS:
         return (_FV_RULE_TA if is_tamil else _FV_RULE_ANSWERS)[topic]
 
@@ -14117,7 +14291,7 @@ def _rescope_list_followup(message: str, chat_history: list) -> str:
 # pipeline sees a self-contained one.
 
 
-def _followup_out_context(scoped_sd: dict, prior, row_peek: bool = False):
+def _followup_out_context(scoped_sd: dict, prior, row_peek: bool = False, last_peeked: str = None):
     """The context a list follow-up leaves for the turn after it, as JSON.
 
     `build_context` returns a dataclass; `structured_data` is a JSONB column.
@@ -14134,9 +14308,24 @@ def _followup_out_context(scoped_sd: dict, prior, row_peek: bool = False):
     this turn had never run, so "exclude the second row" right after it
     still counts positions against the same table the "second row" was
     named from.
+
+    `last_peeked` records WHICH row that was, as `filters.last_peeked` on the
+    otherwise-untouched prior context -- "What about the second one?" then
+    "Give ITS application number, survey number and status." named a plain
+    singular back-reference ("its"), not another ordinal/list operation, and
+    with nothing remembering which row was just looked at, that "its"
+    resolved against the whole table instead of row 2 alone. The table
+    itself still has not changed (the comment above is still correct for
+    "exclude the second row" and similar), so `application_numbers` is not
+    touched -- only this one extra breadcrumb is added.
     """
     if row_peek:
-        return prior.to_json() if prior else None
+        if not prior:
+            return None
+        if last_peeked:
+            import dataclasses as _dc
+            prior = _dc.replace(prior, filters={**(prior.filters or {}), "last_peeked": last_peeked})
+        return prior.to_json()
     ctx = fctx.build_context("followup_list", scoped_sd)
     if ctx and ctx.application_numbers:
         # `get_applications_by_numbers` does not echo back what it was filtered
@@ -15504,8 +15693,32 @@ def _multi_app_plan(body: str, apps):
 
 _BARE_COLUMN_NOUN_RE = re.compile(
     r"^(?:application\s*(?:no\.?|number)|status|survey\s*(?:no\.?|number)?|"
-    r"sub[\s-]?division\s*(?:no\.?|number)?s?|submission\s*date|date|ward|block|stage|type)\.?$",
+    r"sub[\s-]?division\s*(?:no\.?|number)?s?|submission\s*date|date|ward|block|stage|type|"
+    r"service\s*code|(?:submission\s*)?channel)\.?$",
     re.IGNORECASE)
+
+
+def _is_bare_column_field(field: str) -> bool:
+    """A single column name, OR a plain "A and B" conjunction of two of
+    them -- the shared trailing-field case `_BIG_SEP` deliberately leaves
+    joined ("...service code, submission date and status" splits into
+    ["service code", "submission date and status"], not three pieces,
+    because `_BIG_SEP`'s own "and" rule only fires before a comma or a
+    question word, neither of which is here). Without this, "show my
+    pending ISD applications, including application number, service code,
+    submission date and status" -- an ordinary listing with a column list,
+    the exact shape the register-wide no-split guard below exists for --
+    still split on "service code" (missing from the allow-list this
+    checks) and "submission date and status" (two columns, not one), so
+    each fell through to the generic multi-request splitter and was
+    answered as its own UNSCOPED field question over the whole
+    jurisdiction instead of staying inside the one scoped listing.
+    """
+    field = field.strip()
+    if _BARE_COLUMN_NOUN_RE.match(field):
+        return True
+    parts = re.split(r"\s+and\s+", field)
+    return len(parts) > 1 and all(_BARE_COLUMN_NOUN_RE.match(p.strip()) for p in parts)
 
 
 def _big_plan(message: str):
@@ -15519,7 +15732,7 @@ def _big_plan(message: str):
         _m = _multi_app_plan(text, _apps_s) if len(_apps_s) >= 2 else None
         if _m:
             return _m
-        return _compound_split(text) if not _neg_scope.parse(text)[0] and not re.search(
+        return _compound_split(text) if not _neg_scope.parse(text)[0] and not _parse_negation(text)[1] and not re.search(
             r"\b(?:compare|difference|between|versus|vs)\b", text, re.IGNORECASE) else None
     apps = []
     for m in _APP_NO_RE.findall(text):
@@ -15572,11 +15785,32 @@ def _big_plan(message: str):
         head, rest = apps[0], body.lstrip()[len(apps[0]):]         # "<app> field1, field2, field3 ..."
     else:
         m = _BIG_VERB.match(body)
-        if m and len(_BIG_SEP.split(m.group("rest"))) >= 3:
-            head, rest = m.group("head"), m.group("rest")
+        if m:
+            _vb_pieces = [p.strip(" ,.;?") for p in _BIG_SEP.split(m.group("rest")) if p and p.strip(" ,.;?")]
+            # "What is the status of my pending applications? <three or more
+            # comma-separated sentences of unrelated prose>" matched this
+            # branch on the bare opener "What is" alone, with no check that
+            # what followed looked like a column/field list at all -- ONE
+            # real question, immediately followed by filler text that
+            # happens to contain commas, was carved into several "fields"
+            # and each unrelated fragment answered as its own question
+            # (several avoidable LLM calls for text that named no request of
+            # its own). A genuine field list is short per item ("status",
+            # "survey number", "subdivision number"); real prose is not --
+            # requiring most pieces to be <=6 words keeps "the application
+            # number, survey number, and subdivision number" (3/3 short)
+            # while rejecting a sentence that only happens to contain commas.
+            _short_enough = sum(1 for p in _vb_pieces if len(p.split()) <= 6)
+            if (len(_vb_pieces) >= 3 and _short_enough >= max(2, len(_vb_pieces) - 1)):
+                head, rest = m.group("head"), m.group("rest")
     if rest is not None:
         fields = [f.strip(" ,.;?") for f in _BIG_SEP.split(rest) if f and f.strip(" ,.;?")]
-        fields = [re.sub(r"^(?:also|and|then|the|me)\s+", "", f, flags=re.IGNORECASE) for f in fields]
+        # "including"/"include" is a list LEAD-IN, not a field name of its own
+        # ("...applications, including application number, service code,
+        # ...") -- left unstripped, "including application number" failed
+        # the bare-column-noun check below and the whole message was split
+        # into unscoped sub-questions instead of staying one scoped listing.
+        fields = [re.sub(r"^(?:also|and|then|the|me|including|include)\s+", "", f, flags=re.IGNORECASE) for f in fields]
         fields = [re.sub(r"\s*(?:என்ன|யார்)\s*$", "", f) for f in fields]
         # "IGRS owner name, IGRS form 6 no, patta no, share, relative": the short fields after a qualified one keep its qualifier
         qual_rx = re.compile(r"^(IGRS|TSLR|F-?line|SD|new\s+owner|old\s+owner|returned\s+owner|ZDT|SIS|DIS|RDO)\b", re.IGNORECASE)
@@ -15628,8 +15862,27 @@ def _big_plan(message: str):
             # fallback below (for real bundled jurisdiction-wide asks) was
             # defeated for every one of them too.
             if (_is_register_wide_listing(body) and len(fields) >= 2
-                    and all(_BARE_COLUMN_NOUN_RE.match(f.strip()) for f in fields[1:])):
+                    and all(_is_bare_column_field(f) for f in fields[1:])):
                 return None
+            # "application number, survey number, and subdivision number of
+            # the second overdue visit" -- ordinary English drops a shared
+            # trailing reference ("of X") from every item in a list but the
+            # last one. Without reattaching it, only the LAST split clause
+            # (whichever field happened to end the sentence) kept the
+            # ordinal/row/visit reference, and every field before it was
+            # asked bare -- "application number" alone, with no idea which
+            # record it meant, answered from the officer's whole desk queue
+            # instead of the one row the sentence actually named. Scoped to
+            # when no OTHER field already carries its own "of"/"for" clause,
+            # so a genuine bundle of independent asks ("the oldest one, and
+            # the fee total for CSC applications") is not rewritten.
+            if len(fields) >= 2:
+                _tail = re.search(r"\s+(?:of|for)\s+(?:the\s+)?\S.*$", fields[-1], re.IGNORECASE)
+                if _tail and not any(re.search(r"\s+(?:of|for)\s+\S", f, re.IGNORECASE) for f in fields[:-1]):
+                    _suffix = fields[-1][_tail.start():].strip()
+                    _head_field = fields[-1][:_tail.start()].strip()
+                    if _head_field:
+                        fields = [f"{f} {_suffix}" for f in fields[:-1]] + [f"{_head_field} {_suffix}"]
             return fields[:_BIG_MAX_CLAUSES]
         details_head = bool(re.search(r"\b(?:full\s+)?details?\s+of\b", head, re.IGNORECASE))
         if details_head and len(apps) * (len(fields) + 1) > _BIG_MAX_CLAUSES:
@@ -15650,7 +15903,7 @@ def _big_plan(message: str):
     qs = [re.sub(r"^(?:then|and)\s+", "", q.strip(), flags=re.IGNORECASE) for q in re.split(r"(?<=\?)\s+", body) if q.strip()]
     if len(qs) >= 3:
         return qs[:_BIG_MAX_CLAUSES]
-    if not _neg_scope.parse(text)[0]:
+    if not _neg_scope.parse(text)[0] and not _parse_negation(text)[1]:
         return _prose_plan(body, apps) or _compound_split(body)
     return None
 
@@ -15742,8 +15995,8 @@ def _plan_requests(message: str):
     # one do you mean?" instead of adding the column to the first table.
     if fctx.field_projections(text) is not None:
         return None
-    if _neg_scope.parse(text)[0]:
-        return None      # "pending but not NISD" is one request, not two
+    if _neg_scope.parse(text)[0] or _parse_negation(text)[1]:
+        return None      # "pending but not NISD" / "excluding rescheduled visits" is one request, not two
     # "applications from the same month BUT different channels" is one compound-filter
     # question, not two: _REQ_SPLIT's bare `\bbut\b` split point turned it into "...from the
     # same month" + "different submission channels?" and answered each as an unrelated
@@ -16711,11 +16964,13 @@ async def _calc_turn(message, session_id, officer, db, chat_history):
     if not reply:
         reply = _calc_qa.compare_codes_conceptual(text, ta)
     if not reply and (_calc_qa._CC_COUNT.search(text) or _calc_qa._CMP_CODES.search(text)
-                      or _calc_qa._CHANNEL_BREAKDOWN_RE.search(text) or _calc_qa._BLOCKS_IN_WARD_RE.search(text)):
+                      or _calc_qa._CHANNEL_BREAKDOWN_RE.search(text) or _calc_qa._BLOCKS_IN_WARD_RE.search(text)
+                      or _calc_qa._CODES_WITH_APPS_RE.search(text)):
         from backend.services.postgres import get_all_service_code_applications
         _ccrows = ((await get_all_service_code_applications(db, officer, hide_rejected=False)) or {}).get("applications") or []
         reply = (_calc_qa.compare_codes(text, _ccrows, ta) or _calc_qa.channel_breakdown(text, _ccrows, ta)
-                or _calc_qa.blocks_in_ward(text, _ccrows, ta) or _calc_qa.code_counts(text, _ccrows, ta))
+                or _calc_qa.blocks_in_ward(text, _ccrows, ta) or _calc_qa.codes_with_applications(text, _ccrows, ta)
+                or _calc_qa.code_counts(text, _ccrows, ta))
     if not reply:
         if not _calc_qa.looks_like_calc(text):
             return None
@@ -17840,7 +18095,8 @@ async def _process_chat_impl(
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
                 structured_context=(_followup_out_context(
-                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False))))
+                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False),
+                    last_peeked=getattr(_followup, "application_number", None))))
             return {
                 "response": _scoped_text,
                 "language": language,
@@ -18397,6 +18653,21 @@ async def _process_chat_impl(
             or _is_code_reference_query or intent == "service_code_lookup" \
             or _is_column_projection_request or _names_service_code \
             or bool(_oldowner_qa.attributes(message)) or _cm_strong(message)
+        # The field-visit/self-jurisdiction exemption above is for the
+        # "requested a BROADER level" check just below -- a ward officer
+        # saying "ward" while asking about their OWN overdue visits is not
+        # asking to see a wider jurisdiction. It must not also exempt the
+        # FOREIGN-ward check further down: "Show my overdue field visits in
+        # Ward 12" named a ward this officer does not hold at all, which is
+        # unauthorized access whatever the intent is. Without this narrower
+        # flag, `fv_overdue_inspections` (and every other field-visit /
+        # self-jurisdiction intent) silently ignored a named ward/block
+        # entirely instead of either scoping to it or refusing it by name.
+        _skip_foreign_check = (
+            _is_code_reference_query or intent == "service_code_lookup"
+            or _is_column_projection_request or _names_service_code
+            or bool(_oldowner_qa.attributes(message)) or _cm_strong(message)
+        )
 
         if _officer_level == 0 and not _skip_keyword_check:  # block officer
             if any(w in _msg_lower_jur for w in ["ward", "வார்டு"]):
@@ -18427,7 +18698,7 @@ async def _process_chat_impl(
 
         # A ward/block named in the message that the officer does not hold is
         # another officer's data, whatever the intent asks for.
-        if not _skip_keyword_check:
+        if not _skip_foreign_check:
             _named_ward, _named_block = await _geo_scope(
                 db, session_id, message, chat_history, officer=None)
             _foreign_msg = await _foreign_geo_denial(
@@ -19544,7 +19815,16 @@ async def _process_chat_impl(
                 jurisdiction_filter = await get_jurisdiction_filter(db, officer)
                 # jurisdiction_filter returns a list, we need to unpack it
                 jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
-                
+
+                # "Show my overdue field visits in Ward 001" named an EXPLICIT
+                # scope narrower than the officer's own jurisdiction -- the
+                # foreign-ward check above already refuses a ward the officer
+                # does not hold at all; this narrows the query itself to one
+                # that is held. Without it every ward/block variant returned
+                # the SAME unfiltered jurisdiction-wide list, silently
+                # dropping a scope the officer explicitly asked for.
+                _ovd_ward, _ovd_block = await _geo_scope(db, session_id, message, chat_history, officer)
+
                 overdue_visits_stmt = select(FieldVisit).options(
                     joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block)
                 ).join(
@@ -19573,10 +19853,14 @@ async def _process_chat_impl(
                         or_(*jur_conditions)  # the conditions are alternatives (one per jurisdiction), not all required
                     )
                 ).order_by(FieldVisit.scheduled_date.asc())
-                
+                if _ovd_ward:
+                    overdue_visits_stmt = overdue_visits_stmt.where(Ward.ward_number == str(_ovd_ward))
+                if _ovd_block:
+                    overdue_visits_stmt = overdue_visits_stmt.where(Block.block_number == str(_ovd_block))
+
                 overdue_visits = (await db.execute(overdue_visits_stmt)).unique().scalars().all()
                 logger.info(f"Overdue visits found: {len(overdue_visits)}")
-                
+
                 overdue_list = []
                 for visit in overdue_visits:
                     app = visit.application
@@ -19591,15 +19875,26 @@ async def _process_chat_impl(
                             "survey_no": app.survey_number.survey_no if app.survey_number else "N/A",
                             "block_number": app.survey_number.block.block_number if app.survey_number and app.survey_number.block else "N/A",
                             "scheduled_date": visit.scheduled_date.isoformat() if visit.scheduled_date else "Not Scheduled",
-                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A"
+                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A",
+                            # Every row this query returns is past its scheduled
+                            # date by construction (the WHERE clause above already
+                            # enforces it) -- without this flag, build_context()'s
+                            # generic field_visits splitter (which relies on each
+                            # row's own is_overdue to tell an overdue row from an
+                            # on-schedule one) saw none of them as overdue and
+                            # computed fv_overdue_count=0, so any ordinal follow-up
+                            # naming "overdue" sliced the carried list to nothing.
+                            "is_overdue": True,
                         })
                         # Log the complete dictionary for debugging
                         logger.info(f"  Complete data: {overdue_list[-1]}")
-                
+
                 structured_data = {
                     "overdue_visits_count": len(overdue_list),
                     "field_visits": overdue_list,
-                    "query_type": "Overdue Field Visits"
+                    "query_type": "Overdue Field Visits",
+                    "ward_number": _ovd_ward,
+                    "block_number": _ovd_block,
                 }
                 if not overdue_list:
                     # "All field visits are on schedule" is an overstatement
@@ -23650,7 +23945,8 @@ async def _process_chat_stream_impl(
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
                 structured_context=(_followup_out_context(
-                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False))))
+                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False),
+                    last_peeked=getattr(_followup, "application_number", None))))
             yield b"data: [DONE]\n\n"
             return
         # The legacy list re-scope turned "what about the third" (after a field-visit
@@ -24329,6 +24625,15 @@ async def _process_chat_stream_impl(
             or _is_code_reference_query_s or intent == "service_code_lookup" \
             or _is_column_projection_request_s or _names_service_code_s \
             or bool(_oldowner_qa.attributes(message)) or _cm_strong(message)
+        # Same narrower flag as the non-streaming path: the field-visit /
+        # self-jurisdiction exemption must not also skip the FOREIGN-ward
+        # check below, or a named ward the officer does not hold is silently
+        # ignored instead of refused.
+        _skip_foreign_check_s = (
+            _is_code_reference_query_s or intent == "service_code_lookup"
+            or _is_column_projection_request_s or _names_service_code_s
+            or bool(_oldowner_qa.attributes(message)) or _cm_strong(message)
+        )
         _requested_broader = False
         _broader_reason = ""
         if _officer_level == 0 and not _skip_keyword_check_s:
@@ -24348,7 +24653,7 @@ async def _process_chat_stream_impl(
         if intent in _INTENT_MIN_LEVEL and _officer_level < _INTENT_MIN_LEVEL[intent]:
             _requested_broader = True
             _broader_reason = f"{_JUR_LEVELS[_INTENT_MIN_LEVEL[intent]]}-level"
-        if not _skip_keyword_check_s:
+        if not _skip_foreign_check_s:
             import json as _json_geo
             _named_ward, _named_block = await _geo_scope(
                 db, session_id, message, chat_history, officer=None)
@@ -25449,12 +25754,15 @@ async def _process_chat_stream_impl(
                 logger.info("=== OVERDUE FIELD VISITS QUERY (STREAM) ===")
                 logger.info(f"Today: {today}")
                 logger.info(f"Officer ID: {officer.officer_id}")
-                
+
                 # Add jurisdiction filter to ensure only applications within officer's jurisdiction
                 jurisdiction_filter = await get_jurisdiction_filter(db, officer)
                 # jurisdiction_filter returns a list, we need to unpack it
                 jur_conditions = jurisdiction_filter if isinstance(jurisdiction_filter, list) else [jurisdiction_filter]
-                
+
+                # Same explicit-scope narrowing as the non-streaming path.
+                _ovd_ward, _ovd_block = await _geo_scope(db, session_id, message, chat_history, officer)
+
                 overdue_visits_stmt = select(FieldVisit).options(
                     joinedload(FieldVisit.application).joinedload(Application.survey_number).joinedload(SurveyNumber.block)
                 ).join(
@@ -25483,10 +25791,14 @@ async def _process_chat_stream_impl(
                         or_(*jur_conditions)  # the conditions are alternatives (one per jurisdiction), not all required
                     )
                 ).order_by(FieldVisit.scheduled_date.asc())
-                
+                if _ovd_ward:
+                    overdue_visits_stmt = overdue_visits_stmt.where(Ward.ward_number == str(_ovd_ward))
+                if _ovd_block:
+                    overdue_visits_stmt = overdue_visits_stmt.where(Block.block_number == str(_ovd_block))
+
                 overdue_visits = (await db.execute(overdue_visits_stmt)).unique().scalars().all()
                 logger.info(f"Overdue visits found: {len(overdue_visits)}")
-                
+
                 overdue_list = []
                 for visit in overdue_visits:
                     app = visit.application
@@ -25501,7 +25813,16 @@ async def _process_chat_stream_impl(
                             "survey_no": app.survey_number.survey_no if app.survey_number else "N/A",
                             "block_number": app.survey_number.block.block_number if app.survey_number and app.survey_number.block else "N/A",
                             "scheduled_date": visit.scheduled_date.isoformat() if visit.scheduled_date else "Not Scheduled",
-                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A"
+                            "submission_date": app.submission_date.isoformat() if app.submission_date else "N/A",
+                            # Every row this query returns is past its scheduled
+                            # date by construction (the WHERE clause above already
+                            # enforces it) -- without this flag, build_context()'s
+                            # generic field_visits splitter (which relies on each
+                            # row's own is_overdue to tell an overdue row from an
+                            # on-schedule one) saw none of them as overdue and
+                            # computed fv_overdue_count=0, so any ordinal follow-up
+                            # naming "overdue" sliced the carried list to nothing.
+                            "is_overdue": True,
                         })
                         # Log the complete dictionary for debugging
                         logger.info(f"  Complete data: {overdue_list[-1]}")
@@ -25509,7 +25830,9 @@ async def _process_chat_stream_impl(
                 structured_data = {
                     "overdue_visits_count": len(overdue_list),
                     "field_visits": overdue_list,
-                    "query_type": "Overdue Field Visits"
+                    "query_type": "Overdue Field Visits",
+                    "ward_number": _ovd_ward,
+                    "block_number": _ovd_block,
                 }
                 if not overdue_list:
                     # "All field visits are on schedule" is an overstatement

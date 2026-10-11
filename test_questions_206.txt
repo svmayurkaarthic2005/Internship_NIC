@@ -6,7 +6,7 @@ APPLICATION NUMBER FORMAT: YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE
 Examples:
   - 2026/0154/02/000001 (ISD - Involving Subdivision, Chennai District)
   - 2026/0153/02/000002 (NISD - Not Involving Subdivision, Chennai District)
-  - 2026/0155/02/000003 (MERGE Subdivisions, Chennai District)
+  (No 0155/MERGE service code exists; applications use only 0153 (NISD) and 0154 (ISD))
 
 SCHEMA COLUMNS COVERED (39 Fields):
 1. serial_number              14. application_id             27. source_name
@@ -38,7 +38,7 @@ CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 26)
 8. What is the application type of 2026/0153/02/000002?
    [service_code] [EN]
 
-9. 2026/0155/02/000003 விண்ணப்பத்தின் வகை என்ன?
+9. 2026/0154/02/000004 விண்ணப்பத்தின் வகை என்ன?
    [service_code] [TA]
 
 10. What is the serial number of application 2026/0154/02/000001?
@@ -50,7 +50,7 @@ CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 26)
 12. Does application 2026/0154/02/000001 have a parent application id?
     [parent_application_id] [EN]
 
-13. 2026/0155/02/000003 விண்ணப்பத்திற்கு parent_application_id உள்ளதா?
+13. 2026/0154/02/000004 விண்ணப்பத்திற்கு parent_application_id உள்ளதா?
     [parent_application_id] [TA]
 
 14. Show renewal number for application 2026/0153/02/000002
@@ -95,16 +95,16 @@ CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 26)
 27. 2026/0153/02/000002 விண்ணப்பத்தின் தற்போதைய நிலையைச் சரிபார்க்கவும்
     [application_id] [TA]
 
-28. Find application 2026/0155/02/000003
+28. Find application 2026/0154/02/000004
     [application_id] [EN]
 
-29. 2026/0155/02/000003 விண்ணப்பத்தைக் கண்டறியவும்
+29. 2026/0154/02/000004 விண்ணப்பத்தைக் கண்டறியவும்
     [application_id] [TA]
 
-30. List all merge applications with parent application linkages
+30. List all applications that have a merge id (merged_application_id) recorded
     [parent_application_id] [EN]
 
-31. அனைத்து MERGE விண்ணப்பங்களையும் parent application இணைப்புகளுடன் பட்டியலிடுங்கள்
+31. இணைக்கப்பட்ட விண்ணப்ப எண் (merged_application_id) பதிவாகியுள்ள அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்
     [parent_application_id] [TA]
 
 ================================================================================
@@ -237,10 +237,10 @@ CATEGORY 3: SERVICE & DEPARTMENT CODES (Questions 57 - 76)
 71. அனைத்து NISD விண்ணப்பங்களையும் காட்டு (0153)
     [service_code] [TA]
 
-72. List all MERGE applications (service_code 0155)
+72. List all applications with a merge id recorded (merged_application_id set)
     [service_code] [EN]
 
-73. அனைத்து MERGE விண்ணப்பங்களையும் காட்டு (0155)
+73. இணைக்கப்பட்ட விண்ணப்ப எண் (merge id) பதிவாகியுள்ள அனைத்து விண்ணப்பங்களையும் காட்டு
     [service_code] [TA]
 
 74. What is the department_code for survey and settlement department?

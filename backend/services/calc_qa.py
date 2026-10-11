@@ -399,6 +399,42 @@ def date_extreme(text: str, rows: List[dict], ta: bool = False) -> Optional[str]
     return f"Submitted {which}: {target} -- {apps_str}."
 
 
+_CODES_WITH_APPS_RE = re.compile(
+    r"\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\b"
+    r"(?:have|has)\s+(?:any\s+|non[\s-]?zero\s+)?applications?\b"
+    r"|\bservices?(?:\s*codes?)?\b.{0,20}\bare\s+in\s+use\b"
+    r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,20}\bin\s+use\b"
+    r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\bhave\s+no\s+applications?\b"
+    r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\b(?:no\s+one|nobody|unused|not\s+used)\b"
+    r"|\bservices?(?:\s*codes?)?\b.{0,20}\b(?:non[\s-]?zero|a\s+non[\s-]?zero)\s+counts?\b",
+    re.IGNORECASE)
+
+
+def codes_with_applications(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
+    """"which service codes have applications" / "...are in use" / "...have no
+    applications" -- every CANONICAL code sorted into has-records / zero-records,
+    computed from the register rows and `SIS_URBAN_SERVICES` together, never a
+    hardcoded ISD/NISD-biased list. Used to fall through to `general_query` (the
+    LLM), which invented "there are 2 service codes in your jurisdiction: 0153
+    and 0154" -- a register that actually has 11 codes with live rows."""
+    t = text or ""
+    if not _CODES_WITH_APPS_RE.search(t):
+        return None
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    wants_zero = bool(re.search(r"\bno\s+applications?\b|\bno\s+one\b|\bnobody\b|\bunused\b|\bnot\s+used\b", t, re.IGNORECASE))
+    present = sorted({str(r.get("service_code")) for r in rows if r.get("service_code")})
+    if wants_zero:
+        codes = sorted(c for c in SIS_URBAN_SERVICES if c not in present)
+    else:
+        codes = present
+    listing = ", ".join(f"{c} ({SIS_URBAN_SERVICES[c]['name']})" for c in codes if c in SIS_URBAN_SERVICES)
+    if ta:
+        verb = "விண்ணப்பங்கள் இல்லை" if wants_zero else "விண்ணப்பங்கள் உள்ளன"
+        return f"{len(codes)} சேவை குறியீடுகளுக்கு {verb}: {listing}."
+    verb = "have no applications in your jurisdiction" if wants_zero else "have applications in your jurisdiction"
+    return f"{len(codes)} of {len(SIS_URBAN_SERVICES)} service codes {verb}: {listing}."
+
+
 def code_counts(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
     """Total / rejected / not-rejected / rejected-percentage / outside counts of one service code, or of the
     whole register. None for anything scoped further (ward, month, channel, status) or compared."""

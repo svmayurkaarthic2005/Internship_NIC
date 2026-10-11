@@ -9,7 +9,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Any, Dict
 from datetime import datetime
 from uuid import UUID
@@ -43,6 +43,26 @@ class ChatRequest(BaseModel):
     session_id: str = Field(..., description="Chat session UUID")
     language: str = Field(default="auto", description="Language (auto, en, ta, tanglish)")
     chat_history: Optional[list] = Field(default=None, description="Previous chat messages from sessionStorage")
+
+    @field_validator("chat_history")
+    @classmethod
+    def _chat_history_items_are_role_content_dicts(cls, v):
+        # The whole downstream pipeline (`chatbot.py`, ~30000 lines) reads
+        # each entry as `m.get("role")` / `m.get("content")` with no
+        # isinstance check anywhere -- a malformed entry (sessionStorage
+        # corruption, a hand-crafted request) crashed deep in an unrelated
+        # helper with a raw AttributeError surfaced as a 500. Validating the
+        # shape here, once, turns that into the same controlled 422 every
+        # other malformed field already gets, instead of chasing every one
+        # of that function's many `.get()` call sites individually.
+        if v is None:
+            return v
+        for i, item in enumerate(v):
+            if not (isinstance(item, dict) and isinstance(item.get("role"), str)
+                    and isinstance(item.get("content"), str)):
+                raise ValueError(
+                    f"chat_history[{i}] must be an object with string 'role' and 'content' fields")
+        return v
 
 
 class ChatResponse(BaseModel):
@@ -166,7 +186,7 @@ async def send_chat_message(
         logger.error(f"Error in send_chat_message: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing chat message: {str(e)}"
+            detail="Error processing chat message. Please try again."
         )
 
 
@@ -213,7 +233,7 @@ async def stream_chat_message(
         logger.error(f"Error in stream_chat_message: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing stream request: {str(e)}"
+            detail="Error processing stream request. Please try again."
         )
 
 
@@ -436,7 +456,7 @@ async def list_chat_sessions(
         logger.error(f"Error listing chat sessions: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving chat sessions: {str(e)}"
+            detail="Error retrieving chat sessions. Please try again."
         )
 
 
@@ -482,7 +502,7 @@ async def get_chat_session_history(
         logger.error(f"Error getting chat history: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving chat history: {str(e)}"
+            detail="Error retrieving chat history. Please try again."
         )
 
 
@@ -514,5 +534,5 @@ async def create_new_chat_session(
         logger.error(f"Error creating chat session: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating chat session: {str(e)}"
+            detail="Error creating chat session. Please try again."
         )

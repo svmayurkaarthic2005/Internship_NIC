@@ -19,7 +19,7 @@ Application Status Definitions:
 Step 1: Application Submission
 - Service Code: 0154 (ISD - Involving Sub-Division)
 - Applications can be submitted through CSC centers, Sub-Registrar offices, or directly by citizens
-- Application receives a unique tracking number (format: ISD/DISTRICT_CODE/YEAR/SEQUENCE)
+- Application receives a unique tracking number (format: YEAR/0154/DISTRICT_CODE/SEQUENCE, e.g. 2026/0154/02/012547 -- the numeric service code, not the literal word "ISD"; see the NISD section below for the corrected, fully-worked explanation)
 - All required documents must be uploaded at the time of submission
 
 Step 2: SIS Officer Assignment
@@ -76,7 +76,13 @@ Total Timeline: Approximately 30-35 working days from submission to completion
 Step 1: Application Submission
 - Service Code: 0153 (NISD - Not Involving Sub-Division)
 - Application submitted through CSC, Sub-Registrar, or citizen portal
-- Application number format: NISD/DISTRICT_CODE/YEAR/SEQUENCE
+- Application number format: YEAR/SERVICE_CODE/DISTRICT_CODE/SEQUENCE
+  (e.g. 2026/0153/02/049792) -- the numeric service code (0153 for NISD,
+  0154 for ISD), not the literal word "NISD"/"ISD", and the year comes
+  first. This agrees with tamilnilam_urban_services_and_districts.txt's
+  "YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE" and with every
+  real application number in the register; an earlier version of this line
+  ("NISD/DISTRICT_CODE/YEAR/SEQUENCE") did not match either and was fixed.
 - No new sub-divisions are created, only ownership transfer
 
 The NISD chain is short: application (CSC / citizen / Sub-Registrar) -> SIS

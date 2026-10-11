@@ -71,15 +71,22 @@ ITEMS: list[tuple] = [
     ("nisd verification timeline enna", "NISD சரிபார்ப்பு கால அளவு என்ன?",
      "workflow_guide.txt", "5 working days", "nisd_chain"),
 
-    # ── MERGE workflow ────────────────────────────────────────────────
-    ("Which workflow chain does a MERGE application follow?", "MERGE விண்ணப்பம் எந்த பணிப்பாய்வு சங்கிலியைப் பின்பற்றுகிறது?",
-     "workflow_guide.txt", "the ISD chain", "merge_chain"),
-    ("How long does a merge application take?", "இணைப்பு விண்ணப்பம் எவ்வளவு நேரம் எடுக்கும்?",
-     "survey_manual.txt", "approximately 25-30 working days", "merge_chain"),
-    ("What is the SIS verification timeline for a merge?", "இணைப்பிற்கு SIS சரிபார்ப்பு கால அளவு என்ன?",
-     "survey_manual.txt", "10 working days", "merge_chain"),
-    ("Is a field visit mandatory for a merge application?", "இணைப்பு விண்ணப்பத்திற்கு கள ஆய்வு கட்டாயமா?",
-     "survey_manual.txt", "yes, mandatory within 15 days", "merge_chain"),
+    # ── Merge ID (a FIELD on an ISD application, not a service/workflow of
+    # its own) ──────────────────────────────────────────────────────────
+    # There is no "MERGE application" or "MERGE workflow chain" in this
+    # register -- a merge is only `applications.merged_application_id` on an
+    # ordinary ISD (0154) file (CLAUDE.md "Merge ids"; confirmed live: one
+    # seeded ISD file, 2026/0154/02/013642, carries a merge id, merged with
+    # 2026/0154/02/011886). The four questions this block used to ask
+    # (a separate "merge workflow chain", "merge timeline", "merge SIS
+    # verification timeline", "merge field-visit requirement") assumed a
+    # service/application type that was never real; the legitimate
+    # question is about the field itself, which `appinfo_qa`/`merge_qa`
+    # already answer.
+    ("What does a merge ID on an ISD application mean?", "ISD விண்ணப்பத்தில் merge ID என்றால் என்ன?",
+     "faq_english.txt", "the file has been merged with another application; it is a field on the ISD record, not a separate service or workflow", "merge_field"),
+    ("Does having a merge ID change the application's workflow chain?", "merge ID இருப்பது விண்ணப்பத்தின் பணிப்பாய்வு சங்கிலியை மாற்றுமா?",
+     "workflow_guide.txt", "no - the file still follows its own service code's ordinary chain (ISD or NISD); there is no separate merge workflow", "merge_field"),
 
     # ── Roles ────────────────────────────────────────────────────────
     ("What does SD stand for in this workflow?", "இந்த பணிப்பாய்வில் SD என்றால் என்ன?",
@@ -109,7 +116,12 @@ ITEMS: list[tuple] = [
     ("Whom should I ask to reschedule a field visit?", "கள ஆய்வை மறுதிட்டமிட யாரிடம் கேட்க வேண்டும்?",
      "faq_english.txt", "the Tahsildar", "field_visit"),
     ("Is a field visit mandatory for every ISD application?", "ஒவ்வொரு ISD விண்ணப்பத்திற்கும் கள ஆய்வு கட்டாயமா?",
-     "workflow_guide.txt", "yes, mandatory for ISD (0154) and MERGE (0155)", "field_visit"),
+     # Service code 0155 is not part of the canonical SIS_URBAN_SERVICES
+     # catalog and no "MERGE" application type exists in this register --
+     # a merge is only `applications.merged_application_id` on an ordinary
+     # ISD file (see CLAUDE.md, "Merge ids"). The field-visit requirement is
+     # ISD (0154) only.
+     "workflow_guide.txt", "yes, mandatory for ISD (0154); NISD (0153) needs none", "field_visit"),
     ("field visit yaar kitta permission kekkanum date maathanum", "கள ஆய்வு தேதி மாற்ற யாரிடம் அனுமதி கேட்க வேண்டும்?",
      "faq_english.txt", "the Tahsildar", "field_visit"),
 
@@ -125,7 +137,7 @@ ITEMS: list[tuple] = [
 
     # ── Temporary subdivision numbers ────────────────────────────────
     ("What is a temporary subdivision number?", "தற்காலிக உட்பிரிவு எண் என்றால் என்ன?",
-     "faq_english.txt", "provisional number {existing_subdiv}/T{seq} assigned by DIS on ISD/MERGE until final numbers", "temp_subdiv"),
+     "faq_english.txt", "provisional number {existing_subdiv}/T{seq} assigned by DIS on an ISD file until a final number", "temp_subdiv"),
     ("Who assigns temporary subdivision numbers?", "தற்காலிக உட்பிரிவு எண்களை யார் ஒதுக்குகிறார்?",
      "faq_english.txt", "the Deputy Inspector Surveyor (DIS), after the SD sketch", "temp_subdiv"),
     ("What does the temporary number format {subdiv}/T{seq} mean?", "{subdiv}/T{seq} வடிவம் என்ன அர்த்தம்?",
@@ -135,7 +147,7 @@ ITEMS: list[tuple] = [
     ("Do rejected applications get final subdivision numbers?", "நிராகரிக்கப்பட்ட விண்ணப்பங்களுக்கு இறுதி உட்பிரிவு எண்கள் கிடைக்குமா?",
      "survey_manual.txt", "no - rejected applications keep temporary numbers and never receive final numbers", "temp_subdiv"),
     ("Which application types get temporary subdivision numbers?", "எந்த விண்ணப்ப வகைகளுக்கு தற்காலிக உட்பிரிவு எண்கள் கிடைக்கும்?",
-     "survey_manual.txt", "only ISD (0154) and MERGE (0155)", "temp_subdiv"),
+     "survey_manual.txt", "only ISD (0154); NISD has no sub-division step at all", "temp_subdiv"),
     ("In example 3/T1 and 3/T2, what final numbers do they get?", "3/T1 மற்றும் 3/T2 எடுத்துக்காட்டில், அவை என்ன இறுதி எண்களைப் பெறுகின்றன?",
      "survey_manual.txt", "3/T1 -> 3 (retains existing), 3/T2 -> 4 (new)", "temp_subdiv"),
 
@@ -250,8 +262,16 @@ ITEMS: list[tuple] = [
      "tamilnilam_urban_services_and_districts.txt", "NISD - Not Involving Sub-Division (direct patta transfer verification)", "service_codes"),
     ("What is service code 0154?", "சேவை குறியீடு 0154 என்றால் என்ன?",
      "tamilnilam_urban_services_and_districts.txt", "ISD - Involving Sub-Division (mandatory field inspection + sub-division sketch)", "service_codes"),
+    # 0155 is NOT in the canonical SIS_URBAN_SERVICES catalog (29 codes) and
+    # carries no document, model or runtime support -- there is no "Merge"
+    # service or application type anywhere in this register. The correct
+    # answer names it as unsupported, never invents a meaning for it. See
+    # CLAUDE.md "Merge ids": a merge is only an ISD file's own
+    # merged_application_id field, not a separate service code.
     ("What is service code 0155?", "சேவை குறியீடு 0155 என்றால் என்ன?",
-     "tamilnilam_urban_services_and_districts.txt", "Merge Subdivisions", "service_codes"),
+     "tamilnilam_urban_services_and_districts.txt",
+     "not a supported service code -- no code 0155 exists in the SIS urban services catalog",
+     "service_codes"),
     ("What is service code 0188?", "சேவை குறியீடு 0188 என்றால் என்ன?",
      "tamilnilam_urban_services_and_districts.txt", "Natham Settlement", "service_codes"),
     ("What service code is F-Line urban demarcation?", "F-Line நகர்ப்புற எல்லை வரையறை எந்த சேவை குறியீடு?",

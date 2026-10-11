@@ -369,6 +369,38 @@ specifically one naming a non-ISD/NISD code:
   "nothing matched" branch now checks how many rows were actually
   determinable before asserting all/none.
 
+A second pass over the paired-negation list turned up three more:
+
+* "Show applications that are not service code 0158." was answered with
+  exactly 0158's own 20 applications — the OPPOSITE of what was asked, not
+  merely an omission. `_requested_service_code_filter` read the bare digits
+  with no awareness of the "not" in front of them, and `neg_scope.py` (which
+  already negates status/type/channel) has no concept of a service code at
+  all. Fixed with a new `_excluded_service_code_filter()` (the same negation
+  vocabulary `calc_qa._CC_OUT` already uses for count questions) and a new
+  `exclude_service_code` parameter threaded through
+  `get_all_service_code_applications` → `_register_listing` →
+  `_render_all_service_code_answer`, carried forward across a continuation
+  turn the same way an included code already was.
+* "Show applications for service code 0158 without a recorded subdivision."
+  (the imperative phrasing, not "which...have") fell through BOTH
+  field-presence modes and silently dropped the field filter entirely. Fixed
+  by widening `parse_standalone_field_presence_request()` to also accept the
+  imperative shape — but the first version of this fix was ITSELF a
+  regression, caught by the existing `test_sequence_c_table_ops.py` and
+  `test_row_slicing.py` suites: a plain column-selection sentence ("show
+  applications ... with application number, status, survey number,
+  subdivision number...") also trivially contains "show...applications" + a
+  bare "with" + the word "subdivision", and was misread as the same presence
+  filter. Fixed by requiring the word "recorded"/"scheduled" as an anchor —
+  present in every genuine field-presence phrasing, absent from an ordinary
+  column list.
+* "What service codes are there?" / "...exist?" / "...do you support?" fell
+  through to the generic "what is `<field>`" fallback and came back "Please
+  specify the application number..." — a register-wide catalog question
+  answered as if it named one unspecified file. Routed to the existing
+  catalog answer (`service_code_guide`) instead.
+
 `python test_servicecode_equal_treatment.py` (`--routing` skips the database).
 
 Three more live tables fit the same pattern — real data, no mention anywhere

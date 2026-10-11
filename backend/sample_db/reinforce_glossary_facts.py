@@ -1,18 +1,25 @@
 # ==============================================================================
-# Oversamples the service-code glossary facts (ISD=0154, NISD=0153, MERGE=0155,
-# and the other 27 TAMILNILAM codes) into the training set.
+# Oversamples the service-code glossary facts (ISD=0154, NISD=0153, and the
+# other 27 TAMILNILAM codes) into the training set. There is no service code
+# 0155 and no MERGE application type -- see CLAUDE.md.
 #
 # Why: the fine-tuned model recited the ISD glossary entry from
 # lora_dataset_final.jsonl.json), while the actual training file (train.jsonl,
 # 1585 examples) carried each code fact only a handful of times -- not enough
 # repetition for an 8B LoRA to pin an exact 4-digit number.
 #
-# This script pulls every verified-correct glossary example for the three
-# real service codes (ISD/NISD/MERGE) plus the other codes from the full
+# This script pulls every verified-correct glossary example for the two
+# real service codes (ISD/NISD) plus the other codes from the full
 # cleaned dataset, deduplicates by (question, answer), generates a few cheap
 # paraphrase wrappers per fact (no DB call needed -- the answer text doesn't
 # depend on officer identity for these facts), and appends N copies into
 # train.jsonl so gradient signal on these exact facts is much stronger.
+#
+# NOTE: this script's output (train_augmented.jsonl) is the pre-v2 file.
+# CLAUDE.md records that train_augmented.jsonl / validation.jsonl still carry
+# old MERGE(0155) rows and that only the v2/v3 clean files are used for
+# training now -- do not feed this script's output back into train_qlora.py
+# without re-running it through the v2/v3 MERGE/0155 filter in assemble_lora_v3.py.
 # ==============================================================================
 
 import json
@@ -26,8 +33,7 @@ TRAIN = Path(r"C:\lora_data\lora_training\train.jsonl")
 OUT = Path(r"C:\lora_data\lora_training\train_augmented.jsonl")
 
 # codes the app's applications table actually admits -- get the heaviest reinforcement
-PRIMARY_TERMS = ["ISD", "NISD", "MERGE application", "service code 0153",
-                  "service code 0154", "service code 0155"]
+PRIMARY_TERMS = ["ISD", "NISD", "service code 0153", "service code 0154"]
 PRIMARY_REPEATS = 20   # copies per unique (question,answer) pair
 OTHER_REPEATS = 6      # the remaining glossary terms get lighter reinforcement
 

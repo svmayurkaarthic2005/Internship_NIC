@@ -4,6 +4,7 @@ FastAPI main application entry point
 import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -174,12 +175,22 @@ async def not_found_handler(request: Request, exc):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle 422 Validation errors"""
+    """Handle 422 Validation errors.
+
+    A field_validator that raises a plain ValueError/AssertionError (the
+    documented Pydantic v2 way to fail validation) comes back from
+    `exc.errors()` with the raised exception OBJECT itself under
+    `ctx.error`, not a string -- `JSONResponse` -> `json.dumps` cannot
+    serialize that and the handler crashes with an unrelated 500 for what
+    should have been an ordinary 422. `jsonable_encoder` is what FastAPI's
+    own default handler uses for exactly this; mirrored here since this
+    handler replaces that default.
+    """
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=StandardResponse.error_response(
             message="Validation error",
-            data={"errors": exc.errors()}
+            data={"errors": jsonable_encoder(exc.errors())}
         ).model_dump()
     )
 

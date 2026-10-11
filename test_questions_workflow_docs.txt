@@ -130,7 +130,7 @@ TOPIC: field_visit  (8)
    [faq_english.txt] the Tahsildar
 33. Is a field visit mandatory for every ISD application?
    ஒவ்வொரு ISD விண்ணப்பத்திற்கும் கள ஆய்வு கட்டாயமா?
-   [workflow_guide.txt] yes, mandatory for ISD (0154) and MERGE (0155)
+   [workflow_guide.txt] yes, mandatory for ISD (0154) only -- no MERGE/0155 service code exists
 34. field visit yaar kitta permission kekkanum date maathanum
    கள ஆய்வு தேதி மாற்ற யாரிடம் அனுமதி கேட்க வேண்டும்?
    [faq_english.txt] the Tahsildar
@@ -173,7 +173,7 @@ TOPIC: temp_subdiv  (7)
    [survey_manual.txt] no - rejected applications keep temporary numbers and never receive final numbers
 44. Which application types get temporary subdivision numbers?
    எந்த விண்ணப்ப வகைகளுக்கு தற்காலிக உட்பிரிவு எண்கள் கிடைக்கும்?
-   [survey_manual.txt] only ISD (0154) and MERGE (0155)
+   [survey_manual.txt] only ISD (0154) -- no MERGE/0155 service code exists
 45. In example 3/T1 and 3/T2, what final numbers do they get?
    3/T1 மற்றும் 3/T2 எடுத்துக்காட்டில், அவை என்ன இறுதி எண்களைப் பெறுகின்றன?
    [survey_manual.txt] 3/T1 -> 3 (retains existing), 3/T2 -> 4 (new)
@@ -367,7 +367,7 @@ TOPIC: service_codes  (6)
    [tamilnilam_urban_services_and_districts.txt] ISD - Involving Sub-Division (mandatory field inspection + sub-division sketch)
 92. What is service code 0155?
    சேவை குறியீடு 0155 என்றால் என்ன?
-   [tamilnilam_urban_services_and_districts.txt] Merge Subdivisions
+   [tamilnilam_urban_services_and_districts.txt] not a supported service code -- no code 0155 exists in the SIS urban services catalog
 93. What is service code 0188?
    சேவை குறியீடு 0188 என்றால் என்ன?
    [tamilnilam_urban_services_and_districts.txt] Natham Settlement
