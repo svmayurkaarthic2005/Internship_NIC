@@ -942,6 +942,53 @@ _BRIEF_REQUEST_WORDS_TA = ("சுருக்கமாக", "சுருக்
                            "surukkamaaga", "surukkamaga", "surukkama")
 
 
+_NEGATIVE_SENTENCE_FORMAT_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:don't|dont|do\s+not|never|stop)\s+"
+    r"(?:please\s+)?(?:explain|describe|answer|respond|reply|write|say|use|format|give)\b"
+    r".{0,60}\b(?:in\s+(?:a\s+|one\s+)?sentences?|as\s+(?:a\s+)?sentence|"
+    r"sentence\s+(?:format|form|mode)|one\s+sentence|single\s+sentence)\b"
+    r"|^\s*(?:not|no)\s+(?:in\s+)?(?:a\s+)?sentence(?:\s+(?:format|form|mode))?\b",
+    re.IGNORECASE,
+)
+
+
+def _is_negative_sentence_format_request(message: str) -> bool:
+    """Recognise an explicit request to stop using single-sentence output.
+
+    This must be checked before _is_explain_request: otherwise the word
+    "explain" in "don't explain in sentence" is treated as a fresh request to
+    explain briefly, and the assistant repeats the same one-line answer.
+    The anchored shape avoids treating unrelated text such as "I don't
+    understand; explain ISD in a sentence" as a negative format correction.
+    """
+    return bool(_NEGATIVE_SENTENCE_FORMAT_RE.search((message or "").strip()))
+
+
+def _negative_sentence_format_context_code(message: str, context) -> Optional[str]:
+    """Return the service code whose output format is being reverted, if any."""
+    if not _is_negative_sentence_format_request(message) or context is None:
+        return None
+    if getattr(context, "entity", None) != "service_code":
+        return None
+    filters = getattr(context, "filters", None) or {}
+    code = str(filters.get("service_code") or "").strip()
+    if not re.fullmatch(r"\d{4}", code):
+        return None
+
+    # An explicitly named code in the current request takes precedence over
+    # the carried code. Otherwise a bare format correction applies to the code
+    # already being discussed.
+    explicit = re.search(r"(?<!\d)(01[5-9]\d)(?!\d)", message or "")
+    if explicit:
+        return explicit.group(1)
+    lowered = (message or "").lower()
+    if re.search(r"(?<![a-z0-9])nisd(?![a-z0-9])", lowered):
+        return "0153"
+    if re.search(r"(?<![a-z0-9])isd(?![a-z0-9])", lowered):
+        return "0154"
+    return code
+
+
 def _is_explain_request(message: str) -> bool:
     """True when the officer is asking to (re-)explain the previous answer AT
     ALL -- "explain", "describe", "elaborate", "explain briefly" -- whether
@@ -18438,7 +18485,17 @@ async def _process_chat_impl(
             intent = "general_query"
         # "detailed" / "explain" as a bare follow-up after a service_code_lookup
         # → re-route to service_code_lookup so the handler gives the full answer.
-        if (intent == "general_query" and _is_explain_request(message)
+        _sentence_format_revert_code = _negative_sentence_format_context_code(message, _followup_ctx)
+        _force_detailed_service_code_answer = bool(_sentence_format_revert_code)
+        if _sentence_format_revert_code:
+            # This is a FORMAT CORRECTION, not another request for a one-line
+            # explanation. Convert it into a deterministic detailed lookup and
+            # bypass the paraphraser below so the single-sentence answer cannot
+            # be repeated by the model.
+            intent = "service_code_lookup"
+            message = f"explain in detail {_sentence_format_revert_code}"
+            logger.info("Negative sentence-format follow-up: restoring detailed service-code answer")
+        elif (intent == "general_query" and _is_explain_request(message)
                 and _prev_intent == "service_code_lookup"):
             intent = "service_code_lookup"
             # The follow-up itself names no code ("explain in detail",
@@ -23140,9 +23197,12 @@ async def _process_chat_impl(
                     owner_lines = [_owner_detail_line(o, message) for o in owners]
                     response_text = f"Owners for Survey No. {survey_no} ({len(owners)} record(s)):\n" + "\n".join(owner_lines)
         elif intent == "service_code_lookup":
-            response_text = await _service_code_lookup_answer_natural(
-                message, language in ("ta", "tanglish"),
-                not _is_detail_request(message), language)
+            if _force_detailed_service_code_answer:
+                response_text = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False)
+            else:
+                response_text = await _service_code_lookup_answer_natural(
+                    message, language in ("ta", "tanglish"),
+                    not _is_detail_request(message), language)
             # Recorded so a SECOND "explain" in a row ("what is ISD?" ->
             # "explain briefly" -> "explain in detail") still means ISD --
             # without this, the second hop found no referent of its own
@@ -24201,7 +24261,17 @@ async def _process_chat_stream_impl(
             intent = "general_query"
         # "detailed" / "explain" as a bare follow-up after a service_code_lookup
         # → re-route to service_code_lookup so the handler gives the full answer.
-        if (intent == "general_query" and _is_explain_request(message)
+        _sentence_format_revert_code = _negative_sentence_format_context_code(message, _followup_ctx)
+        _force_detailed_service_code_answer = bool(_sentence_format_revert_code)
+        if _sentence_format_revert_code:
+            # This is a FORMAT CORRECTION, not another request for a one-line
+            # explanation. Convert it into a deterministic detailed lookup and
+            # bypass the paraphraser below so the single-sentence answer cannot
+            # be repeated by the model.
+            intent = "service_code_lookup"
+            message = f"explain in detail {_sentence_format_revert_code}"
+            logger.info("Negative sentence-format follow-up: restoring detailed service-code answer")
+        elif (intent == "general_query" and _is_explain_request(message)
                 and _prev_intent == "service_code_lookup"):
             intent = "service_code_lookup"
             # The follow-up itself names no code ("explain in detail",
@@ -28685,9 +28755,12 @@ async def _process_chat_stream_impl(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
         elif intent == "service_code_lookup":
-            chunk = await _service_code_lookup_answer_natural(
-                message, language in ("ta", "tanglish"),
-                not _is_detail_request(message), language)
+            if _force_detailed_service_code_answer:
+                chunk = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False)
+            else:
+                chunk = await _service_code_lookup_answer_natural(
+                    message, language in ("ta", "tanglish"),
+                    not _is_detail_request(message), language)
             full_response_text = chunk
             # Recorded so a SECOND "explain" in a row still means the same
             # code -- see the non-streaming twin's comment for why the code
