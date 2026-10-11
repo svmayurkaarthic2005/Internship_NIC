@@ -75,7 +75,7 @@ nic_internship/
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   ├── survey.py         # Survey endpoints
 │   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~16500 lines) — entry point for all chat logic
+│   │   ├── chatbot.py        # Main orchestrator (~29000 lines) — entry point for all chat logic
 │   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
 │   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
@@ -252,7 +252,7 @@ statuses to fit.
 
 ### Service Layer
 
-- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~16500 lines) by design; new intent handlers belong here or in `postgres.py`.
+- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~29000 lines) by design; new intent handlers belong here or in `postgres.py`.
 - **`postgres.py`** contains *only* database query functions. No LLM calls, no intent logic.
 - **`rag.py`** contains *only* NLP utilities: intent detection, language detection, extraction helpers, LLM calls, and prompt builders.
 - Numeric/count data **always** comes from the database directly. Never let the LLM generate counts or application numbers — this prevents hallucination.

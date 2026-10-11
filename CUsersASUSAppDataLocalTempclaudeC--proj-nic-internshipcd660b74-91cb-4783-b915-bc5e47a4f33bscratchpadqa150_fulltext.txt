@@ -1,0 +1,24 @@
+=== Q144 ===
+<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0178/02/000309: Service 0178 - F-Line (Urban Demarcation)</h3><span class='data-table-count'>5 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td>Status</td><td>approved (Completed)</td></tr><tr><td>Submitted</td><td>2026-03-31</td></tr><tr><td>Survey no</td><td>93 / 1</td></tr><tr><td>Ward / block</td><td>001 / 0051</td></tr><tr><td>Channel</td><td>citizen</td></tr></tbody></table></div></div>
+
+=== Q145 ===
+<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0178/02/000309: Service 0178 - F-Line (Urban Demarcation)</h3><span class='data-table-count'>5 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td>Status</td><td>approved (Completed)</td></tr><tr><td>Submitted</td><td>2026-03-31</td></tr><tr><td>Survey no</td><td>93 / 1</td></tr><tr><td>Ward / block</td><td>001 / 0051</td></tr><tr><td>Channel</td><td>citizen</td></tr></tbody></table></div></div>
+
+=== Q146 ===
+<div class='table-intro'>No full-field patta transfer record is held for application 2026/0178/02/000309. Only an NISD (0153) file carries one.</div>
+
+=== Q139 ===
+<div class='table-intro'>No F-Line (service code 0178) record is held for application 2026/0154/02/012547. F-Line fields (transaction status, boundaries, sketch, SIS / DIS verification) exist only for F-Line applications.</div>
+
+=== Q137 ===
+I could not find that particular detail for 2026/0154/02/012547 in the record. Here is what it does hold — Type: ISD, Status: Rejected, Stage: REJECTED, Applicant: Sumathi, Survey No: 7.
+
+=== Q136 ===
+I could not find that particular detail for 2026/0154/02/012547 in the record. Here is what it does hold — Type: ISD, Status: Rejected, Stage: REJECTED, Applicant: Sumathi, Survey No: 7.
+
+=== Q105 ===
+<div class='table-intro'>Found <strong>105</strong> application(s) in Ward 001 across every service code in your jurisdiction (0153 (18), 0154 (20), 0156 (11), 0158 (20), 0159 (1), 0162 (9), 0164 (10), 0165 (1), 0178 (15)). By channel: 82 CSC, 10 citizen portal, 13 Sub-Registrar. 26 rejected application(s) matching this are left out; ask for rejected applications to see them.</div>
+
+=== Q108 ===
+<div class='table-intro'>Found <strong>3</strong> application(s) in Block 0055 across every service code in your jurisdiction (0156 (1), 0158 (1), 0162 (1)). By channel: 3 CSC. 26 rejected application(s) matching this are left out; ask for rejected applications to see them.</div>
+

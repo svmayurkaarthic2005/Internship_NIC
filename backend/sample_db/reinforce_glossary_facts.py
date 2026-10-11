@@ -21,9 +21,9 @@ from pathlib import Path
 
 random.seed(0)
 
-SRC = Path("lora_training/lora_dataset_final.jsonl")
-TRAIN = Path("lora_training/train.jsonl")
-OUT = Path("lora_training/train_augmented.jsonl")
+SRC = Path(r"C:\lora_data\lora_training\lora_dataset_final.jsonl")
+TRAIN = Path(r"C:\lora_data\lora_training\train.jsonl")
+OUT = Path(r"C:\lora_data\lora_training\train_augmented.jsonl")
 
 # codes the app's applications table actually admits -- get the heaviest reinforcement
 PRIMARY_TERMS = ["ISD", "NISD", "MERGE application", "service code 0153",

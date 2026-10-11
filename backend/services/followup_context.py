@@ -163,6 +163,10 @@ def build_context(intent: Optional[str],
         "excluded", "excluded_base",
         # the columns a field-visit table has been given / stripped of, so the next request builds on them
         "fv_columns",
+        # the scope a register-wide listing CHAIN started from, so "restore
+        # the original filter" has something stable to go back to -- see
+        # `chatbot._register_listing`'s own comment on where this is set.
+        "base_query_filters",
     ) if sd.get(k) not in (None, "", [])}
 
     if intent in ("clarification_required", "outside_jurisdiction") or sd.get("found") is False:
@@ -236,6 +240,12 @@ def build_context(intent: Optional[str],
     # barrier and letting the walk-back reach straight past it again.
     if sd.get("service_code_filter"):
         filters = {**filters, "service_code": sd["service_code_filter"]}  # a listing under one code keeps it
+    elif sd.get("service_code_excluded"):
+        # "show applications that are not service code 0158" -> a follow-up
+        # continuation ("exclude rejected too") must stay excluding 0158, not
+        # silently drop back to every code (the same chain-boundary rule the
+        # INCLUDE case just above already gets).
+        filters = {**filters, "service_code_excluded": sd["service_code_excluded"]}
     rows = sd["applications"] if isinstance(sd.get("applications"), list) \
         else sd.get("unassigned_applications")
     if isinstance(rows, list) and rows:
@@ -391,7 +401,19 @@ _OWN_SUBJECT_RE = re.compile(
     # Naming the noun is naming the subject: "how many ISD applications do I
     # have" is a question, not a continuation of one. A back-reference in the
     # same breath ("how many of them are applications") overrides this below.
-    r"|\bapplications?\b|\bapps?\b|\bfiles?\b"
+    #
+    # The SINGULAR "application" is exempted when it is immediately followed
+    # by "no"/"number" -- that shape names the ROW-KEY COLUMN of a table
+    # already on screen ("show only application number and subdivision
+    # number"), not a fresh subject, the same way "survey number" / "ward
+    # number" never trip this gate on their own. Without the exemption, a
+    # bare column-list follow-up naming "application number" was read as
+    # FOLLOWUP_NONE and fell through to a FRESH `pending_applications` query
+    # (no ward, no filter at all) -- a 129-row register-wide listing silently
+    # became the officer's whole unscoped ISD/NISD queue. "applications"
+    # (plural) and "apps"/"files" are untouched: a genuine fresh question
+    # ("how many applications do I have") almost always uses the plural.
+    r"|\bapplications\b|\bapplication\b(?!\s*(?:no\.?|number)\b)|\bapps?\b|\bfiles?\b"
     r"|\bdo\s+i\b|\bi\s+have\b"
     r"|\bsurvey\s+(?:no|number)?\s*\d"
     r"|\bjurisdiction\b|\bworkload\b|\bward\s+\d|\bblock\s+\d"
@@ -522,10 +544,19 @@ def _has_own_subject(lowered: str) -> bool:
     # side. `_OWN_SUBJECT_RE`'s own விண்ணப்பங்க literal already covers the
     # cases that check was for ("show my applications" in Tamil); nothing
     # here needs to re-derive it with a prefix match.
-    for token in _WORD_RE.findall(lowered):
-        if token in _NEVER_A_SUBJECT_TYPO:
+    # Plain whitespace split here, not `_WORD_RE.findall` -- the "no"/"number"
+    # adjacency check just below needs "no" kept as its own token, and
+    # `_WORD_RE` (6+ letters only) would silently drop it.
+    all_tokens = [t.strip(" ,.;:?!\"'()") for t in lowered.split()]
+    for i, token in enumerate(all_tokens):
+        if len(token) < 6 or token in _NEVER_A_SUBJECT_TYPO:
             continue
         if any(is_token_typo_match(token, noun) for noun in _FUZZY_SUBJECT_NOUNS):
+            # Same column-name exemption as `_OWN_SUBJECT_RE`'s own regex:
+            # a typo'd/exact SINGULAR "application" immediately followed by
+            # "no"/"number" names the row-key column, not a fresh subject.
+            if token == "application" and i + 1 < len(all_tokens) and all_tokens[i + 1] in ("no", "number"):
+                continue
             return True
     return False
 
@@ -1433,7 +1464,9 @@ _PROJECT_FIELDS = (
                          "சமர்ப்பித்த தேதி", "தேதி", "தேதிகள்", "தேதியை")),
     ("igrs_form6_number", ("igrs number", "igrs", "form 6", "form6")),
     ("subdivisions", ("sub-divisions", "sub divisions", "subdivisions",
-                      "உட்பிரிவுகள்")),
+                      "subdivision number", "sub division number", "sub-division number",
+                      "subdivision", "sub division", "sub-division",
+                      "உட்பிரிவுகள்", "உட்பிரிவு")),
 )
 
 # "along" ("along with district") -- see `field_projections`'s own use of
@@ -1544,6 +1577,13 @@ _STANDARD_LISTING_COLUMNS = (
     "application_type", "survey_no", "subdivisions", "status", "stage",
     "submission_date", "ward", "block",
 )
+# "show the full table again" / "show all columns" / "reset the columns" --
+# back to this default set, with no field of its own to act as a trigger.
+_COLUMN_RESET_RE = re.compile(
+    r"\b(?:full|whole|complete|entire|original)\s+table\b"
+    r"|\ball\s+columns?\b|\bevery\s+column\b|\breset\s+(?:the\s+)?columns?\b"
+    r"|\bdefault\s+columns?\b|\ball\s+(?:the\s+)?fields?\b",
+    re.IGNORECASE)
 _PROJECT_TRIGGER_RE = re.compile(
     r"\bcolumn\b|\bof each\b|\bfor each\b|\beach\s+(?:one|application|file|row)\b"
     r"|\bone by one\b|\btheir\b|\bevery\s+(?:one|application)\b"
@@ -1577,7 +1617,7 @@ _PROJECT_TRIGGER_RE = re.compile(
     # the same ask in plainer English ("add the taluk", "include taluk") --
     # safe as a broad trigger for the same reason "only"/"just" are: it only
     # produces a result once an actual field needle is ALSO found below.
-    r"|\balong\b|\badhuvodu\b|\badhu\s*udan\b|\badd(?:ing)?\b|\binclude\b"
+    r"|\balong\b|\badhuvodu\b|\badhu\s*udan\b|\badd(?:ing)?\b|\binclude\b|\balso\b"
     # "with district" (no "along") after a listing -- the same column-add
     # shorthand, just without the word "along" in front of it. Scoped to the
     # geography columns only: "with" alone is too common a word to trust as a
@@ -1700,6 +1740,48 @@ def field_for_each(message: str) -> Optional[str]:
     return None
 
 
+def fields_for_each(message: str) -> Optional[List[str]]:
+    """Every row field a message names, with no per-row trigger required --
+    the multi-field counterpart of `field_for_each` above, same no-trigger
+    rule, same caller precondition (several/one SPECIFIC rows already in
+    hand, so any field name left in the message is per-row by definition).
+
+    Needed alongside the single-field `field_for_each`: "the survey number
+    and subdivision number of the third row" names TWO fields of the one row
+    an ordinal already picked, and `field_for_each` only ever returns the
+    first field it finds -- it would have silently dropped "subdivision
+    number" the same way `field_projection()` (the single-field sibling of
+    `field_projections()`) used to for a carried list.
+    """
+    if not message:
+        return None
+    message = _correct_typos(message)
+    lowered = message.lower()
+    hits: List[Tuple[int, str]] = []
+    seen = set()
+    for key, needles in _PROJECT_FIELDS:
+        if key in seen:
+            continue
+        best = None
+        for n in needles:
+            if not _needle_hit(n, lowered, message):
+                continue
+            idx = lowered.find(n) if n.isascii() else (
+                lowered.find(n) if n in lowered else message.find(n))
+            if idx != -1 and (best is None or idx < best):
+                best = idx
+        if best is not None:
+            hits.append((best, key))
+            seen.add(key)
+    if not hits:
+        return None
+    hits.sort()
+    result = [key for _pos, key in hits]
+    if "survey_no" in result and "subdivisions" not in result:
+        result.insert(result.index("survey_no") + 1, "subdivisions")
+    return result
+
+
 # "details of both", "full record for each", "expand them". A details word asks
 # for the RECORD, so it outranks a field word in the same breath: "applicant
 # details like name" is answered with both files' details, which contain the
@@ -1771,6 +1853,17 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
         return None
     message = _correct_typos(message)
     lowered = _strip_can_modal(message.lower())
+    # "show the full table again" / "show all columns" / "reset the columns"
+    # -- back to the plain listing's own column set, after a narrower
+    # projection ("only application number", "along with ward") changed what
+    # was on screen. Named no field of its own, so it matched no trigger
+    # below at all and fell through every follow-up layer, all the way to
+    # the LLM/agent fallback -- which, having nothing to look a "full table"
+    # up in, improvised a jurisdiction refusal from unrelated ward numbers
+    # still sitting in chat_history. Checked first since it needs no field
+    # needle to recognise.
+    if _COLUMN_RESET_RE.search(lowered):
+        return list(_STANDARD_LISTING_COLUMNS)
     # Checked AFTER the field-needle scan below, not before: "only" is a
     # substring match with no look-ahead, so "show only application no AND
     # STATUS with SUBMITTED DATE" matched "only application no" on its own
@@ -2233,6 +2326,20 @@ def classify(message: str) -> str:
     # own subject and must not be read as "point at the last two rows shown".
     if len(words) <= 8 and mentions_slice(message):
         return FOLLOWUP_SINGULAR
+    # "show rows 4 to 8" / "rows 2 and 5" -- an EXPLICIT set of positions,
+    # the same kind of back-reference as "the last two" just above but named
+    # by number instead of an ordinal word, so neither `mentions_ordinal` nor
+    # `mentions_slice` catches it. Without this, "show rows 4 to 8" matched
+    # no branch here at all and fell to the own-subject gate below (it names
+    # "rows", not "applications", so it would have survived that gate too,
+    # but only by accident -- `resolve()` never got a chance to run in the
+    # first place, since `classify()` returning FOLLOWUP_NONE short-circuits
+    # it before any context is even loaded).
+    if len(words) <= 8:
+        from backend.services.rag import extract_row_selection as _ers_rows
+        _rs = _ers_rows(message)
+        if _rs and _rs[0] == "rows" and len(_rs[1]) > 1:
+            return FOLLOWUP_SINGULAR
     # "not along application no" -- the own-subject gate below reads
     # "application no" as naming a fresh subject (the same test that lets a
     # genuine "how many ISD applications do I have" through), which would
@@ -2466,6 +2573,18 @@ def _carried_list_status(context: "FollowupContext") -> Optional[str]:
     if explicit in _TERMINAL_STATUSES:
         return explicit
     qt = (context.query_type or "").lower()
+    # "Applications EXCLUDING rejected" (a negation follow-up's own label,
+    # e.g. "show applications that are not rejected") names the status that
+    # is NOT in the list, not the one it IS -- read the same way the
+    # compound-label check below reads any other status word, this carried
+    # "rejected" FORWARD as the positive filter on the next follow-up, so
+    # "remove the status column" was quietly re-queried as rejected-only
+    # and came back with none of the 105 rows the officer could see on
+    # screen. There is no single positive status to report here; the
+    # excluded one lives in `filters['excluded']` instead, which the
+    # register-listing/negation layer already reads on its own.
+    if "exclud" in qt:
+        return None
     # A compound label ("Pending & In Progress & Escalated & Approved &
     # Rejected Applications", or any listing naming several statuses at
     # once, e.g. "Approved & Pending NISD applications") names MULTIPLE
@@ -2693,6 +2812,17 @@ class Resolution:
     # removal is nothing at all, and it answered "None of those 0
     # application(s) are pending" for a table that still had a row in it.
     rows_dropped: int = 0
+    # An ordinal picked ONE specific row out of a larger carried list purely
+    # to read a field off it ("what is the subdivision number in the second
+    # row?") -- a peek, not a narrowing. `_scoped_list_answer` still renders
+    # the answer from just that one row (`per_row_field` + `application_
+    # numbers` of length 1 together do that), but the carried list the NEXT
+    # follow-up resolves against must stay the whole table the row was
+    # counted from, not collapse to the one row just looked at -- "exclude
+    # the second row" right after this must still mean the second row of
+    # the SAME table, not "exclude row 2 of a 1-row list". Set only by the
+    # ordinal + `fields_for_each` branch below.
+    row_peek: bool = False
     # "show more" / "less kami" -- a vague request for a bigger or smaller
     # result set with no number attached. There is no default row cap
     # anywhere in this app's listings (every query returns everything that
@@ -2779,10 +2909,24 @@ _PRESENCE_FIELD_CUES = (
 )
 _PRESENCE_NEG_RE = re.compile(
     r"\bwithout\b|\bno\s+recorded\b|\blacking\b|\bnot\s+(?:have|having|recorded)\b|"
-    r"\bdon'?t\s+have\b|\bhaven'?t\s+(?:got|recorded)\b|\bnone\s+recorded\b",
+    r"\bdon'?t\s+have\b|\bhaven'?t\s+(?:got|recorded)\b|\bnone\s+recorded\b|"
+    # "which applications HAVE NO subdivision recorded" / "have no workflow
+    # remarks" -- the standalone "which X have/has no Y [recorded]" shape
+    # puts the field name BETWEEN "no" and "recorded" (or drops "recorded"
+    # entirely, as "workflow remarks" already reads as a complete noun on
+    # its own), so the exact-adjacency `\bno\s+recorded\b` above never
+    # matched it. Bounded to a handful of words so "no" elsewhere in a long
+    # sentence is not mistaken for this.
+    r"\b(?:have|has)\s+no\b|\bwith\s+no\b",
     re.IGNORECASE)
 _PRESENCE_POS_RE = re.compile(
-    r"\bwith\b|\bhaving\b|\bthat\s+have\b|\bwhich\s+have\b|\bhas\s+a\b", re.IGNORECASE)
+    r"\bwith\b|\bhaving\b|\bthat\s+have\b|\bwhich\s+have\b|\bhas\s+a\b|\bhave\s+a\b|"
+    # "which applications have payment information recorded" / "which
+    # overdue visits have a subdivision recorded" -- checked only once
+    # `_PRESENCE_NEG_RE` has already failed to match, so a bare "have"/"has"
+    # here is never confused with "have NO X" or "don't have" -- those are
+    # claimed by the negative pattern first.
+    r"\bhave\b|\bhas\b", re.IGNORECASE)
 
 
 def parse_field_presence_request(message: str) -> Optional[Tuple[str, bool]]:
@@ -2808,6 +2952,73 @@ def parse_field_presence_request(message: str) -> Optional[Tuple[str, bool]]:
     if not negated and not _PRESENCE_POS_RE.search(msg):
         return None
     return field_key, not negated
+
+
+# "Which applications awaiting a visit have no subdivision recorded?" /
+# "Which overdue visits have a subdivision recorded?" / "Which applications
+# in ward 001 do not have a subdivision recorded?" -- the STANDALONE
+# counterpart of `parse_field_presence_request`: the officer names the
+# population directly ("which <population> have/has [no] <field>"), with no
+# "those"/"these" pointer and no carried list required at all. Matched by
+# the same shape discipline: a "which <scope> have/has" skeleton, one of the
+# same known field cues, and a with/without polarity cue -- naming any other
+# field, or a sentence that is not this skeleton, is left unclaimed.
+_STANDALONE_PRESENCE_VERB_RE = re.compile(
+    r"^\s*which\s+(?P<scope>.+?)\s+(?:do(?:es)?\s+not\s+have|don'?t\s+have|doesn'?t\s+have|"
+    r"have|has|had)\b", re.IGNORECASE)
+_SCOPE_AWAITING_RE = re.compile(r"\bawaiting\b", re.IGNORECASE)
+_SCOPE_OVERDUE_RE = re.compile(r"\boverdue\b", re.IGNORECASE)
+_SCOPE_VISIT_RE = re.compile(r"\bvisits?\b", re.IGNORECASE)
+
+
+def parse_standalone_field_presence_request(message: str) -> Optional[Tuple[str, str, bool]]:
+    """(scope_kind, field_key, wants_present) for a "which <population>
+    have/has [no] <field> recorded" standalone request, or None.
+
+    `scope_kind` is "awaiting_visit", "overdue_visit" or "register" (every
+    other population -- the caller resolves ward/block from the message the
+    same way an ordinary register listing does). Geography is deliberately
+    NOT parsed here: `followup_context` has no DB access, and ward/block
+    resolution already has one correct place to live (`chatbot._geo_scope`).
+    """
+    msg = _correct_typos(message or "")
+    m = _STANDALONE_PRESENCE_VERB_RE.match(msg.strip())
+    if m:
+        scope_text = m.group("scope")
+    elif _PRESENCE_LISTING_RE.search(msg.lower()):
+        # "Show applications for service code 0158 without a recorded
+        # subdivision." -- the IMPERATIVE counterpart of "which ... have no
+        # X": a fresh listing request (no carried list; Mode A owns that
+        # case) that names its own field and polarity the same way, just
+        # not phrased as a "which" question. `_PRESENCE_LISTING_RE` is the
+        # same shape-check Mode A's `parse_field_presence_request` uses for
+        # "show only those with/without X" -- the scope word itself (a
+        # service code, a ward) is read by the caller from the message the
+        # same way an ordinary register listing already does, so no scope
+        # text is extracted here at all, so the scope-kind check below reads
+        # the whole message instead ("show applications awaiting a visit
+        # without a subdivision recorded" must still resolve to
+        # "awaiting_visit", not fall back to "register").
+        scope_text = msg
+    else:
+        return None
+    field_key = None
+    for key, pat in _PRESENCE_FIELD_CUES:
+        if pat.search(msg):
+            field_key = key
+            break
+    if not field_key:
+        return None
+    negated = bool(_PRESENCE_NEG_RE.search(msg))
+    if not negated and not _PRESENCE_POS_RE.search(msg):
+        return None
+    if _SCOPE_AWAITING_RE.search(scope_text) and _SCOPE_VISIT_RE.search(scope_text):
+        scope_kind = "awaiting_visit"
+    elif _SCOPE_OVERDUE_RE.search(scope_text) and _SCOPE_VISIT_RE.search(scope_text):
+        scope_kind = "overdue_visit"
+    else:
+        scope_kind = "register"
+    return scope_kind, field_key, not negated
 
 
 def excluded_row_numbers(message: str, numbers: List[str]) -> Optional[List[str]]:
@@ -3122,17 +3333,71 @@ def resolve(message: str,
                 vague_count=True,
                 context=context,
             )
-        # "show both", "the first two", "last three". A run of the rows on
-        # screen: neither a count of them nor a question about one file. Checked
-        # ahead of everything else in this branch because the cues overlap both
-        # -- "both" is an aggregate word, and "first two" carries the ordinal
+        # "show both", "the first two", "last three", "show only the first
+        # five rows", "rows 4 to 8". A run of the rows on screen: neither a
+        # count of them nor a question about one file. Checked ahead of
+        # everything else in this branch because the cues overlap both --
+        # "both" is an aggregate word, and "first two" carries the ordinal
         # "first", so without this the officer got a count for one and row 1
         # alone for the other.
+        #
+        # `full_details` is set ONLY when the message actually asks for the
+        # records ("full details of the first two"/"give me both in full") --
+        # `wants_full_details()` already exists for exactly this test. A bare
+        # "show only the first five rows" names no such word: it means the
+        # same TABLE, just capped to those rows, with whatever columns were
+        # already on screen. Without this distinction every row-range request
+        # was rewritten into "show details for A and B and C and D and E"
+        # (chatbot._multi_details_message), which renders one full per-
+        # application card per number through application_status -- and for
+        # any number that is not ISD/NISD (`applications` only ever admits
+        # 0153/0154), that handler cannot find it at all, so only the one
+        # number that happened to resolve rendered anything.  A plain REFINE
+        # resolution instead re-queries exactly these rows and renders them
+        # as the same kind of table "remove row 2" / "only NISD" already
+        # produce -- the architecture this project already has for a table
+        # slice, not a new one.
+        # "Show rows 4 to 8." / "rows 2 and 5" -- an EXPLICIT set of positions,
+        # distinct from `slice_pick`'s "first N"/"last N" shape. Checked first
+        # since it is the more specific pattern. Out of range is refused in
+        # words (never clamped to a row that was not asked for): "rows 4 to
+        # 20" over an 8-row list says so instead of silently returning rows
+        # 4-8.
+        from backend.services.rag import extract_row_selection as _extract_row_selection
+        _explicit_rows = _extract_row_selection(message)
+        if _explicit_rows and _explicit_rows[0] == "rows" and len(_explicit_rows[1]) > 1:
+            _positions = _explicit_rows[1]
+            _oor = [p for p in _positions if not (0 < p <= len(numbers))]
+            if _oor:
+                return Resolution(
+                    kind=kind, ambiguous=True, context=context,
+                    clarification=_clarify(
+                        f"That answer listed only {len(numbers)} application(s), so "
+                        f"row {_oor[0]} does not exist. Give a range within 1 to {len(numbers)}.",
+                        f"அந்த பதிலில் {len(numbers)} விண்ணப்பங்கள் மட்டுமே இருந்தன; "
+                        f"எனவே {_oor[0]}-ஆவது வரிசை இல்லை. 1 முதல் {len(numbers)} "
+                        f"வரையிலான வரம்பைத் தரவும்.",
+                        language))
+            _picked_rows = [numbers[p - 1] for p in _positions]
+            _rows_details = wants_full_details(message)
+            return Resolution(
+                kind=FOLLOWUP_LIST_FIELD if _rows_details else FOLLOWUP_LIST_REFINE,
+                full_details=_rows_details,
+                application_numbers=_picked_rows,
+                entity=ENTITY_APPLICATION_LIST,
+                status=refine["status"],
+                application_type=refine["application_type"],
+                submission_channel=refine["submission_channel"],
+                status_excluded=refine.get("status_excluded"),
+                type_excluded=refine.get("type_excluded"),
+                context=context,
+            )
         _run = slice_pick(message, numbers)
         if _run and len(_run) > 1:
+            _run_details = wants_full_details(message)
             return Resolution(
-                kind=FOLLOWUP_LIST_FIELD,
-                full_details=True,
+                kind=FOLLOWUP_LIST_FIELD if _run_details else FOLLOWUP_LIST_REFINE,
+                full_details=_run_details,
                 application_numbers=_run,
                 entity=ENTITY_APPLICATION_LIST,
                 status=refine["status"],
@@ -3239,6 +3504,82 @@ def resolve(message: str,
             )
         picked = ordinal_pick(message, numbers)
         if picked:
+            # "What is the subdivision number in the second row?" / "Give me
+            # the survey number and subdivision number of the third row." --
+            # the ordinal names WHICH row, but the question is about one or
+            # more FIELDS of it, not the whole record. Answered as a per-row
+            # projection scoped to that single picked row, the same
+            # `_project_field_answer` rendering "their wards" already uses
+            # for every carried row -- so the answer is a cell/short row, not
+            # a promotion to the single-application details card. Without
+            # this, every ordinal-plus-field question fell straight to
+            # FOLLOWUP_SINGULAR below and was rewritten into a bare
+            # "<question> <application number>", which only a handful of
+            # per-field handlers (mostly ISD/NISD-specific) answer with just
+            # the one field asked for -- every other service code has no
+            # such per-field handler and the generic single-application
+            # fallback rendered the WHOLE details card instead.
+            _row_fields = fields_for_each(message)
+            if _row_fields:
+                return Resolution(
+                    kind=FOLLOWUP_LIST_FIELD,
+                    per_row_field=_row_fields,
+                    # `application_number` (singular) is set alongside the
+                    # plural list on purpose: `chatbot._maybe_resolve_fresh_
+                    # visit_ordinal` (the FIRST-TURN field-visit ordinal
+                    # path) checks `.application_number` before rewriting
+                    # the message, and a field-visit question still needs
+                    # that rewrite -- the register-listing field map does
+                    # not cover visit-specific fields the way the per-row
+                    # projection table does. The ordinary (non-visit)
+                    # register-listing path never reads `.application_number`
+                    # ahead of `.entity == ENTITY_APPLICATION_LIST`, so this
+                    # is inert there and `per_row_field` is what actually
+                    # renders the answer.
+                    application_number=picked,
+                    application_numbers=[picked],
+                    entity=ENTITY_APPLICATION_LIST,
+                    about_visit=about_visit,
+                    status=refine["status"],
+                    application_type=refine["application_type"],
+                    submission_channel=refine["submission_channel"],
+                    status_excluded=refine.get("status_excluded"),
+                    type_excluded=refine.get("type_excluded"),
+                    row_peek=True,
+                    context=context,
+                )
+            # "Show the third row now." -- an ordinal with NO field named and
+            # no "full details" word either. Over a register-wide listing
+            # (not a field-visit one; those keep their own, already-tested
+            # single-application rewrite path) this means the SAME table,
+            # narrowed to that one row, in whatever columns are currently on
+            # screen -- not a promotion to the full per-application details
+            # card, which is a different, larger answer the officer did not
+            # ask for. `wants_full_details()` is the one signal that DOES
+            # mean the card ("show the full details of the third row").
+            # The current columns are read from `projected_fields`, the same
+            # value `_scoped_list_answer`'s own field-projection branch
+            # mutates onto this context in place (so it already reflects the
+            # last "only X" / "along with Y" the officer asked for); a
+            # context that was never projected uses the plain listing's
+            # default column set, matching what the table actually shows.
+            if not about_visit and not wants_full_details(message):
+                _cur_cols = (context.filters or {}).get("projected_fields") or list(_STANDARD_LISTING_COLUMNS)
+                return Resolution(
+                    kind=FOLLOWUP_LIST_FIELD,
+                    per_row_field=_cur_cols,
+                    application_number=picked,
+                    application_numbers=[picked],
+                    entity=ENTITY_APPLICATION_LIST,
+                    about_visit=about_visit,
+                    status=refine["status"],
+                    application_type=refine["application_type"],
+                    submission_channel=refine["submission_channel"],
+                    status_excluded=refine.get("status_excluded"),
+                    type_excluded=refine.get("type_excluded"),
+                    row_peek=True,
+                    context=context,
+                )
             return Resolution(
                 kind=FOLLOWUP_SINGULAR,
                 application_number=picked,

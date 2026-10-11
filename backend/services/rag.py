@@ -378,6 +378,14 @@ _WARD_DIRECTORY_RE = re.compile(
     r"responsible|assigned|posted|looks?\s+after)\b"
     r"|\bhow\s+many\s+(?:wards?|blocks?)\b(?![^?]*\bapplication)"
     r"|\b(?:list|show|name)\s+(?:me\s+)?(?:all\s+|the\s+|my\s+)*(?:wards?|blocks?)\b"
+    # "show the block number" / "also show ward no." asks for that COLUMN's
+    # value on the rows already on screen (a `field_projections()` follow-up),
+    # never a directory of ward/block entities -- without this exclusion it
+    # matched here first, `parse_intent` returned `officer_directory`, and
+    # `_followup_is_self_contained` (officer_directory IS in
+    # SELF_CONTAINED_INTENTS) then skipped follow-up resolution entirely
+    # before `field_projections()` ever got a chance to add the column.
+    r"(?!\s*(?:no\.?|number)s?\b)"
     r"(?![^?]*\b(?:application|survey|pending|overdue)\b)"
     r"|\bhow\s+many\s+officers?\b"
     # Singular name lookup: "what is the name of ward 102", "ward 102 name",
@@ -3814,10 +3822,32 @@ def _is_register_wide_listing(message: str, prev_intent: Optional[str]) -> bool:
         return True            # "i m asking abt pending", "pending ones only", "what about pending"
     if _ISD_NISD_ONLY_RE.search(text):
         return False
+    # "... as a table with application number, status, survey number,
+    # subdivision number, and submission date" names "survey (number)" as
+    # one of SEVERAL desired COLUMNS of an ordinary ward-wide listing, not a
+    # question about one particular survey -- but the guard just below (meant
+    # for "survey 5" / "which survey has multiple applications") reads the
+    # bare word "survey" anywhere in the message the same way, and silently
+    # narrowed "applications in ward 001" from the 126-row register down to
+    # the 17-row ISD/NISD-only desk queue, dropping the ward scope along the
+    # way (the ISD/NISD handler and the register listing read "in ward 001"
+    # through different code, and only the latter inherits it on a
+    # follow-up). Recognised by the same "application number" naming itself a
+    # column in the same breath, with no digit next to "survey" at all --
+    # a real per-survey question always either gives the number ("survey 5")
+    # or asks about surveys as a group, never pairs "survey number" with
+    # "application number" as two columns of the same table.
+    _survey_is_a_column_name = bool(
+        re.search(r"\bsurvey\s*(?:no\.?|number)?\b(?!\s*\d)", text, re.IGNORECASE)
+        and re.search(r"\bapplication\s*(?:no\.?|number)\b", text, re.IGNORECASE)
+        and not re.search(r"\bsurvey\s*(?:no\.?|number)?\s*\d", text, re.IGNORECASE))
     # Scopes the flat register cannot narrow by, or per-file detail it lacks:
     # leave those on the ISD/NISD handler rather than quietly dropping the scope.
-    if (extract_application_number(text) or re.search(r"\b(?:survey|sy|s\.?\s*no)\b|சர்வே|கணக்கெண்", text, re.IGNORECASE)
-            or extract_taluk_name(text) or _get_projected_application_columns(text) is not None):
+    if (extract_application_number(text)
+            or (not _survey_is_a_column_name
+                and re.search(r"\b(?:survey|sy|s\.?\s*no)\b|சர்வே|கணக்கெண்", text, re.IGNORECASE))
+            or extract_taluk_name(text)
+            or (not _survey_is_a_column_name and _get_projected_application_columns(text) is not None)):
         return False
     # A follow-up ("last month", "only CSC") continues a register list; a fresh
     # question has to actually be about applications.
@@ -3930,6 +3960,23 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             r"|\bapplications?\s+(?:of|for|from|with|across)\s+all\s+service\s+codes?\b",
             msg):
         return "all_service_code_applications"
+
+    # "what service codes are there" / "what service codes exist" / "which
+    # service codes do you support/have" / "what service codes can I use" --
+    # a CATALOG question (no "all"/"every" word, so the rule just above never
+    # catches it) that used to fall all the way through to the generic
+    # "what is <field>" fallback near the end of this function and come back
+    # "Please specify the application number..." -- a register-wide
+    # CATALOG question answered as if it were about one unnamed file. Routed
+    # to the same catalog the code table already answers from
+    # (`service_code_guide`), not a listing of applications: the officer
+    # asked what the codes ARE, not what is filed under them.
+    if re.search(
+            r"\bwhat\s+service\s+codes?\s+(?:are\s+there|exist|can\s+i\s+use|is\s+there)\b"
+            r"|\b(?:what|which)\s+service\s+codes?\s+(?:do\s+you|does\s+this|are)\s+"
+            r"(?:support|have|handle|cover|include|supported|available)\b",
+            msg):
+        return "service_code_guide"
 
     # "F-Line applications" -- 0178 (Urban Demarcation) is not ISD/NISD, so
     # pending_applications (the ISD/NISD-only desk queue) can't answer it; it

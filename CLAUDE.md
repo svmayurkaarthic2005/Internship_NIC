@@ -87,7 +87,7 @@ nic_internship/
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
 │   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~16000 lines) — entry point for all chat logic
+│   │   ├── chatbot.py        # Main orchestrator (~29000 lines) — entry point for all chat logic
 │   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
 │   │   ├── semantic_intent.py # Embedding-similarity detection of greetings / thanks / small talk
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
@@ -142,11 +142,6 @@ nic_internship/
 ├── tools/                    # create_chatbot_test_fixtures.js
 ├── test_*.py / test_questions_*.txt   # Top-level suites and question sets (see Testing)
 ├── check_*.py, debug_*.py, trace_intent.py, query_channels.py   # One-off DB / routing probes
-├── lora_training/            # only what training actually uses (dataset-prep scripts
-│   ├── train_qlora.py        #   and their intermediate jsonl stages are done and gone)
-│   ├── train_augmented.jsonl, validation.jsonl   # what train_qlora.py reads
-│   └── eval_*_results.jsonl  # eval history, one file per model version
-├── sis-qlora-adapter/        # Trained LoRA adapter (also on Google Drive)
 ├── serve_frontend.py, start_backend.ps1, quick_setup.py
 ├── *.md reports              # AGENTS.md, README.md, *_FINDINGS.md, *_SUMMARY.md, DISTRICT_HANDLING.md ...
 ├── .env                      # Secrets (not committed)
@@ -166,7 +161,22 @@ fine-tuning and debugging passes, not part of the application.
 The chatbot still answers deterministic questions from PostgreSQL; the fine-tune only
 improves the LLM fallback and the Tamil / Tanglish phrasing of its answers.
 
-`lora_training/` holds only what the current model actually trained on --
+**All QLoRA training data and the trained adapter live outside this repo, at
+`C:\lora_data\lora_training\` / `C:\lora_data\sis-qlora-adapter\`** -- not even
+as a junction inside the project folder. Scripts under `backend/sample_db/`
+that read or write them (`audit_train_grounding.py`, `repair_train_labels.py`,
+`run_eval_baseline.py`, `reinforce_glossary_facts.py`) use that absolute path
+directly. The dataset-build scripts themselves also live entirely outside the
+repo now, at `C:\lora_data\sample_db_lora\` -- not even as a junction under
+`backend/sample_db/lora/` anymore. Each of those scripts' own ROOT-finding was
+rewritten from a relative `Path(__file__).absolute().parents[3]` (which
+assumed the script sat 3 levels under the project root) to the hardcoded
+project path, and their cross-script imports that used to read
+`backend.sample_db.lora.X` now add `C:\lora_data\sample_db_lora` to `sys.path`
+and import `X` directly, since that folder is no longer part of the
+`backend.sample_db` package tree at all.
+
+`lora_training/` (now only ever meant as that external path) holds only what the current model actually trained on --
 `train_qlora.py`, its `train_augmented.jsonl` + `validation.jsonl` inputs, and the
 `eval_*_results.jsonl` history. The dataset-build and cleaning scripts
 (`backend/sample_db/build_lora_dataset*.py` → `clean_lora_dataset.py` →
@@ -310,6 +320,56 @@ type:
 is one rule on top of them, not 30 edits. Rejected files stay out of a list
 unless asked for, and the answer reports how many were left out.
 `python test_register_equal_treatment.py` (`--routing` skips the database).
+
+**Equal-treatment audit (2026-10-11).** Of the 29 canonical `SIS_URBAN_SERVICES`
+codes, 11 carry live rows for this seed (0153, 0154, 0156, 0158, 0159, 0160,
+0162, 0164, 0165, 0169, 0178); the other 18 are zero-record, a data fact —
+`all_service_code_applications` already answers them truthfully ("No
+applications under X found"), never as "unsupported". A full sweep across all
+11 (define / list / count / status-filter / ward-filter / compare / details /
+status / workflow / field-visit-requirement / negation) found the architecture
+already generic (no per-code branches anywhere: `_register_listing`,
+`calc_qa.compare_codes`/`code_counts`/`_RANK`, `othercode_detail.card`/
+`workflow` all key off the row data and `SIS_URBAN_SERVICES`, never a code
+allowlist) — a register-only code with NO specialized detail table of its own
+(0165, TSLR Owner Name Correction: no row in `correction_modification_flow`,
+`uareg_modification`, `uchitta_natham_modification`, `f_line_service_urban`
+or `tslr_sketch_urban`) still gets a correct details card, status, and
+workflow history from the base register fields plus the universal
+`application_workflow` table alone.
+
+The single-turn case always worked; three bugs needed a SECOND turn to show,
+specifically one naming a non-ISD/NISD code:
+
+* "Show applications for service code 0158." → "Exclude rejected
+  applications." dropped the 0158 scope and answered from the WHOLE register
+  (126 instead of 20) — `_register_listing` inherited a carried ward/block
+  from `followup_ctx.filters` on a bare continuation, but never did the same
+  for `service_code`. Fixed: same inheritance rule added for `service_code`.
+* "Show applications for service code 0160." → "Also show the block number."
+  misrouted entirely to `officer_directory` — proven NOT code-specific by
+  reproducing it after an ISD listing too. Two-layer root cause: (1)
+  `rag._WARD_DIRECTORY_RE`'s "show wards/blocks" alternative matched "show
+  the block NUMBER" (its exclusion list had application/survey/pending/
+  overdue but not "number"); (2) `officer_directory` sits in
+  `fctx.SELF_CONTAINED_INTENTS`, so `chatbot._followup_is_self_contained()`
+  took the wrong intent as proof of a fresh question and never even called
+  `fctx.resolve()` — the correctly-returning `field_projections()` never got
+  a chance to run. A narrower, same-family gap rode along:
+  `_PROJECT_TRIGGER_RE` recognised "along"/"add"/"include" but not "also".
+* "Which service code 0158 applications have no subdivision recorded?"
+  (the Mode B standalone field-presence query) answered over the whole
+  register instead of the 20 under 0158 — `_standalone_field_presence_answer`'s
+  generic branch never called `_requested_service_code_filter`, unlike
+  `_register_listing`. Fixing this surfaced a FOURTH, pre-existing defect:
+  once a code reached where the asked field is not applicable to ANY row
+  (subdivision, for a 0158 file), `_render_field_presence` asserted "All of
+  the ... applications have a subdivision recorded" in the same sentence as
+  "(20 not applicable)" — a NULL turned into a false positive. Fixed: the
+  "nothing matched" branch now checks how many rows were actually
+  determinable before asserting all/none.
+
+`python test_servicecode_equal_treatment.py` (`--routing` skips the database).
 
 Three more live tables fit the same pattern — real data, no mention anywhere
 in this file, and no evident ORM/query/intent wiring found so far:
@@ -812,7 +872,7 @@ database still carries it.
 
 ### Service Layer
 
-- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~16000 lines) by design; new intent handlers belong here or in `postgres.py`.
+- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~29000 lines) by design; new intent handlers belong here or in `postgres.py`.
 - **`postgres.py`** contains *only* database query functions. No LLM calls, no intent logic.
 - **`rag.py`** contains *only* NLP utilities: intent detection, language detection, extraction helpers, LLM calls, and prompt builders.
 - Numeric/count data **always** comes from the database directly. Never let the LLM generate counts or application numbers — this prevents hallucination.

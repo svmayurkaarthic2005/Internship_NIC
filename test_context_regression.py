@@ -67,11 +67,20 @@ def is_card(resp: str) -> bool:
     return "data-table-card" in (resp or "")
 
 
+import re as _re_islist
+
 def is_listing(resp: str) -> bool:
     """A multi-row application LISTING, not just any card -- a single focused answer
-    (one field, or one application's full details) also renders inside a <table>
-    in this UI, so that alone is not evidence of "the whole list again"."""
-    return "application(s)" in (resp or "").lower() or "Application No." in (resp or "")
+    (one field, an ordinal row peek, or one application's full details) also renders
+    inside a <table> in this UI (including a one-row table matching the currently
+    displayed columns -- see `followup_context.resolve()`'s bare-ordinal branch), so
+    the mere presence of "application(s)" / "Application No." is not by itself
+    evidence of "the whole list again". "Found 1 application(s)" is exactly that
+    single-row shape, not a listing repeat."""
+    text = resp or ""
+    if _re_islist.search(r"Found\s*1\s*application\(s\)", text, _re_islist.IGNORECASE):
+        return False
+    return "application(s)" in text.lower() or "Application No." in text
 
 
 async def main():

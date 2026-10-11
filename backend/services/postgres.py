@@ -138,6 +138,7 @@ async def get_jurisdiction_filter(db: AsyncSession, officer: OfficerContext):
 
 async def get_all_service_code_applications(db: AsyncSession, officer: OfficerContext,
                                             service_code: Optional[str] = None,
+                                            exclude_service_code: Optional[str] = None,
                                             submission_channel: Optional[Any] = None,
                                             status: Optional[Any] = None,
                                             start_date: Optional[date] = None,
@@ -181,6 +182,12 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
         _where = [ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids)]
         if service_code:
             _where.append(ServiceRegisterEntry.service_code == service_code)
+        elif exclude_service_code:
+            # "applications that are not service code 0158" -- excludes the
+            # one named code, every other code stays in. Mutually exclusive
+            # with `service_code` by construction (the caller resolves a
+            # negated code to ONE of the two, never both).
+            _where.append(ServiceRegisterEntry.service_code != exclude_service_code)
         if submission_channel:
             _chans = (list(submission_channel) if isinstance(submission_channel, (list, tuple, set))
                       else [submission_channel])
@@ -303,11 +310,13 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
                 by_channel[r.submission_channel] = by_channel.get(r.submission_channel, 0) + 1
 
         _svc_name = SIS_URBAN_SERVICES.get(service_code, {}).get("name") if service_code else None
+        _excl_name = SIS_URBAN_SERVICES.get(exclude_service_code, {}).get("name") if exclude_service_code else None
         _chan_label = {"CSC": "CSC", "citizen": "citizen portal", "sub_registrar": "Sub-Registrar"}
         _chan_list = (list(submission_channel) if isinstance(submission_channel, (list, tuple, set))
                       else ([submission_channel] if submission_channel else []))
         _chan_name = " / ".join(_chan_label.get(c, c) for c in _chan_list) or None
         _qtype = (f"{service_code} {_svc_name} Applications" if _svc_name
+                  else f"Excluding {exclude_service_code} {_excl_name} Applications" if _excl_name
                   else f"{_chan_name} Applications" if _chan_name
                   else "All Service Code Applications")
         _empty_what = _svc_name or service_code or _chan_name
@@ -318,6 +327,7 @@ async def get_all_service_code_applications(db: AsyncSession, officer: OfficerCo
             "by_channel": by_channel,
             "query_type": _qtype,
             "service_code_filter": service_code,
+            "service_code_excluded": exclude_service_code,
             "channel_filter": submission_channel,
             "status_filter": status,
             "ward_filter": ward_number,
@@ -4850,6 +4860,26 @@ async def get_field_presence(
             with_remarks = {row[0] for row in (await db.execute(q)).all()}
             for app_id, num in ids.items():
                 out[num] = app_id in with_remarks
+
+    # Every number still missing from `out` is either genuinely outside the
+    # officer's jurisdiction/nonexistent, or it exists but is not ISD/NISD --
+    # `Application` (ck_application_type) only ever admits 0153/0154, so a
+    # register-only service code (0158, 0156, ...) never reached `rows`
+    # above at all. The two cases read very differently to an officer:
+    # "not applicable" (this field has no meaning for that file's service)
+    # versus "could not be checked" (something is actually unresolved). A
+    # one-row-per-application existence check against the register --
+    # covering every service code, unlike `Application` -- tells them apart;
+    # the register is used ONLY for this existence/jurisdiction check, never
+    # as the source of the field's own VALUE (that stays the canonical ORM
+    # relationships above, never the raw extract columns).
+    _missing = [n for n in numbers if n not in out]
+    if _missing and officer.jurisdiction_ids:
+        _reg_q = select(ServiceRegisterEntry.application_number).where(
+            ServiceRegisterEntry.application_number.in_(_missing),
+            ServiceRegisterEntry.ward_id.in_(officer.jurisdiction_ids))
+        for (num,) in (await db.execute(_reg_q)).all():
+            out[num] = None
 
     return out
 

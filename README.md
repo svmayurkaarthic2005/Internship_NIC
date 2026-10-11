@@ -79,7 +79,7 @@ nic_internship/
 │   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
-│   ├── services/             # chatbot.py (orchestrator, ~16000 lines), rag.py (intent/LLM),
+│   ├── services/             # chatbot.py (orchestrator, ~29000 lines), rag.py (intent/LLM),
 │   │   │                     #   postgres.py (DB-only queries), agent.py + agent_tools.py
 │   │   │                     #   (tool-calling fallback), plus ~25 per-topic *_qa.py modules
 │   │   │                     #   (owner/parcel/F-Line/TSLR/workflow/attachment handlers, …).

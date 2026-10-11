@@ -58,23 +58,32 @@ alembic/versions/*.pyc
 # Office temp/lock files
 ~$*
 
-# QLoRA training data and adapter -- moved out of the project folder to
-# C:\lora_data\ (694MB adapter + 44MB training data don't belong in a git
-# checkout); these paths are now directory junctions pointing there, kept so
-# every script under backend/sample_db/ and lora_training/ that references
-# them by relative path still works unmodified.
-lora_training/
-sis-qlora-adapter/
+# QLoRA training data and adapter -- fully moved out of the project folder
+# to C:\lora_data\lora_training\ and C:\lora_data\sis-qlora-adapter\ (694MB
+# adapter + 44MB training data don't belong in a git checkout, and don't
+# live here even as junctions anymore). The handful of scripts under
+# backend/sample_db/ that read/write them now use that absolute path
+# directly instead of a relative "lora_training/...".
 *.safetensors
 *.pt
 base-models/
 
-# The lora dataset-build scripts themselves (backend/sample_db/lora/) moved
-# alongside the data they build, for one QLoRA-related location instead of
-# two. backend/sample_db/lora/ is a junction to C:\lora_data\sample_db_lora\;
-# the scripts' own Path(__file__).absolute().parents[3] root-finding does not
-# follow it (.absolute() keeps the junctioned path; .resolve() would not).
-backend/sample_db/lora/
+# The lora dataset-build scripts themselves now live entirely at
+# C:\lora_data\sample_db_lora\ -- not even as a junction under
+# backend/sample_db/lora/ anymore. Each script's own ROOT-finding was
+# rewritten from a relative Path(__file__).absolute().parents[3] (which
+# assumed it lived 3 levels under the project root) to a hardcoded
+# C:\proj\nic_internship, and the cross-script imports that used to read
+# `backend.sample_db.lora.X` now add C:\lora_data\sample_db_lora to
+# sys.path and import X directly.
+
+# The remaining lora-pipeline scripts/data that lived directly under
+# backend/sample_db/ (not inside the lora/ subfolder) -- same move, as
+# NTFS hardlinks instead of junctions since junctions are directory-only.
+backend/sample_db/audit_train_grounding.py
+backend/sample_db/repair_train_labels.py
+backend/sample_db/run_eval_baseline.py
+backend/sample_db/eval_set.jsonl
 
 # Local GGUF model cache (multi-GB, exceeds GitHub's limit)
 models_cache/

@@ -408,8 +408,24 @@ _TA_TANGLISH_MUTATION_RE = re.compile(
 
 _ADD_COLUMNS_RE = re.compile(
     r"(?:also\s+)?(?:add|include)\s+(?:the\s+)?(?:(?:ward|block|district|taluk|town|status|stage|type|"
-    r"survey(?:\s+number)?|fee|name|applicant(?:\s+name)?|mobile|phone|address|date|channel|can|patta)s?"
+    r"survey(?:\s+number)?|sub[\s-]?division(?:\s+number)?|fee|name|applicant(?:\s+name)?|mobile|phone|"
+    r"address|date|channel|can|patta)s?"
     r"(?:\s*(?:,|and|&)\s*|\s+)?)+(?:also|too)?")
+
+# "add the subdivision number after the survey number" / "put block before
+# ward" -- a column REORDER/insert request, the same column vocabulary as
+# `_ADD_COLUMNS_RE` but with a position instead of a plain list. Named here so
+# `_is_mutation_request` can stand aside for it the same way it already does
+# for "add ward column": without this, "subdivision"/"survey" (real words in
+# `_MUTATION_OBJECTS`, for an actual land-record subdivision/survey) made the
+# add-verb-plus-object test fire, and reordering a column on screen was
+# refused as "I cannot change the records".
+_ADD_REORDER_COLUMN_RE = re.compile(
+    r"^(?:also\s+)?(?:add|include|put|move)\s+(?:the\s+)?(?:ward|block|district|taluk|town|status|stage|"
+    r"type|survey(?:\s+number)?|sub[\s-]?division(?:\s+number)?|fee|name|applicant(?:\s+name)?|mobile|phone|"
+    r"address|date|channel|can|patta)s?\s+(?:before|after)\s+(?:the\s+)?(?:ward|block|district|taluk|town|"
+    r"status|stage|type|survey(?:\s+number)?|sub[\s-]?division(?:\s+number)?|fee|name|applicant(?:\s+name)?|"
+    r"mobile|phone|address|date|channel|can|patta)s?\s*[.!?]*$", re.IGNORECASE)
 
 
 def _is_mutation_request(message: str) -> bool:
@@ -436,6 +452,8 @@ def _is_mutation_request(message: str) -> bool:
     # "add ward and taluk" -- column names only, no number or name of a record --
     # is the same request without the word "column".
     if _ADD_COLUMNS_RE.fullmatch(text):
+        return False
+    if _ADD_REORDER_COLUMN_RE.match(text):
         return False
     if _TA_TANGLISH_MUTATION_RE.search(text):
         return True
@@ -1062,6 +1080,83 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
     return f"There are {count} service codes matching '{prefix_raw}':\n{lines}{tail_en}"
 
 
+# "Compare 0155 and 0154.", "Show applications for service code 0155.",
+# "How many applications are under 0155?", "Does service code 0155 require a
+# field visit?", "Which workflow applies to 0155?" -- a message that NAMES an
+# unsupported numeric code in a service-code context, but whose INTENT is
+# something other than a bare definition lookup (comparison, a listing, a
+# count, a field-visit question, a workflow question). `service_code_lookup`
+# / `service_code_guide` already answer "what is 0155" correctly (see
+# `_service_code_lookup_answer`'s prefix-no-match branch) -- the gap is every
+# OTHER intent, which reads its own trigger words (field visit, compare,
+# applications) and the service-code digits never factor in at all, so the
+# invalid code is silently dropped and the question is answered as if it had
+# never been asked: a comparison collapses to a bare ISD-vs-NISD count, a
+# listing/count falls back to the unfiltered default, and "which workflow
+# applies" has no deterministic handler at all and reaches the LLM, which
+# fabricated "the workflow for 0155 is the ISD workflow" -- inventing a
+# service that does not exist, exactly what this project's own standing rule
+# (CLAUDE.md: "Numeric/count data always comes from the database directly")
+# exists to prevent.
+#
+# Scoped to messages that ALSO carry a service-code CONTEXT word, so an
+# ordinary survey/ward/block/year number is never swept in -- the same
+# discipline every other fragment-shape check in this module uses.
+_UNSUPPORTED_CODE_CONTEXT_RE = re.compile(
+    r"\bservice\s*codes?\b|\bworkflow\b|\bfield\s*visit\b|\bcompare\b|"
+    r"\bapplications?\b.{0,20}\b(?:under|for|of|in|including)\b",
+    re.IGNORECASE)
+_NOT_A_CODE_PRECEDING_RE = re.compile(
+    r"\b(?:ward|block|survey|patta|plot)\s*(?:no\.?|number)?\s*$", re.IGNORECASE)
+
+
+def _named_unsupported_service_code(message: str) -> Optional[str]:
+    """The one unsupported 4-digit code a message treats AS a service code,
+    or None. Checked ahead of intent routing so every intent that would
+    otherwise silently drop the invalid code (or, worse, let the LLM
+    improvise one) is pre-empted by the same deterministic "no such service
+    code" answer `_service_code_lookup_answer` already gives for a bare
+    definition question.
+    """
+    if not message or not _UNSUPPORTED_CODE_CONTEXT_RE.search(message):
+        return None
+    from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
+    from backend.services.rag import extract_application_number
+    app_no = extract_application_number(message)
+    text = message.replace(app_no, " ") if app_no else message
+    # A real, supported code named in the SAME breath is not itself a reason
+    # to stand aside (see "Compare 0155 and 0154." -- 0154 is real, 0155 is
+    # not, and the invalid one is still what must be refused); this only
+    # removes the YEARS a submission-period mention carries, so "applications
+    # submitted in 2026 under 0155" does not read "2026" as a candidate code.
+    text = re.sub(r"\b(?:19|20)\d{2}\b", " ", text)
+    for m in re.finditer(r"(?<![\d.])\b\d{1,4}\b(?!\d)", text):
+        if _NOT_A_CODE_PRECEDING_RE.search(text[max(0, m.start() - 20):m.start()]):
+            continue
+        candidate = m.group(0).zfill(4)
+        if candidate not in SIS_URBAN_SERVICES:
+            return candidate
+    return None
+
+
+def _unsupported_service_code_answer(code: str, is_tamil: bool) -> str:
+    """The same deterministic "no such service code" wording
+    `_service_code_lookup_answer`'s prefix-no-match branch already gives --
+    reused verbatim so an officer gets one consistent answer regardless of
+    which intent the rest of the message would otherwise have reached."""
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    codes = sorted(SIS_URBAN_SERVICES)
+    if is_tamil:
+        return (f"'{code}' என்ற நகர்ப்புற சேவை குறியீடு இல்லை. "
+                f"குறியீடுகள் {codes[0]} முதல் {codes[-1]} வரை உள்ளன "
+                f"(SIS கையாள்வது 0153 / 0154). "
+                f"முழு பட்டியலுக்கு 'list all service codes' எனக் கேளுங்கள்.")
+    return (f"There is no urban service code '{code}'. The codes run "
+            f"{codes[0]}-{codes[-1]}, and the only two application types the "
+            f"schema admits are 0153 (NISD) and 0154 (ISD). "
+            f"Ask \"list all service codes\" for the full table.")
+
+
 def _paraphrase_kept_the_facts(original: str, paraphrased: str) -> bool:
     """The LLM's rewrite must still carry every service code and ISD/NISD
     word the deterministic answer stated. Anything short of that is a
@@ -1546,31 +1641,25 @@ _FIELD_PRESENCE_LABELS = {
 }
 
 
-async def _field_presence_answer(db, officer, message: str, ctx, language: str):
-    """"Show only those with a subdivision recorded." / "...without a
-    scheduled field visit." -- filter the CARRIED list (never a fresh
-    register-wide search) by a per-application field's presence, read from
-    the authoritative ORM relationship for that field
-    (`postgres.get_field_presence`), preserving the carried list's order and
-    the officer's jurisdiction.
+async def _render_field_presence(db, officer, scope: list, field_key: str, wants_present: bool,
+                                  is_tamil: bool, scope_label_en: str = "those", scope_label_ta: str = "அந்த"):
+    """The shared rendering half of a field-presence answer: given the exact
+    application numbers already decided to be in scope (by a carried-list
+    filter, Mode A, or a freshly queried dataset, Mode B), check the field's
+    presence on each (`postgres.get_field_presence`, the authoritative ORM
+    relationship -- never the legacy raw extract) and render the matching
+    subset as the standard listing table.
 
     A number the presence check cannot resolve at all (outside jurisdiction,
     or no `Application` row -- a register-only service code with no ISD/NISD
     record) is reported separately, never silently dropped from the count or
     guessed at. "Not applicable" (an NISD file has no subdivision or field
     visit concept at all) is reported separately from "not recorded" too --
-    the whole point of this check.
+    the whole point of this check. Returns (html, matched_numbers).
     """
-    if not (ctx and ctx.application_numbers):
-        return None
-    parsed = fctx.parse_field_presence_request(message)
-    if not parsed:
-        return None
     from html import escape as _e
-    field_key, wants_present = parsed
-    scope = list(dict.fromkeys(n.upper() for n in ctx.application_numbers))
+    scope = list(dict.fromkeys(n.upper() for n in scope))
     presence = await get_field_presence(db, officer, scope, field_key)
-    is_tamil = language in ("ta", "tanglish")
     label_en, label_ta = _FIELD_PRESENCE_LABELS[field_key]
     label = label_ta if is_tamil else label_en
 
@@ -1594,21 +1683,36 @@ async def _field_presence_answer(db, officer, message: str, ctx, language: str):
         return f" ({'; '.join(bits)}.)" if bits else ""
 
     if not matched:
+        # "All / none of them have X" is an assertion about whether the
+        # field is SET -- it must only be made about rows where that is a
+        # knowable fact. A service code the field has no concept for at all
+        # (e.g. "subdivision" on a register-only 0158 file) puts every row
+        # in `not_applicable`, never in `matched`; the old wording still said
+        # "All of the 20 ... have a subdivision recorded" in the very same
+        # breath as "(20 not applicable for this field)" -- turning a NULL
+        # into a false positive, exactly what this check exists to prevent.
+        determinable = len(scope) - len(not_applicable) - len(unresolved)
+        if determinable <= 0:
+            if is_tamil:
+                text = f"{scope_label_ta} {len(scope)} பட்டியலில் {label} பொருந்துமா என்று எதற்கும் தீர்மானிக்க முடியவில்லை."
+            else:
+                text = f"{label.capitalize()} does not apply to any of {scope_label_en} {len(scope)} application(s)."
+            return text + _caveat(), matched
         if is_tamil:
-            text = f"அந்த {len(scope)} பட்டியலில் {label} கொண்டது எதுவும் இல்லை." if wants_present \
-                   else f"அந்த {len(scope)} அனைத்திற்கும் {label} உள்ளது."
+            text = f"{scope_label_ta} {determinable} பட்டியலில் {label} கொண்டது எதுவும் இல்லை." if wants_present \
+                   else f"{scope_label_ta} {determinable} அனைத்திற்கும் {label} உள்ளது."
         else:
-            text = (f"None of those {len(scope)} application(s) have {label}." if wants_present
-                   else f"All of those {len(scope)} application(s) have {label}.")
+            text = (f"None of {scope_label_en} {determinable} application(s) have {label}." if wants_present
+                   else f"All of {scope_label_en} {determinable} application(s) have {label}.")
         return text + _caveat(), matched
 
     rows_data = await get_applications_by_numbers(db, officer, matched, include_rejected=True)
     rows = rows_data.get("applications") or []
     if is_tamil:
-        intro = f"அந்த {len(scope)} இல் {len(matched)} {label} கொண்டவை:"
+        intro = f"{scope_label_ta} {len(scope)} இல் {len(matched)} {label} கொண்டவை:"
     else:
         verb = "have" if wants_present else "do not have"
-        intro = f"{len(matched)} of those {len(scope)} application(s) {verb} {label}:"
+        intro = f"{len(matched)} of {scope_label_en} {len(scope)} application(s) {verb} {label}:"
     intro += _caveat()
     table = _project_field_answer(rows, list(fctx._STANDARD_LISTING_COLUMNS), len(matched), is_tamil) if rows else ""
     if table:
@@ -1618,6 +1722,93 @@ async def _field_presence_answer(db, officer, message: str, ctx, language: str):
         # is dropped rather than shown twice.
         table = re.sub(r"^<div class='table-intro'>.*?</div>", "", table, count=1)
     return f"<div class='table-intro'>{_e(intro)}</div>{table}", matched
+
+
+async def _field_presence_answer(db, officer, message: str, ctx, language: str):
+    """"Show only those with a subdivision recorded." / "...without a
+    scheduled field visit." -- filter the CARRIED list (never a fresh
+    register-wide search) by a per-application field's presence. Mode A of
+    two: the other, `_standalone_field_presence_answer`, is for a question
+    that names its own population with no carried list in play.
+    """
+    if not (ctx and ctx.application_numbers):
+        return None
+    parsed = fctx.parse_field_presence_request(message)
+    if not parsed:
+        return None
+    field_key, wants_present = parsed
+    is_tamil = language in ("ta", "tanglish")
+    return await _render_field_presence(db, officer, ctx.application_numbers, field_key, wants_present, is_tamil)
+
+
+async def _standalone_field_presence_answer(db, officer, message: str, session_id, chat_history, language: str):
+    """"Which applications awaiting a visit have no subdivision recorded?" /
+    "Which overdue visits have a subdivision recorded?" / "Which
+    applications in ward 001 do not have a subdivision recorded?" /
+    "Which applications have payment information recorded?" -- Mode B: the
+    officer names the population explicitly, with no carried list to filter
+    (or regardless of one -- the population here is stated outright, not a
+    pointer back at the screen). Never answered with the raw, unfiltered
+    plan/listing the gap this closes used to fall back to: an unfiltered
+    answer to a question that asked for a filter is a wrong answer, not an
+    incomplete one.
+
+    The dataset queried depends on the population named:
+      * "awaiting a visit" / "awaiting visit(s)" -- the awaiting-schedule
+        section of the field-visit plan (ISD only, by definition).
+      * "overdue visit(s)" -- the overdue section of the same plan.
+      * anything else ("applications", "applications in ward 001", ...) --
+        the register-wide listing (every service code), ward/block-scoped
+        the same way `_register_listing` reads geography from the message.
+    Returns (html, matched_numbers, scope_kind) or None when this message is
+    not this shape.
+    """
+    parsed = fctx.parse_standalone_field_presence_request(message)
+    if not parsed:
+        return None
+    scope_kind, field_key, wants_present = parsed
+    is_tamil = language in ("ta", "tanglish")
+
+    if scope_kind in ("awaiting_visit", "overdue_visit"):
+        ward_num, block_num = await _geo_scope(db, session_id, message, chat_history, officer)
+        plan = await _fetch_visit_plan(db, message, officer, ward_number=ward_num, block_number=block_num)
+        rows = plan.get("awaiting" if scope_kind == "awaiting_visit" else "overdue") or []
+        numbers = list(dict.fromkeys(
+            str(r.get("application_number")).upper() for r in rows if r.get("application_number")))
+        scope_en = "the applications awaiting a visit" if scope_kind == "awaiting_visit" else "the overdue visits"
+        scope_ta = "கள ஆய்வுக்காக காத்திருக்கும் விண்ணப்பங்களில்" if scope_kind == "awaiting_visit" else "தாமதமான கள ஆய்வுகளில்"
+    else:
+        ward_num, block_num = await _geo_scope(db, session_id, message, chat_history, officer)
+        # "which service code 0158 applications have no subdivision
+        # recorded?" names its own code -- dropped here before, same as a
+        # register listing would lose it without `_requested_service_code_
+        # filter`, so the answer silently widened to every code instead of
+        # staying scoped to the one named.
+        service_code = _requested_service_code_filter(message)
+        sd = await get_all_service_code_applications(
+            db, officer, service_code=service_code, ward_number=ward_num,
+            block_number=block_num, hide_rejected=True)
+        numbers = list(dict.fromkeys(
+            str(r.get("application_number")).upper()
+            for r in (sd.get("applications") or []) if r.get("application_number")))
+        if service_code:
+            from backend.utils.helpers import SIS_URBAN_SERVICES
+            _nm = (SIS_URBAN_SERVICES.get(service_code, {}) or {}).get("name") or service_code
+            scope_en = f"the {service_code} ({_nm}) applications"
+            scope_ta = f"{service_code} ({_nm}) விண்ணப்பங்களில்"
+        else:
+            scope_en = "the applications in your jurisdiction"
+            scope_ta = "உங்கள் அதிகார வரம்பிலுள்ள விண்ணப்பங்களில்"
+
+    if not numbers:
+        text = ("இந்த வரம்பில் விண்ணப்பங்கள் எதுவும் இல்லை." if is_tamil
+                else "There are no applications in this scope to check.")
+        return text, [], scope_kind
+
+    text, matched = await _render_field_presence(
+        db, officer, numbers, field_key, wants_present, is_tamil,
+        scope_label_en=scope_en, scope_label_ta=scope_ta)
+    return text, matched, scope_kind
 
 
 def _fv_followup(original: str, ctx, resolution):
@@ -3148,6 +3339,19 @@ def _resolve_rejected_widen(message: str, chat_history: list) -> Optional[str]:
     carrying forward whatever channel the previous listing was scoped to. None when this
     message is not that widening request."""
     if not _REJECTED_TOO_RE.search(message or ""):
+        return None
+    # "Show rejected applications in ward 005." names its OWN fresh ward --
+    # a complete, self-contained listing request, not a continuation phrase
+    # asking to widen whatever was already on screen. `_REJECTED_TOO_RE`'s
+    # "show rejected applications" alternative has no end anchor, so it
+    # matched the first few words of this sentence too and the rewrite threw
+    # the rest away: "'Show rejected applications in ward 005.' -> 'all
+    # pending approved rejected applications'" -- the officer's own ward
+    # silently replaced by the PREVIOUS turn's scope (or none at all). A
+    # widen phrase never names a ward/block/service code/year of its own, so
+    # any of those is proof this is a fresh request instead.
+    if re.search(r"\bward\s*\d|\bblock\s*\d|\b(?:service\s*code\s*)?0\d{3}\b|\b(?:19|20)\d{2}\b",
+                 message or "", re.IGNORECASE):
         return None
     last_assistant = next((
         (m.get("content") or "") if isinstance(m, dict) else str(m)
@@ -10879,6 +11083,29 @@ def _comparison_scope(message: str, spec: dict, is_tamil: bool):
     return scope, (("எண்ணப்பட்டவை — " if is_tamil else "Counted over: ") + "; ".join(words) + ".")
 
 
+_EXCLUDED_CODE_RE = re.compile(
+    r"\b(?:not|except|excluding|outside|other\s+than|apart\s+from|aren.t|isn.t|are\s+not|is\s+not)\b"
+    r"[^.?!]{0,25}?\b(?:service\s*code\s*)?(0\d{3})\b", re.IGNORECASE)
+
+
+def _excluded_service_code_filter(message: str) -> Optional[str]:
+    """The one non-ISD/NISD service code a message NEGATES -- "applications
+    that are not service code 0158", "except 0158", "outside 0158" -- so a
+    listing can exclude it rather than (wrongly) include it. "Show
+    applications that are not service code 0158." used to be answered with
+    exactly 0158's own 20 applications -- the opposite of what was asked --
+    because `_requested_service_code_filter` read the bare digits with no
+    awareness of the negation in front of them."""
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    m = _EXCLUDED_CODE_RE.search(message or "")
+    if not m:
+        return None
+    code = m.group(1)
+    if code in SIS_URBAN_SERVICES and code not in ("0153", "0154"):
+        return code
+    return None
+
+
 def _requested_service_code_filter(message: str) -> Optional[str]:
     """The one non-ISD/NISD service code named in a bare listing request --
     "F-Line applications", "show 0158 applications" -- so that request
@@ -10886,10 +11113,18 @@ def _requested_service_code_filter(message: str) -> Optional[str]:
     ISD/NISD are excluded: they already have their own dedicated intents and
     a two-value result here would be ambiguous anyway (the all-service-code
     register treats "ISD" as the type column, not a service-code filter).
+
+    Never returns a code the message NEGATES ("applications that are not
+    service code 0158") -- that is `_excluded_service_code_filter`'s job, and
+    reading the bare digits here regardless of the "not" in front of them
+    answered the negated question with exactly the one thing it asked to
+    leave out.
     """
     from backend.utils.helpers import find_service_codes
     codes = find_service_codes(message)
     if len(codes) == 1 and codes[0] not in ("0153", "0154"):
+        if codes[0] == _excluded_service_code_filter(message):
+            return None
         return codes[0]
     return None
 
@@ -11527,12 +11762,30 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
     # jurisdiction. Only inherited when the carried context is ITSELF a
     # register-wide listing (never an unrelated prior topic), and never when
     # this message named its own ward/block.
+    _carried_code = None
+    _carried_excl_code = None
     if not ward_num and not block_num and followup_ctx is not None \
             and followup_ctx.intent == "all_service_code_applications":
         ward_num = ward_num or (followup_ctx.filters or {}).get("ward_number")
         block_num = block_num or (followup_ctx.filters or {}).get("block_number")
+        _carried_code = (followup_ctx.filters or {}).get("service_code")
+        _carried_excl_code = (followup_ctx.filters or {}).get("service_code_excluded")
     channels = extract_submission_channels(message) or None
     service_code = _requested_service_code_filter(message)
+    excluded_service_code = _excluded_service_code_filter(message)
+    if not service_code and not excluded_service_code and _carried_excl_code:
+        excluded_service_code = _carried_excl_code
+    # A bare continuation phrase ("exclude rejected applications", rewritten
+    # by `_resolve_rejected_widen` to a fresh register-wide message that
+    # names no service code of its own) used to drop whichever code the
+    # prior turn was scoped to and silently widen to every code -- "show
+    # applications for service code 0158" -> "exclude rejected applications"
+    # answered from all 126 pending/approved applications across every
+    # code, not the 20 under 0158. Same carry-forward rule as ward/block
+    # above: only when THIS message names no code of its own and the carried
+    # context is itself a register-wide listing.
+    if not service_code and not excluded_service_code and _carried_code:
+        service_code = _carried_code
 
     # Status. A named status always wins. With none named, a plain "show my
     # applications" is the open queue (pending), exactly as for ISD/NISD; a
@@ -11557,7 +11810,7 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
     if named is None:
         if re.search(r"\bhistory\b", ml):
             status = ["approved", "rejected"]
-        elif has_range or year or month or channels or service_code or wants_everything or (
+        elif has_range or year or month or channels or service_code or excluded_service_code or wants_everything or (
                 (ward_num or block_num) and re.search(r"\bhow\s+many\b|\bcount\b|\bnumber\s+of\b|எத்தனை", ml)):
             status = None   # a COUNT in a ward / block is over the register, not narrowed to the open queue
         else:
@@ -11565,7 +11818,8 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
 
     sort = _SORT_OVERRIDE.get() or extract_sort_order(message) or (None, None)
     sd = await get_all_service_code_applications(
-        db, officer, service_code=service_code, submission_channel=channels,
+        db, officer, service_code=service_code, exclude_service_code=excluded_service_code,
+        submission_channel=channels,
         status=status, start_date=start_d, end_date=end_d,
         date_ranges=month_scopes or None, exclude_date_range=negated,
         submission_year=year, submission_month=month,
@@ -11585,6 +11839,8 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
         sd["ward_number"] = ward_num
     if block_num:
         sd["block_number"] = block_num
+    if service_code:
+        sd["service_code"] = service_code
     if month:
         sd["submission_month"] = month
     if year:
@@ -11602,7 +11858,146 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
         sd["period_label"] = str(year)
     if negated and has_range:
         sd["exclude_date_range"] = True
+    # "Restore the original filter." needs something stable to restore TO --
+    # the scope this listing started from, before any negation/narrowing
+    # follow-up changed it. Carried forward unchanged once set (the FIRST
+    # register-wide listing in the chain records it; every later re-listing
+    # in the SAME chain -- "not rejected", "include rejected too", a column
+    # projection -- just repeats the one already carried), so "restore"
+    # always means "back to the very first scope", not "back to one step
+    # ago". See `_restore_original_filter_answer`.
+    # Not gated on `followup_ctx.intent` -- a row-slicing / exclusion turn in
+    # between ("show only the first five rows", "exclude the second row")
+    # answers through `followup_list`, not `all_service_code_applications`,
+    # but `_followup_out_context` already carries `base_query_filters`
+    # through THOSE turns untouched (it is in the whitelist `build_context`
+    # copies forward and is never one of the keys a scoped re-query sets).
+    # Checking the intent here anyway (as an earlier version of this did)
+    # meant any such turn landing between the original listing and the next
+    # full re-listing silently reset the snapshot to whatever happened to be
+    # active right then -- "include rejected too" after an "exclude the
+    # second row" turn took its OWN unfiltered, ward-less scope as if it
+    # were the original.
+    _carried_base = (followup_ctx.filters or {}).get("base_query_filters") if followup_ctx is not None else None
+    if not _carried_base:
+        # The immediately-prior turn may itself have lost it -- a bare "show
+        # row 3" with no field attached resolves to a single full-details
+        # card (`application_status`), whose own saved context carries no
+        # memory of the register listing it was picked from at all. Scan
+        # back through the conversation the same way `_restore_original_
+        # filter_answer` does, so a one-turn detour like that does not reset
+        # the whole chain's snapshot to whatever this turn's own filters are.
+        _carried_base = await _find_base_query_filters(db, session_id, officer.officer_id if officer else None)
+    # A chain only continues when THIS query's own resolved scope agrees
+    # with the carried snapshot -- "show rejected applications in ward 005"
+    # after a ward-001 chain names a genuinely different ward, so it starts
+    # a NEW chain instead of inheriting the old one. Without this, "restore
+    # the original filter" several turns later would reach past the ward-005
+    # listing the officer is actually working from and hand back the
+    # obsolete ward-001 scope purely because it happens to sit earlier in
+    # the conversation. Only compared when BOTH sides actually name a value
+    # (an unscoped dimension on either side is not a conflict) -- an
+    # inherited, unnamed ward_num that happens to already equal the
+    # carried one is correctly not a boundary.
+    if _carried_base and (
+            (ward_num and _carried_base.get("ward_number") and ward_num != _carried_base["ward_number"])
+            or (block_num and _carried_base.get("block_number") and block_num != _carried_base["block_number"])
+            or (service_code and _carried_base.get("service_code") and service_code != _carried_base["service_code"])):
+        _carried_base = None
+    if _carried_base:
+        sd["base_query_filters"] = _carried_base
+    else:
+        sd["base_query_filters"] = {
+            "service_code": service_code,
+            "submission_channel": list(channels) if channels else None,
+            "status": status, "start_date": start_d, "end_date": end_d,
+            "date_ranges": month_scopes or None, "exclude_date_range": negated,
+            "submission_year": year, "submission_month": month,
+            "ward_number": ward_num, "block_number": block_num,
+            "hide_rejected": not wants_rejected_too,
+        }
     return sd
+
+
+# "Restore the original filter." / "restore the initial filter." -- back to
+# the scope the register-listing CHAIN started from (`base_query_filters`,
+# snapshotted once per chain just above and carried forward unchanged by
+# every later re-listing in it). Deliberately narrow: only the explicit
+# "restore ... filter" phrasing claims the turn, and only when a snapshot
+# is actually on record -- there is no sense in which guessing a filter is
+# better than asking, and before this fix the message named no field/row/
+# column word at all, so it fell through every other follow-up layer to the
+# LLM, which (per CLAUDE.md's own documented pattern for this) improvised an
+# unrelated jurisdiction refusal from stale ward numbers in chat_history.
+_RESTORE_FILTER_RE = re.compile(
+    r"\brestore\b.{0,25}\b(?:original|initial|previous|earlier|first|default)\b.{0,15}\bfilter",
+    re.IGNORECASE)
+
+
+async def _find_base_query_filters(db, session_id, officer_id):
+    """Scan recent turns of this session for the last `base_query_filters`
+    snapshot on record, newest first.
+
+    The immediate carried context is tried first by the caller; this is the
+    fallback for a chain where the MOST RECENT turn does not carry it even
+    though an earlier one in the same conversation does -- a bare "show row
+    3" / "show the third row now" with no field attached resolves to a
+    single full application card (`application_status`), whose own saved
+    context is built from that answer alone and never mentions the register
+    listing it was picked from at all. Reuses the exact windowed query
+    `_load_followup_context` already runs, so this never reaches further
+    back than an ordinary follow-up would.
+    """
+    if db is None or not session_id:
+        return None
+    try:
+        _cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.FOLLOWUP_CONTEXT_TTL_MINUTES)
+        rows = (await db.execute(
+            select(ChatMessage.structured_data)
+            .where(and_(ChatMessage.session_id == session_id,
+                        ChatMessage.role == "assistant",
+                        ChatMessage.created_at >= _cutoff))
+            .order_by(ChatMessage.created_at.desc())
+            .limit(_FOLLOWUP_CONTEXT_WINDOW)
+        )).scalars().all()
+    except Exception:  # pragma: no cover - a convenience, never fatal
+        return None
+    for raw in rows:
+        if isinstance(raw, dict) and (raw.get("filters") or {}).get("base_query_filters"):
+            return raw["filters"]["base_query_filters"]
+    return None
+
+
+async def _restore_original_filter_answer(db, officer, message: str, ctx, language: str,
+                                          session_id=None, officer_id=None):
+    if not (ctx and _RESTORE_FILTER_RE.search(message or "")):
+        return None
+    is_tamil = language in ("ta", "tanglish")
+    base = (ctx.filters or {}).get("base_query_filters") \
+        or await _find_base_query_filters(db, session_id, officer_id)
+    if not base:
+        # Nothing stable on record for THIS conversation to go back to --
+        # asking is the honest answer, not inventing one of the filters the
+        # officer happened to type along the way. `sd=None` tells the caller
+        # to keep the existing carried context exactly as it was.
+        return (
+            "இந்த உரையாடலில் மீட்டெடுக்க ஒரு பதிவு செய்யப்பட்ட அசல் வடிகட்டி இல்லை. "
+            "எந்த வடிகட்டியை (நிலை, வார்டு, வழி, காலம்) மீட்டெடுக்க வேண்டும் என்று கூறவும்."
+            if is_tamil else
+            "There is no original filter on record for this conversation to restore -- "
+            "say which filter (status, ward, channel, period) you want back, or ask "
+            "for the listing again from scratch."
+        ), None
+    sd = await get_all_service_code_applications(db, officer, **base)
+    sd["base_query_filters"] = base
+    if base.get("ward_number"):
+        sd["ward_number"] = base["ward_number"]
+    if base.get("block_number"):
+        sd["block_number"] = base["block_number"]
+    body = _render_all_service_code_answer(sd, is_tamil=is_tamil)
+    lead = ("அசல் வடிகட்டி மீட்டெடுக்கப்பட்டது -- வரிசை மற்றும் நெடுவரிசைகள் மாறவில்லை." if is_tamil
+            else "Original filter restored -- sort order and column selection are unchanged.")
+    return f"<div class='table-intro'>{lead}</div>{body}", sd
 
 
 _DISTINCT_SERVICE_COUNT_RE = re.compile(
@@ -11659,6 +12054,8 @@ def _render_all_service_code_answer(data: dict, is_tamil: bool = False,
     chan_name = " / ".join(_chan_label.get(c, c) for c in chans)
     svc_code = data.get("service_code_filter")
     svc_name = (SIS_URBAN_SERVICES.get(svc_code, {}) or {}).get("name", svc_code) if svc_code else None
+    excl_code = data.get("service_code_excluded")
+    excl_name = (SIS_URBAN_SERVICES.get(excl_code, {}) or {}).get("name", excl_code) if excl_code else None
     period = data.get("period_label")
     if period and data.get("exclude_date_range"):
         period = f"not {period}"
@@ -11673,6 +12070,7 @@ def _render_all_service_code_answer(data: dict, is_tamil: bool = False,
         "application(s)",
         f"from {chan_name}" if chan_name else "",
         f"under {svc_code} ({svc_name})" if svc_code else "",
+        f"excluding service code {excl_code} ({excl_name})" if excl_code else "",
         f"in {period}" if period else "",
         f"in {' / '.join(geo)}" if geo else "",
     ] if x)
@@ -13719,7 +14117,7 @@ def _rescope_list_followup(message: str, chat_history: list) -> str:
 # pipeline sees a self-contained one.
 
 
-def _followup_out_context(scoped_sd: dict, prior):
+def _followup_out_context(scoped_sd: dict, prior, row_peek: bool = False):
     """The context a list follow-up leaves for the turn after it, as JSON.
 
     `build_context` returns a dataclass; `structured_data` is a JSONB column.
@@ -13728,7 +14126,17 @@ def _followup_out_context(scoped_sd: dict, prior):
     ISD?") found no record of the first and fell back to the officer's whole
     desk. The scoped set is preferred; the prior context is kept when the
     re-query narrowed to nothing, so the set stays in view.
+
+    `row_peek=True` (an ordinal field lookup, "what is the subdivision number
+    in the second row?") must NOT narrow the carried list to the one row it
+    just read -- the table the officer is looking at has not changed, only
+    the question did. The prior context is kept untouched, exactly as if
+    this turn had never run, so "exclude the second row" right after it
+    still counts positions against the same table the "second row" was
+    named from.
     """
+    if row_peek:
+        return prior.to_json() if prior else None
     ctx = fctx.build_context("followup_list", scoped_sd)
     if ctx and ctx.application_numbers:
         # `get_applications_by_numbers` does not echo back what it was filtered
@@ -13852,18 +14260,42 @@ async def _load_followup_context(db, session_id, chat_history=None, message=None
                 application_numbers=list(head.filters["list_numbers"]),
                 filters={"cursor": (head.application_numbers or [None])[0]},
                 query_type=head.query_type, intent=head.intent)
+        # "the second OVERDUE VISIT" / "the first awaiting visit" names a
+        # position in the field-visit QUEUE, a different list from whatever
+        # application listing happens to sit in the lookback window --
+        # unlike a bare "the 2nd one", this ordinal phrase carries its own
+        # domain (`_VISIT_WORD_RE`) and must only match a context that is
+        # ITSELF about visits (`about_visit` in its filters). Without this,
+        # "show the survey and subdivision numbers of the second overdue
+        # visit" right after an unrelated register listing picked the 2nd
+        # row of THAT listing instead -- a file that is not even ISD, so it
+        # can never have had a field visit at all -- rather than falling
+        # through to `_maybe_resolve_fresh_visit_ordinal`, which queries the
+        # actual visit plan and resolves the ordinal against it correctly.
+        _wants_visit_ordinal = bool(_VISIT_WORD_RE.search(message))
         for ctx in parsed:
             if ctx.entity == fctx.ENTITY_APPLICATION_LIST and not ctx.application_numbers:
                 # an EMPTY listing is what the officer was last shown: a position in it
                 # is not a position in the older, non-empty list behind it
+                if _wants_visit_ordinal and not (ctx.filters or {}).get("about_visit"):
+                    continue
                 return ctx
             if ctx.entity == fctx.ENTITY_APPLICATION_LIST and ctx.application_numbers:
+                if _wants_visit_ordinal and not (ctx.filters or {}).get("about_visit"):
+                    continue
                 if _nav and head.entity == fctx.ENTITY_APPLICATION and head.application_numbers:
                     ctx = fctx.FollowupContext(
                         entity=ctx.entity, application_numbers=list(ctx.application_numbers),
                         filters={**(ctx.filters or {}), "cursor": head.application_numbers[0]},
                         query_type=ctx.query_type, intent=ctx.intent)
                 return ctx
+        if _wants_visit_ordinal:
+            # Every list in the window was a non-visit application listing --
+            # none of them is what "the second overdue visit" means, so stand
+            # aside (as if no usable context existed) rather than falling
+            # back to `parsed[0]` below, which could still be one of those
+            # same unrelated lists.
+            return None
     return parsed[0]
 
 
@@ -15070,6 +15502,12 @@ def _multi_app_plan(body: str, apps):
     return None
 
 
+_BARE_COLUMN_NOUN_RE = re.compile(
+    r"^(?:application\s*(?:no\.?|number)|status|survey\s*(?:no\.?|number)?|"
+    r"sub[\s-]?division\s*(?:no\.?|number)?s?|submission\s*date|date|ward|block|stage|type)\.?$",
+    re.IGNORECASE)
+
+
 def _big_plan(message: str):
     """A list of single questions when `message` is one large message holding several, else None."""
     text = re.sub(r"\s+", " ", (message or "").strip())
@@ -15166,6 +15604,32 @@ def _big_plan(message: str):
         if len(fields) < 3:
             return None
         if not apps:
+            # "show applications in ward 001 as a table with application
+            # number, status, survey number, subdivision number, and
+            # submission date" names no application at all -- the "with ..."
+            # list is the COLUMNS of one listing request, not several
+            # independent questions. Split anyway, it answered "1.
+            # applications in ward 001 as a table with application number"
+            # as its own nonsense clause. This no-application fallback
+            # exists for real jurisdiction-wide asks bundled together
+            # ("my pending count, my workload and my overdue visits"); a
+            # message that is itself one ordinary listing/table request is
+            # left whole so the register-listing handler renders it (with
+            # its own fixed column set -- the column list on a FIRST turn
+            # is not yet honoured, only on a follow-up; see
+            # `followup_context.field_projections`). Narrowed to the shape
+            # where every field AFTER the first is a bare column noun ("status",
+            # "survey number", "subdivision number", "submission date") and
+            # none of them --- unlike a genuine bundle of separate asks
+            # ("how many are CSC", "the oldest one") -- is itself a question;
+            # the listing's own request sentence (which also carries the
+            # FIRST column name) stays in `fields[0]` and is dropped along
+            # with the rest. Without this narrowing the same no-application
+            # fallback below (for real bundled jurisdiction-wide asks) was
+            # defeated for every one of them too.
+            if (_is_register_wide_listing(body) and len(fields) >= 2
+                    and all(_BARE_COLUMN_NOUN_RE.match(f.strip()) for f in fields[1:])):
+                return None
             return fields[:_BIG_MAX_CLAUSES]
         details_head = bool(re.search(r"\b(?:full\s+)?details?\s+of\b", head, re.IGNORECASE))
         if details_head and len(apps) * (len(fields) + 1) > _BIG_MAX_CLAUSES:
@@ -15266,6 +15730,17 @@ def _plan_requests(message: str):
     if _cm_strong(text) or _oldowner_qa.attributes(text) == [_oldowner_qa.COMPARE]:  # one comparison, not several questions
         return None
     if len(words) < 6 or re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+.*\band\b.*\d{4}/\d{3,4}/", text):
+        return None
+    # "show only application number and subdivision number" is ONE per-row
+    # column-selection request over the carried list -- `field_projections()`
+    # already reads the whole message as such and `_process_chat_impl`'s own
+    # follow-up layer answers it correctly in one table. Splitting it here on
+    # the "and" first (this function's own `_REQ_SPLIT`, with no concept of a
+    # column list) turned it into two separate "requests" -- "application
+    # number" (answered as its own one-column table) and a bare "subdivision
+    # number." with no row left to be a fragment of, which then asked "which
+    # one do you mean?" instead of adding the column to the first table.
+    if fctx.field_projections(text) is not None:
         return None
     if _neg_scope.parse(text)[0]:
         return None      # "pending but not NISD" is one request, not two
@@ -17030,8 +17505,14 @@ async def _process_chat_impl(
         # found), before `_field_presence_answer` ever got a chance to see
         # the original wording. Checked first, same precedence `_neg_scope`
         # below already gives an `about_visit` queue over its own rewrite.
+        # The STANDALONE shape ("which applications ... have no subdivision
+        # recorded") gets the same precedence for the same reason -- it
+        # names no application at all, but a stale number sitting in recent
+        # chat_history is exactly what `_negq.rewrite()` goes looking for
+        # regardless, and it would mangle this message the same way.
         _nq_msg = None if (_followup_ctx and _followup_ctx.application_numbers
                            and fctx.parse_field_presence_request(_original_message)) \
+            or fctx.parse_standalone_field_presence_request(_original_message) \
             else _negq.rewrite(_original_message, chat_history)
         if _nq_msg is not None:
             logger.info(f"Negated record question: '{_original_message}' -> '{_nq_msg}' ({_negq.KIND.get()})")
@@ -17039,7 +17520,21 @@ async def _process_chat_impl(
         _neg_prior = dict(_followup_ctx.filters or {}) if _followup_ctx else None
         # a field-visit table on screen: its negations ("not completed", "not ISD", "not in 2025") are
         # answered over the visit rows by the field-visit follow-up layer, not as an application list
-        _neg_msg2 = None if (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit")) else _neg_scope.rewrite(
+        #
+        # ONE application in view ("Show full application details for X" ->
+        # "Is it not rejected?") is a yes/no STATUS QUESTION about that file,
+        # not a request to exclude "rejected" from a list -- `neg_scope`
+        # has no concept of a singular referent at all, so it read "not
+        # rejected" as the status-list exclusion phrase it recognises
+        # everywhere else and rewrote the whole message into a register-
+        # wide "excluding rejected" listing, discarding "it" (and the one
+        # application it pointed at) entirely. Guarded the same way the
+        # field-visit case just above already is: by entity, not by intent,
+        # since that is what actually distinguishes "a list is on screen"
+        # from "one record is".
+        _neg_singular = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION)
+        _neg_msg2 = None if (_neg_singular or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
+            else _neg_scope.rewrite(
             _original_message, _neg_prior,
             bool(_followup_ctx and _followup_ctx.application_numbers
                  and not (_followup_ctx.filters or {}).get("about_visit")))
@@ -17138,6 +17633,60 @@ async def _process_chat_impl(
                 "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
                 "table_data": None,
+            }
+        # "Which applications awaiting a visit have no subdivision
+        # recorded?" -- the STANDALONE counterpart of the filter just above:
+        # the officer names the population outright, so this runs regardless
+        # of whether a list is even carried (and never re-filters one that
+        # is -- the named population always wins over whatever was on
+        # screen). Checked right after Mode A specifically so a message that
+        # happens to match both reads ("those applications... have no
+        # subdivision") is claimed by the narrower, carried-list-filtering
+        # one first.
+        _sfp = await _standalone_field_presence_answer(db, officer, _original_message, session_id, chat_history, language)
+        if _sfp:
+            _sfp_text, _sfp_matched, _sfp_scope_kind = _sfp
+            logger.info(f"Standalone field-presence query ({_sfp_scope_kind}) -> {len(_sfp_matched)} matched")
+            _sfp_ctx = fctx.FollowupContext(
+                entity=fctx.ENTITY_APPLICATION_LIST, application_numbers=_sfp_matched,
+                filters={"about_visit": _sfp_scope_kind in ("awaiting_visit", "overdue_visit")},
+                query_type="Field Presence Filter", intent="field_presence_filter")
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_sfp_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_sfp_ctx.to_json() if _sfp_matched else None)
+            return {
+                "response": _sfp_text, "language": language, "intent": "field_presence_filter",
+                "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None,
+            }
+        # "Restore the original filter." -- back to the register-listing
+        # scope this chain started from, or a clarification when nothing was
+        # ever recorded. Checked ahead of the field-visit/field-presence
+        # layers above only in the sense that it needs none of their state;
+        # its own `_RESTORE_FILTER_RE` is narrow enough (the literal phrase
+        # "restore ... filter") that it never competes with them in practice.
+        _rf = await _restore_original_filter_answer(db, officer, _original_message, _followup_ctx, language, session_id=session_id, officer_id=officer.officer_id if officer else None)
+        if _rf:
+            _rf_text, _rf_sd = _rf
+            _rf_ctx = (fctx.build_context("all_service_code_applications", _rf_sd)
+                       if _rf_sd else _followup_ctx)
+            logger.info(f"Restore-original-filter: {'restored' if _rf_sd else 'no snapshot on record'}")
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_rf_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_rf_ctx.to_json() if _rf_ctx else None)
+            return {
+                "response": _rf_text, "language": language, "intent": "restore_original_filter",
+                "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": _build_table_data("all_service_code_applications", _original_message,
+                                                str(officer.officer_id), _rf_sd) if _rf_sd else None,
             }
         _fv_re = _fv_followup(_original_message, _followup_ctx, _followup)
         if _fv_re:
@@ -17290,7 +17839,8 @@ async def _process_chat_impl(
                 assistant_message=_scoped_text, language=language,
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
-                structured_context=(_followup_out_context(_scoped_sd, _followup_ctx)))
+                structured_context=(_followup_out_context(
+                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False))))
             return {
                 "response": _scoped_text,
                 "language": language,
@@ -17984,6 +18534,38 @@ async def _process_chat_impl(
                 "response": response_text,
                 "language": language,
                 "intent": "read_only_refusal",
+                "action": None,
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+
+        # Step 2b-quater-i: a message that names an unsupported service code
+        # ("Compare 0155 and 0154.", "Show applications for service code
+        # 0155.", "Which workflow applies to 0155?") is answered with the
+        # same deterministic "no such service code" wording a bare
+        # definition question already gets, BEFORE whatever other intent
+        # the rest of the message carries gets a chance to silently drop the
+        # invalid code (a listing/count falling back to the unfiltered
+        # default) or, for a shape with no deterministic handler at all
+        # ("which workflow applies to..."), reach the LLM and invent one.
+        _unsupported_code = _named_unsupported_service_code(message)
+        if _unsupported_code:
+            response_text = _unsupported_service_code_answer(_unsupported_code, language in ("ta", "tanglish"))
+            logger.info(f"Named an unsupported service code '{_unsupported_code}'; answered deterministically")
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=response_text,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": response_text,
+                "language": language,
+                "intent": "service_code_lookup",
                 "action": None,
                 "sources": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -22784,8 +23366,14 @@ async def _process_chat_stream_impl(
         # found), before `_field_presence_answer` ever got a chance to see
         # the original wording. Checked first, same precedence `_neg_scope`
         # below already gives an `about_visit` queue over its own rewrite.
+        # The STANDALONE shape ("which applications ... have no subdivision
+        # recorded") gets the same precedence for the same reason -- it
+        # names no application at all, but a stale number sitting in recent
+        # chat_history is exactly what `_negq.rewrite()` goes looking for
+        # regardless, and it would mangle this message the same way.
         _nq_msg = None if (_followup_ctx and _followup_ctx.application_numbers
                            and fctx.parse_field_presence_request(_original_message)) \
+            or fctx.parse_standalone_field_presence_request(_original_message) \
             else _negq.rewrite(_original_message, chat_history)
         if _nq_msg is not None:
             logger.info(f"Negated record question: '{_original_message}' -> '{_nq_msg}' ({_negq.KIND.get()})")
@@ -22793,7 +23381,21 @@ async def _process_chat_stream_impl(
         _neg_prior = dict(_followup_ctx.filters or {}) if _followup_ctx else None
         # a field-visit table on screen: its negations ("not completed", "not ISD", "not in 2025") are
         # answered over the visit rows by the field-visit follow-up layer, not as an application list
-        _neg_msg2 = None if (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit")) else _neg_scope.rewrite(
+        #
+        # ONE application in view ("Show full application details for X" ->
+        # "Is it not rejected?") is a yes/no STATUS QUESTION about that file,
+        # not a request to exclude "rejected" from a list -- `neg_scope`
+        # has no concept of a singular referent at all, so it read "not
+        # rejected" as the status-list exclusion phrase it recognises
+        # everywhere else and rewrote the whole message into a register-
+        # wide "excluding rejected" listing, discarding "it" (and the one
+        # application it pointed at) entirely. Guarded the same way the
+        # field-visit case just above already is: by entity, not by intent,
+        # since that is what actually distinguishes "a list is on screen"
+        # from "one record is".
+        _neg_singular = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION)
+        _neg_msg2 = None if (_neg_singular or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
+            else _neg_scope.rewrite(
             _original_message, _neg_prior,
             bool(_followup_ctx and _followup_ctx.application_numbers
                  and not (_followup_ctx.filters or {}).get("about_visit")))
@@ -22877,6 +23479,40 @@ async def _process_chat_stream_impl(
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
                 structured_context=_fp_ctx.to_json())
+            yield b"data: [DONE]\n\n"
+            return
+        _sfp = await _standalone_field_presence_answer(db, officer, _original_message, session_id, chat_history, language)
+        if _sfp:
+            import json as _json_sfp
+            _sfp_text, _sfp_matched, _sfp_scope_kind = _sfp
+            logger.info(f"Standalone field-presence query ({_sfp_scope_kind}, stream) -> {len(_sfp_matched)} matched")
+            yield f"data: {_json_sfp.dumps({'content': _sfp_text})}\n\n".encode('utf-8')
+            _sfp_ctx = fctx.FollowupContext(
+                entity=fctx.ENTITY_APPLICATION_LIST, application_numbers=_sfp_matched,
+                filters={"about_visit": _sfp_scope_kind in ("awaiting_visit", "overdue_visit")},
+                query_type="Field Presence Filter", intent="field_presence_filter")
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_sfp_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_sfp_ctx.to_json() if _sfp_matched else None)
+            yield b"data: [DONE]\n\n"
+            return
+        _rf = await _restore_original_filter_answer(db, officer, _original_message, _followup_ctx, language, session_id=session_id, officer_id=officer.officer_id if officer else None)
+        if _rf:
+            import json as _json_rf
+            _rf_text, _rf_sd = _rf
+            _rf_ctx = (fctx.build_context("all_service_code_applications", _rf_sd)
+                       if _rf_sd else _followup_ctx)
+            logger.info(f"Restore-original-filter (stream): {'restored' if _rf_sd else 'no snapshot on record'}")
+            yield f"data: {_json_rf.dumps({'content': _rf_text})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_rf_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_rf_ctx.to_json() if _rf_ctx else None)
             yield b"data: [DONE]\n\n"
             return
         _fv_re = _fv_followup(_original_message, _followup_ctx, _followup)
@@ -23013,7 +23649,8 @@ async def _process_chat_stream_impl(
                 assistant_message=_scoped_text, language=language,
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
-                structured_context=(_followup_out_context(_scoped_sd, _followup_ctx)))
+                structured_context=(_followup_out_context(
+                    _scoped_sd, _followup_ctx, row_peek=getattr(_followup, "row_peek", False))))
             yield b"data: [DONE]\n\n"
             return
         # The legacy list re-scope turned "what about the third" (after a field-visit
@@ -23428,6 +24065,25 @@ async def _process_chat_stream_impl(
             response_text = _mutation_refusal(language)
             logger.info("Refused a mutation request; the assistant is read-only")
             yield f"data: {_json_ro.dumps({'content': response_text})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=response_text,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return
+
+        # Same guard as the non-streaming path: an unsupported service code
+        # named in a comparison/listing/count/field-visit/workflow question
+        # is answered deterministically, before any of those intents gets a
+        # chance to silently drop the invalid code or let the LLM invent one.
+        _unsupported_code = _named_unsupported_service_code(message)
+        if _unsupported_code:
+            import json as _json_usc
+            response_text = _unsupported_service_code_answer(_unsupported_code, language in ("ta", "tanglish"))
+            logger.info(f"Named an unsupported service code '{_unsupported_code}'; answered deterministically (stream)")
+            yield f"data: {_json_usc.dumps({'content': response_text})}\n\n".encode('utf-8')
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=_original_message, assistant_message=response_text,
