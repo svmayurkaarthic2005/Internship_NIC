@@ -15957,6 +15957,16 @@ def _is_bare_fragment_without_context(message: str, context, chat_history=None) 
     from imagination."""
     if context:
         return False
+    # The workload summary is not an application list, so it correctly leaves
+    # no FollowupContext. A bare "show" immediately after it is nevertheless a
+    # valid request to open the all-service-code register, not an orphan
+    # follow-up. Let parse_intent use the previous turn's intent for that one
+    # narrow case; the same guard is mirrored in process_chat_stream below.
+    _display_only = re.fullmatch(
+        r"\s*(?:please\s+)?(?:show|list|display|view|open|காட்டு|காண்பி|பட்டியல்)\s*[?.!]*\s*",
+        message or "", re.IGNORECASE)
+    if _display_only and _resolve_prev_intent(chat_history) == "officer_workload":
+        return False
     if _BARE_REF_RE.match((message or "").strip()) or _is_capability_question(message):
         return False
     if _VAGUE_OPENER_RE.match((message or "").strip()):
@@ -18441,6 +18451,18 @@ async def _process_chat_impl(
         # the orphan-fragment check just below, which would otherwise answer
         # "nothing has been shown in this conversation yet" to a message that
         # follows directly on from a summary of exactly these records.
+        #
+        # Merge note: origin/main independently fixed the same bug with a
+        # narrower `_workload_display_followup` flag that only stood ASIDE
+        # from the orphan check and let the generic pending-applications path
+        # answer. That path is never stage-pinned for any code, while the
+        # workload's own ISD/NISD count IS pinned to the officer's current
+        # desk -- so it would show more ISD/NISD files than the workload just
+        # counted, a scope mismatch the officer has no way to notice.
+        # `_workload_show_followup()` (this branch) reruns the SAME two
+        # business rules `get_officer_workload()` counts by and answers
+        # directly, so the shown total always equals the workload's own --
+        # kept over the narrower fix for that reason.
         _wl_show = await _workload_show_followup(db, officer, _original_message, chat_history, language)
         if _wl_show:
             _wl_data, _wl_text = _wl_show
@@ -24330,7 +24352,9 @@ async def _process_chat_stream_impl(
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
         # "What is my workload?" -> "show" / "show applications" / "list" /
-        # "display" -- see the matching comment in process_chat().
+        # "display" -- see the matching comment in process_chat(). Merge
+        # note: see that comment for why this is kept over origin/main's
+        # narrower `_workload_display_followup` fix for the same bug.
         _wl_show = await _workload_show_followup(db, officer, _original_message, chat_history, language)
         if _wl_show:
             import json as _json_wl

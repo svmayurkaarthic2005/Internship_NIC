@@ -57,7 +57,16 @@ def check_routing() -> int:
     if got != REGISTER:
         bad += 1
         print(f"  FAIL routing: bare date after a register list -> {got}")
-    print(f"routing: {len(ROUTING) + 1 - bad}/{len(ROUTING) + 1} ok")
+
+    # A bare display command immediately after a workload summary must open the
+    # same all-service-code register, rather than being rejected as an orphan fragment.
+    for message in ("show", "list", "display", "please show", "காட்டு"):
+        got = parse_intent(message, prev_intent="officer_workload")
+        if got != REGISTER:
+            bad += 1
+            print(f"  FAIL bare workload follow-up: {message!r} -> {got} (wanted {REGISTER})")
+    checks = len(ROUTING) + 1 + 5
+    print(f"routing: {checks - bad}/{checks} ok")
     return bad
 
 
