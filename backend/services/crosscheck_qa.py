@@ -85,7 +85,7 @@ def _v(x) -> Optional[str]:
     if x is None:
         return None
     s = str(x).strip()
-    return None if s in ("", "-", "...", "None", "null", "N/A", "Not Stated") else s
+    return None if s in ("", "-", "...") or s.lower() in ("none", "null", "n/a", "not stated") else s
 
 
 def _latin(s: str) -> str:

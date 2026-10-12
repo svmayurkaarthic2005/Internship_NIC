@@ -31,6 +31,13 @@ _EXACT = {
 }
 _VOCAB = ["attachment", "attached", "available", "duplicate", "multiple", "inconsistent", "mismatch", "subdivision", "application"]
 
+_ORDINAL_WORDS = {
+    "first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+    "fourth": 4, "4th": 4, "fifth": 5, "5th": 5,
+}
+# negative = from the end: -1 is "last", -2 is "second [one] from the end" / "second-last"
+_ORDINAL_FROM_END = {"last": -1}
+
 
 def _canon(tok: str) -> str:
     if tok in _EXACT:
@@ -52,6 +59,41 @@ def normalise(message: str) -> str:
     t = re.sub(r"\bsl[\s.]*no\b", " slno ", t)
     t = re.sub(r"[?!.:()\"',;/&]", " ", t)
     return re.sub(r"\s+", " ", " ".join(_canon(x) for x in re.findall(r"[a-z0-9]+|[^\sa-z0-9]+", t))).strip()
+
+
+_ATTACHMENT_DIGIT_RE = re.compile(r"\battachment\s*(?:number|no\.?|#)?\s*(\d{1,2})\b")
+
+
+def _parse_ordinal(ws: set, message: str = "") -> Optional[int]:
+    """1-based position ("second" -> 2), or a negative index from the end
+    ("last" -> -1), or None when the message names no ordinal at all. Found
+    live: "show the second attachment for X" was answered with the SAME full
+    unordered list as a bare "show the attachments" -- "second" was silently
+    dropped rather than resolved against the deterministic slno/row_id order
+    `load()` already sorts by. Only a single plain ordinal is handled here
+    (first/second/third/.../last, or "attachment number 3"); ranges
+    ("attachments one to three") and exclusions ("all except the first") are
+    a genuinely separate, larger slicing feature and are left unclaimed
+    rather than answered wrong.
+
+    The digit form is matched with a regex requiring the literal word
+    "attachment" immediately before the number -- never a bare digit scanned
+    out of `ws`, which would also catch the ward/district/sequence digits
+    inside the application number itself (e.g. the "02" in
+    "2026/0154/02/012547") as a false "second attachment".
+    """
+    for w, idx in _ORDINAL_WORDS.items():
+        if w in ws:
+            return idx
+    for w, idx in _ORDINAL_FROM_END.items():
+        if w in ws:
+            return idx
+    m = _ATTACHMENT_DIGIT_RE.search(message or "")
+    if m:
+        n = int(m.group(1))
+        if 1 <= n <= 20:
+            return n
+    return None
 
 
 def parse(message: str) -> Optional[Dict[str, Any]]:
@@ -77,6 +119,8 @@ def parse(message: str) -> Optional[Dict[str, Any]]:
         mode = "full"
     elif "slno" in ws or ("sl" in ws and "number" in ws):
         mode = "slno"
+    elif _parse_ordinal(ws, message) is not None:
+        mode = "ordinal"
     elif "file" in ws and ws & {"available", "missing", "every"} and "name" not in ws:
         mode = "file_present"
     elif "survey" in ws or "subdivision" in ws:
@@ -89,7 +133,7 @@ def parse(message: str) -> Optional[Dict[str, Any]]:
         mode = "list"
     else:
         mode = "exists"
-    return {"mode": mode, "ws": ws}
+    return {"mode": mode, "ws": ws, "ordinal": _parse_ordinal(ws, message)}
 
 
 def claims(message: str) -> bool:
@@ -127,7 +171,7 @@ def _v(x) -> Optional[str]:
     if x is None:
         return None
     s = str(x).strip()
-    return None if s in ("", "-", "None", "null") else s
+    return None if s in ("", "-") or s.lower() in ("none", "null") else s
 
 
 def _kind(head: Optional[str]) -> str:
@@ -175,6 +219,29 @@ async def answer(p: Dict[str, Any], app: str, rows: List[Dict[str, Any]], detail
             L.append(_t(ta, f"No -- the {n} attachment(s) are all different files (compared by content).", f"இல்லை -- {n} இணைப்புகளும் வெவ்வேறு கோப்புகள் (உள்ளடக்கம் மூலம் ஒப்பிடப்பட்டது)."))
     elif mode == "slno":
         L.append(_t(ta, "SD attachment sl no: " + ", ".join(str(r["slno"]) for r in rows), "SD இணைப்பு வரிசை எண்: " + ", ".join(str(r["slno"]) for r in rows)))
+    elif mode == "ordinal":
+        # `rows` is already the deterministic order (slno, then row_id) --
+        # the same order every other mode reports slno in, so "the second
+        # one" means the same thing here as it does in "SD attachment sl no:
+        # 1, 2" above.
+        idx = p.get("ordinal")
+        pos = idx - 1 if idx > 0 else n + idx
+        if idx == 0 or pos < 0 or pos >= n:
+            L.append(_t(
+                ta,
+                f"There {'is' if n == 1 else 'are'} only {n} SD attachment(s) for {app} "
+                f"(slno {', '.join(str(r['slno']) for r in rows)}) -- no attachment at that position.",
+                f"{app}-க்கு {n} SD இணைப்பு(கள்) மட்டுமே உள்ளன "
+                f"(வரிசை எண் {', '.join(str(r['slno']) for r in rows)}) -- அந்த இடத்தில் இணைப்பு இல்லை."))
+        else:
+            r = rows[pos]
+            ss = ss_vals[pos] or nr
+            L.append(_t(
+                ta,
+                f"Attachment {pos + 1} of {n} (slno {r['slno']}) for {app}: "
+                f"survey/sub-division {ss}, {_kind(r.get('fhead'))} file, {_size(r.get('flen'))}.",
+                f"{app}-க்கு இணைப்பு {pos + 1} / {n} (வரிசை எண் {r['slno']}): "
+                f"சர்வே/உட்பிரிவு {ss}, {_kind(r.get('fhead'))} கோப்பு, {_size(r.get('flen'))}."))
     elif mode == "survey":
         if "missing" in ws or "every" in ws:
             miss = [r["slno"] for r, s in zip(rows, ss_vals) if not s]

@@ -3832,7 +3832,7 @@ _ISD_NISD_ONLY_RE = re.compile(
     r"field[\s-]?visits?|visits?|inspections?|unscheduled|sketch|draughtsman|"
     r"workflow|stages?|desks?|priority|priorities|urgent|workload|assigned|"
     r"awaiting|waiting|sla|working\s+days?|oldest|longest|stuck)\b"
-    r"|\b(?:sd|dis|sis|tahsildar|zdt|hqdt)\b|காலதாமத|தாமத|கள\s*ஆய்வு",
+    r"|\b(?:sd|dis|sis|tahsildar|zdt)\b|காலதாமத|தாமத|கள\s*ஆய்வு",
     re.IGNORECASE)
 _LISTING_NOUN_RE = re.compile(r"\b(?:applications?|apps?|appl|files?|cases)\b|விண்ணப்ப", re.IGNORECASE)
 
@@ -3931,6 +3931,17 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     _bare_ward_m = re.match(r"^\s*what(?:'s|\s+is)\s+in\s+ward\s+(\d+)\s*\??\s*$", (message or "").strip(), re.IGNORECASE)
     if _bare_ward_m:
         message = f"applications in ward {_bare_ward_m.group(1)}"
+    # "Who gets notified at Level 3 escalation, 45 days overdue?" -- a
+    # documented-PROCESS question about the escalation chain -- was reaching
+    # `_parse_intent_core` and, depending on exactly which later word in the
+    # sentence a deeper gate matched first ("overdue" -> overdue_applications,
+    # or neither -> the generic application_status "please specify a number"
+    # fallback), answered a question nobody asked instead of the actual one.
+    # "who (gets|is) notified" naming no application number is unambiguous
+    # enough to settle here, before any of those gates get a turn.
+    if (re.search(r"\bwho\s+(?:gets?|is|are)\s+notified\b", message or "", re.IGNORECASE)
+            and not extract_application_number(message)):
+        return "general_query"
     intent = _parse_intent_core(message, prev_intent, app_scoped)
     if intent == "pending_applications" and _is_register_wide_listing(message, prev_intent):
         return "all_service_code_applications"
@@ -5057,8 +5068,22 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     # still names applications, and any message that does is a status
     # question about them, not the standalone escalation-check feature.
     _looks_like_status_listing = bool(re.search(r"\bapplic|விண்ணப்ப", msg))
+    # A question about the documented ESCALATION PROCESS itself ("who gets
+    # notified at Level 3 escalation?", "what happens after 30 days
+    # overdue?") names no application and is not a "which of my files are
+    # near the deadline" request either -- it is a policy/workflow-guide
+    # question, the same kind `_GLOSSARY`/`general_query`'s RAG retrieval
+    # already grounds correctly. "Who gets notified at Level 3 escalation,
+    # 45 days overdue?" used to route here anyway (bare "escalat" + no
+    # "application" word + no app number) and returned the officer's own
+    # 19-row pending-application listing -- a real, grounded query result,
+    # just an answer to a question nobody asked.
+    _asks_escalation_process = bool(re.search(
+        r"\bwho\b|\bwhat\s+happens\b|\blevel\s*[123]\b|\bnotif\w*\b|\bwhen\s+(?:is|are|does)\b|\bhow\s+(?:is|are|does)\b",
+        msg, re.IGNORECASE))
     if any(w in msg for w in _escalation_deadline_words) or (
-            _bare_escalat and not _looks_like_status_listing and not extract_application_number(message)):
+            _bare_escalat and not _looks_like_status_listing and not _asks_escalation_process
+            and not extract_application_number(message)):
         return "escalation_check"
 
     # ── Context-aware type-filter follow-up detection (PRODUCTION) ───────────
@@ -5459,8 +5484,14 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         "காலக்கெடு வரம்பு", "மேல்முறையீடு வரம்பு", "நெருங்கும் காலக்கெடு")
     _bare_escalat_2 = "escalat" in msg or "எஸ்கலேஷன்" in msg
     _looks_like_status_listing_2 = bool(re.search(r"\bapplic|விண்ணப்ப", msg))
+    # Same policy-vs-feature guard as the earlier escalation check in this
+    # function -- see that one's comment.
+    _asks_escalation_process_2 = bool(re.search(
+        r"\bwho\b|\bwhat\s+happens\b|\blevel\s*[123]\b|\bnotif\w*\b|\bwhen\s+(?:is|are|does)\b|\bhow\s+(?:is|are|does)\b",
+        msg, re.IGNORECASE))
     if any(w in msg for w in _escalation_deadline_words_2) or (
-            _bare_escalat_2 and not _looks_like_status_listing_2 and not extract_application_number(message)):
+            _bare_escalat_2 and not _looks_like_status_listing_2 and not _asks_escalation_process_2
+            and not extract_application_number(message)):
         return "escalation_check"
 
     if re.match(r"\s*(?:details\s+of\s+|show\s+|about\s+)?survey\s+(?:no|number)\.?\s*\d", msg) and not extract_application_number(message):

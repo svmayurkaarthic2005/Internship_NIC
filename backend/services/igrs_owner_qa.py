@@ -55,6 +55,13 @@ OWNER, ENGLISH, PATTA, DOOR, RELATIVE, NUMBERS, SHARE, ADDRESS, IGRSNO, FORM6, R
     "owner", "owner_english", "patta_no", "door_no", "relative", "numbers", "share", "address", "igrs_form6_no",
     "form6_no", "ration_card_no", "epic_no", "aadhar_no")
 MOBILE, SEX, OCC, UPDATED, USERNO, IMAGE = "mobile_number", "sex", "occ_cd", "updn_dt", "user_no", "owner_img"
+# cin_no is a real column of this table, fetched below, but it is NULL on every
+# row in the seed and nothing in this project's documents defines what CIN
+# stands for here -- so this answers only "recorded" / "not recorded", raw,
+# never a guessed expansion. Without any cue at all, the question had no
+# handler and fell through to the LLM fallback, which has nothing grounded to
+# answer it from either.
+CIN = "cin_no"
 
 
 def parse(message: str) -> Dict[str, Any]:
@@ -81,7 +88,14 @@ def parse(message: str) -> Dict[str, Any]:
         add(PATTA)
     if "door" in ws:
         add(DOOR)
-    if "relative" in ws or "relation" in ws:
+    # "relative's MOBILE number" names a field this table has no column for at
+    # all (MOBILE, below, is only ever the OWNER's own mobile) -- bare
+    # "relative"/"relation" must not claim it, or a question about the
+    # relative's phone number silently answered with the relative's NAME
+    # instead (found live: appinfo_qa's own relative_mobile_no column, which
+    # does exist on some tables, never got a chance to answer or correctly
+    # say "no such column").
+    if ("relative" in ws or "relation" in ws) and "mobile" not in ws:
         add(RELATIVE)
     if "relative" in ws and "number" in ws and "owner" in ws:
         add(NUMBERS)
@@ -96,6 +110,8 @@ def parse(message: str) -> Dict[str, Any]:
         add("assign_no")
     if "ration" in ws:
         add(RATION)
+    if "cin" in ws:
+        add(CIN)
     if "epic" in ws:
         add(EPIC)
     if "aadhaar" in ws:
@@ -126,7 +142,7 @@ def claims_strong(message: str) -> bool:
     p = parse(message)
     if p["kind"] == "compare":
         return True
-    return p["kind"] == "field" and (p["igrs"] or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6}))
+    return p["kind"] == "field" and (p["igrs"] or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6, CIN}))
 
 
 def claims(message: str) -> bool:
@@ -138,14 +154,14 @@ def claims(message: str) -> bool:
     # already treats its own RELATIVE/RELATION keys as a soft claim -- a bare relation/relative
     # follow-up used to fall through to no module at all (parse() recognised it; claims() didn't).
     return p["kind"] == "field" and (p["igrs"] or "owner" in p["ws"]
-                                     or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6, RELATIVE}))
+                                     or bool(set(p["keys"]) & {ENGLISH, DOOR, RATION, EPIC, AADHAAR, OCC, USERNO, IMAGE, NUMBERS, FORM6, RELATIVE, CIN}))
 
 
 async def load(db, app: str) -> List[Dict[str, Any]]:
     from sqlalchemy import text
     sql = ("SELECT door_no, patta_no, occ_cd, own_num, owner, owner_english, rel_num, relative, relative_english, reltn, share, "
            "address, form6_no, assign_no, ration_card_no, epic_no, pincode, updn_dt, user_no, (aadhar_no IS NOT NULL AND aadhar_no <> '') AS has_aadhaar, "
-           "sex, igrs_form6_no, mobile_number, (owner_img IS NOT NULL AND owner_img <> '') AS has_img, ward_code, block_code "
+           "sex, igrs_form6_no, mobile_number, (owner_img IS NOT NULL AND owner_img <> '') AS has_img, ward_code, block_code, cin_no "
            "FROM full_field_patta_transfer_igrs_owner WHERE appl_id = :a ORDER BY own_num, row_id")
     try:
         async with db.begin_nested():
@@ -213,6 +229,8 @@ def _field_lines(keys: List[str], r: Dict[str, Any], ta: bool) -> List[str]:
             out.append(_t(ta, "User no", "பயனர் எண்") + f": {_v(r.get('user_no')) or nr}")
         elif k == IMAGE:
             out.append(_t(ta, "Owner image: ", "உரிமையாளர் படம்: ") + (_t(ta, "available", "உள்ளது") if r.get("has_img") else _t(ta, "not attached", "இணைக்கப்படவில்லை")))
+        elif k == CIN:
+            out.append(_t(ta, "CIN (as recorded)", "CIN (பதிவில் உள்ளபடி)") + f": {_v(r.get('cin_no')) or nr}")
     return out
 
 

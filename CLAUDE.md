@@ -788,7 +788,7 @@ assumed — the applications whose wording says "Send to SIS" are sitting at rol
 | `44`, `42`, `41` | the surveyor's office (SIS) | `SIS` |
 | `8` | Senior Draughtsman | `SD` |
 | `12` | Deputy Inspector Surveyor (DIS) | `DIS` |
-| `16` | Zonal Level Tahsildar (ZDT / HQDT) — holds the DSC, approves and generates the order | `TAHSILDAR` |
+| `16` | Zonal Level Tahsildar (ZDT) — holds the DSC, approves and generates the order | `TAHSILDAR` |
 | `59`, `53` | higher revenue desks (ZDT / DRO) | `TAHSILDAR` |
 
 **How the seeded ISD applications actually flow (they do NOT complete the chain

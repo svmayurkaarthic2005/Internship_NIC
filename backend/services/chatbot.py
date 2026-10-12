@@ -1688,7 +1688,7 @@ _EVIDENCE_STOP = frozenset("""
     false best worst better worse able about above below across along among around because both either
     neither else ever never always often maybe perhaps really quite rather still yet already
 """.split())
-_EVIDENCE_ACRONYMS = frozenset({"sd", "dis", "zdt", "hqdt", "dro", "ec", "sis", "vao", "sro", "csc",
+_EVIDENCE_ACRONYMS = frozenset({"sd", "dis", "zdt", "dro", "ec", "sis", "vao", "sro", "csc",
                                 "nisd", "isd", "can", "igrs", "dsc", "tn", "id"})
 
 
@@ -2476,7 +2476,7 @@ _YN_SKIP = re.compile(r"\b(?:how\s+long|how\s+many|overdue|late|delay\w*|since|d
                       # instead, which DO have that evidence, rather than
                       # answering from the overall status alone and silently
                       # crediting a role that may never have touched the file.
-                      r"zdt|hqdt|dro|tahsildar\w*|draughtsman|draftsman|\bsd\b|\bdis\b|\bsis\b|"
+                      r"zdt|dro|tahsildar\w*|tahsildhar\w*|zonal|draughtsman|draftsman|\bsd\b|\bdis\b|\bsis\b|"
                       r"deputy\s+inspect\w*|sub\s+inspect\w*|senior\s+draughtsman|district\s+revenue\s+officer)\b",
                       re.IGNORECASE)
 
@@ -5182,7 +5182,7 @@ _FULLFORM_BARE_RE = re.compile(
     r"^(?:and\s+)?(?:its\s+|the\s+|what\s+is\s+(?:its\s+|the\s+)?)?(?:full\s*form|fullform|expansion|abbreviation|expand(?:\s+it)?|"
     r"what\s+does\s+(?:it|that)\s+stand\s+for|stands?\s+for|என்பதன்\s+விரிவாக்கம்|விரிவாக்கம்)\s*(?:enna|என்ன)?\s*[?.!]*$", re.IGNORECASE)
 _FULLFORM_TERM_RE = re.compile(
-    r"\b(igrs|sro|csc|can|sla|sis|sd|dis|dsc|zdt|hqdt|isd|nisd|tahsildar|fmb)\b", re.IGNORECASE)
+    r"\b(igrs|sro|csc|can|sla|sis|sd|dis|dsc|zdt|isd|nisd|tahsildar|fmb)\b", re.IGNORECASE)
 _FULLFORM_ASK_RE = re.compile(
     r"^(?:what\s+is\s+)?(?:the\s+)?(?:full\s*form|expansion|abbreviation)\s+(?:of\s+)?([A-Za-z]{2,8})\s*\??$"
     r"|^what\s+does\s+([A-Za-z]{2,8})\s+(?:stand\s+for|mean)\s*\??$"
@@ -5208,14 +5208,13 @@ _FULLFORMS = {
     "sd": ("SD = Senior Draughtsman.", "SD = Senior Draughtsman (மூத்த வரைவாளர்)."),
     "dis": ("DIS = Deputy Inspector Surveyor.", "DIS = Deputy Inspector Surveyor (துணை ஆய்வு சர்வேயர்)."),
     "dsc": ("DSC = Digital Signature Certificate.", "DSC = Digital Signature Certificate (மின்னணு கையொப்பச் சான்று)."),
-    "zdt": ("ZDT = Zonal Level Tahsildar (also written HQDT in the extracts).", "ZDT = மண்டல நிலை தாசில்தார் (Zonal Level Tahsildar)."),
-    "hqdt": ("HQDT = Zonal Level Tahsildar (also written ZDT in the extracts).", "HQDT = மண்டல நிலை தாசில்தார் (Zonal Level Tahsildar)."),
+    "zdt": ("ZDT = Zonal Level Tahsildar.", "ZDT = மண்டல நிலை தாசில்தார் (Zonal Level Tahsildar)."),
     "isd": ("ISD = Involving Sub-Division (service code 0154).", "ISD = Involving Sub-Division (சேவைக் குறியீடு 0154)."),
     "nisd": ("NISD = Not Involving Sub-Division (service code 0153).", "NISD = Not Involving Sub-Division (சேவைக் குறியீடு 0153)."),
     "fmb": ("FMB = Field Measurement Book -- not part of this register or workflow.",
             "FMB = Field Measurement Book — இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை."),
 }
-_KNOWN_ACRONYMS = frozenset({"igrs", "sro", "csc", "can", "sla", "sis", "sd", "dis", "dsc", "zdt", "hqdt", "isd", "nisd",
+_KNOWN_ACRONYMS = frozenset({"igrs", "sro", "csc", "can", "sla", "sis", "sd", "dis", "dsc", "zdt", "isd", "nisd",
                              "fmb", "tahsildar", "cin", "ec", "fee"})
 
 
@@ -11707,6 +11706,23 @@ async def _other_code_workflow(db, officer, message, gate_app, chat_history, ta)
     return text
 
 
+async def _single_app_workflow_answer(db, officer, message, app_no, chat_history, is_tamil) -> Optional[str]:
+    """A workflow-event question ("what is ITS latest recorded workflow
+    event?") that narrowed to exactly ONE carried application: try the
+    ISD/NISD history answer, then the any-service-code one, so the officer
+    gets THIS file's own recorded workflow instead of `_scoped_list_answer`'s
+    generic "N matching application(s)" sentence -- which is what a
+    workflow-shaped question over a one-row carried list used to get,
+    because nothing between the follow-up resolver and the list renderer
+    ever tried a per-application workflow lookup for it."""
+    if not app_no:
+        return None
+    text = await _workflow_history_answer(db, officer, message, app_no, is_tamil)
+    if text:
+        return text
+    return await _other_code_workflow(db, officer, message, app_no, chat_history, is_tamil)
+
+
 _DOCS_CUE = re.compile(r"\bdocu?\w*|\batta?c?h?ments?\b|ஆவண|டாக்குமெண்ட்", re.IGNORECASE)
 _DOCS_SKIP = re.compile(r"\bmissing\b|\bmising\b|\bsd\b|\bsketch\b|\bdraughtsman\b|\.(?:pdf|csv|docx|txt)\b|\b(?:this|the|that|my)\s+(?:uploaded\s+)?file\b|"
                         r"\brequired\s+for\b|\bneeded\s+for\b|\bwhat\s+documents\s+(?:are|do)\b(?!.*\d{4}/)", re.IGNORECASE)
@@ -12043,7 +12059,16 @@ async def _early_subdivision_answer_inner(db, officer, message, intent, gate_app
         _nold_rows = await _newowner_qa.load_old_nisd(db, app_no)
         if _nold_rows:
             return _newowner_qa.answer_fields(_nw["keys"], app_no, _nold_rows, language in ("ta", "tanglish"), old=True)
-    if _nw and detail and detail.get("found") is not False and not (_ig and _ig["igrs"]) and not _ig_rows_pre             and (_nwrows or (_nw["kind"] in ("field", "compare") and not _nw_old_only)):
+    # "new owner" on an ISD (0154) file names the proposed sub-division owner
+    # (chitta_temp_subdivclub -> application_sub_division_owners, answered by
+    # subdivision_qa), never the full-field-transfer new owner this module
+    # reads (full_field_patta_transfer_new_owner, NISD/0165 only). Without this,
+    # an empty _nwrows on an ISD file was read as "no new-owner record is held
+    # for this application" -- false: the record exists, just in the other
+    # table, and subdivision_qa (below) would have answered it correctly.
+    _nw_isd_defer = (_nw and not _nwrows and _nw["kind"] == "field" and app_no.count("/") >= 3
+                     and app_no.split("/")[1] == "0154" and _subdivision_qa.claims(attrs))
+    if _nw and detail and detail.get("found") is not False and not (_ig and _ig["igrs"]) and not _ig_rows_pre and not _nw_isd_defer             and (_nwrows or (_nw["kind"] in ("field", "compare") and not _nw_old_only)):
         _nta = language in ("ta", "tanglish")
         if _nw["kind"] == "compare":
             _nold = await _newowner_qa.load_old(db, app_no)
@@ -13278,26 +13303,29 @@ def _workflow_steps_alt_text(topic: str, is_tamil: bool) -> Optional[str]:
     return _WORKFLOW_STEPS_ALT_TEXT[topic][lang]
 
 
-_GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|zdt|hqdt|dro|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
-                   # "inspector"/"inspecter" and "surveyor"/"surveyer" are both ordinary
-                   # misspellings an officer actually types, and "surveyor" is optional --
-                   # "who is the deputy inspector" (bare, no "surveyor") is still clearly
-                   # asking about DIS. Without this, only the exact phrase
-                   # "deputy inspector surveyor" matched, and "who is the deputy inspecter"
-                   # fell through to an unrelated officer-directory handler entirely.
-                   r"|(?:sub|deputy)\s+inspect(?:or|er)(?:\s+survey(?:or|er))?|senior\s+draughtsman"
+_GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|tahshildar|tahsildr|tahsildaar|tasildar|thasildar|thasildhar"
+                   r"|zdt|dro|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
+                   r"|sub\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
+                   r"|deputy\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
+                   r"|senior\s+draughtsman|senior\s+draftsman"
                    r"|district\s+revenue\s+officer)")
-_GLOSSARY_ALIAS = {"draughtsman": "sd", "draftsman": "sd", "seniordraughtsman": "sd",
+_GLOSSARY_ALIAS = {"draughtsman": "sd", "draftsman": "sd", "seniordraughtsman": "sd", "seniordraftsman": "sd",
                    "subinspectorsurveyor": "sis", "deputyinspectorsurveyor": "dis",
-                   "districtrevenueofficer": "dro"}
-# Every combination the widened "(sub|deputy) inspect(or|er) (survey(or|er))?"
-# alternative above can match, built by a loop instead of hand-enumerated so the
-# alias table can't drift out of sync with the regex.
+                   "districtrevenueofficer": "dro",
+                   # Common misspellings of "Tahsildar" -- the task's own
+                   # named examples ("Tahshildar, Tahsildr") plus the close
+                   # neighbours. All resolve to the same grounded glossary
+                   # entry "tahsildhar" already does.
+                   "tahshildar": "tahsildar", "tahsildr": "tahsildar", "tahsildaar": "tahsildar",
+                   "tasildar": "tahsildar", "thasildar": "tahsildar", "thasildhar": "tahsildar"}
+# "sub inspector", "sub inspecter surveyor", "deputy inspecter", "deputy
+# inspector surveyer", ... -- every combination the widened regex above now
+# matches, generated rather than hand-enumerated so a future misspelling
+# added to the regex can't silently fall out of sync with this lookup.
 for _prefix, _code in (("sub", "sis"), ("deputy", "dis")):
     for _insp in ("inspector", "inspecter"):
         for _surv in ("", "surveyor", "surveyer"):
-            _GLOSSARY_ALIAS.setdefault(f"{_prefix}{_insp}{_surv}", _code)
-del _prefix, _code, _insp, _surv
+            _GLOSSARY_ALIAS[f"{_prefix}{_insp}{_surv}"] = _code
 _ROLE_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+is\s+the\s+role\s+of|role\s+of|what\s+does\s+(?:a\s+|an\s+|the\s+)?)\s*(?:a\s+|an\s+|the\s+)?"
     + _GLOSSARY_TERMS + r"\s*(?:do|does)?\s*[?.!]*$", re.IGNORECASE)
@@ -13358,7 +13386,7 @@ _GLOSSARY = {
             "so I cannot say anything about it from the records.",
             "FMB (Field Measurement Book) இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை — FMB புத்தகம், பக்கம் அல்லது வரைபடம் பதிவாகவில்லை; எனவே பதிவுகளிலிருந்து எதுவும் சொல்ல முடியாது."),
 }
-_GLOSSARY["zdt"] = _GLOSSARY["hqdt"] = _GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
+_GLOSSARY["zdt"] = _GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
 # DRO (District Revenue Officer) is not part of the ordinary ISD/NISD
 # processing chain at all -- it is named ONLY in the escalation section
 # (workflow_guide.txt's "Level 3 Escalation (45 days overdue)"), which this
@@ -13575,6 +13603,23 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
         return None
     msg = message.lower()
     if re.search(r'\d{4}/\d{3,4}/\d{1,3}/\d+', msg):
+        return None
+    # "what is ITS latest recorded workflow event?" right after narrowing to one
+    # application (e.g. "the second one" from a listing) names no ISD/NISD word
+    # at all, so the generic "ALL" catch-all below answered with the bare
+    # policy explanation ("The workflow depends on the application type: ISD
+    # ... NISD ...") -- completely ignoring the file actually in view, which
+    # may not even be ISD/NISD (a register-only code like 0158 has its own
+    # application-aware workflow handler, `_other_code_workflow`, that never
+    # got a turn). A pronoun ("its"/"it's"/"this"/"that") next to a
+    # record-shaped word ("latest"/"last"/"recorded"/"recent"/"current") asks
+    # about ONE file's own history, never the general chain -- stand aside
+    # whenever an application was actually named recently, so the
+    # application-aware handlers reached later in the pipeline get the turn.
+    if (re.search(r"\b(?:its|it'?s|this|that)\b.{0,15}\b(?:latest|last|recorded|recent|current)\b"
+                  r"|\b(?:latest|last|recorded|recent|current)\b.{0,15}\b(?:its|it'?s)\b", msg)
+            and not re.search(r"\b(?:isd|nisd|0153|0154)\b", msg)
+            and _recent_app_number_in_history(chat_history)):
         return None
     # A bare "explain in detail" / "explain briefly" right after a workflow
     # answer names no ISD/NISD/workflow word of its own -- every check below
@@ -14402,6 +14447,46 @@ def _status_yes_no_question(message: str) -> Optional[str]:
     return _named_lifecycle_status(message)
 
 
+_STAGE_LABELS = {
+    "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
+    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+    "COMPLETED": "completed", "REJECTED": "rejected",
+}
+
+
+def _render_status_role_answer(structured_data: dict, asked_status: str, asked_stage: str, language: str) -> str:
+    """"has the ZDT approved X?" names BOTH a status (approved) and a role
+    (ZDT/TAHSILDAR) -- answering from status alone said "Yes, it is approved"
+    on an ISD file the Tahsildar/ZDT never even reached (ISD closes at SD;
+    only NISD files ever reach TAHSILDAR -- see CLAUDE.md), misattributing the
+    SD's decision to a role that took no part in it. `decision_stage` /
+    `decision_by` (the workflow hop that actually closed the file) settle who
+    really decided it, never the asked role by default."""
+    app_no = structured_data.get("application_number", "N/A")
+    actual_status = (structured_data.get("status") or "").lower()
+    decision_desk = (structured_data.get("decision_desk") or "").upper()
+    asked_label = _STAGE_LABELS.get(asked_stage, asked_stage)
+    is_tamil = language in ("ta", "tanglish")
+    if not decision_desk:
+        # still open -- no desk has decided it yet, so no role "approved" or "rejected" it
+        if is_tamil:
+            return f"இல்லை — {app_no} இன்னும் முடிவு செய்யப்படவில்லை; {asked_label} இன்னும் அதை அங்கீகரிக்கவோ நிராகரிக்கவோ இல்லை."
+        return f"No — {app_no} has not yet been decided; {asked_label} has not approved or rejected it."
+    if decision_desk != asked_stage:
+        decided_label = _STAGE_LABELS.get(decision_desk, decision_desk)
+        if is_tamil:
+            return (f"இல்லை — {asked_label} இந்த விண்ணப்பத்தை முடிவு செய்யவில்லை; "
+                    f"{decided_label} ({actual_status or 'not recorded'}) முடிவு செய்தது, {app_no}-க்கு.")
+        return (f"No — {asked_label} did not decide {app_no}; it was decided by {decided_label} "
+                f"({actual_status or 'not recorded'}).")
+    match = actual_status == asked_status
+    lead = "Yes" if match else "No"
+    if is_tamil:
+        lead = "ஆம்" if match else "இல்லை"
+        return f"{lead} — {app_no} {asked_label} மூலம் {actual_status or 'not recorded'} நிலையில் முடிவு செய்யப்பட்டது."
+    return f"{lead} — {app_no} was decided by {asked_label}, {actual_status or 'not recorded'}."
+
+
 def _render_status_yes_no_answer(structured_data: dict, asked_status: str, language: str) -> str:
     app_no = structured_data.get("application_number", "N/A")
     actual = (structured_data.get("status") or "").lower()
@@ -14484,6 +14569,43 @@ def _render_status_role_answer(structured_data: dict, asked_status: str, asked_r
     if is_tamil:
         lead = "ஆம்" if lead == "Yes" else "இல்லை"
     return f"{lead} — {tail}"
+
+
+# "has this case been referred/forwarded/sent to the Tahsildar?" asks about
+# the file's HISTORY -- did it ever reach that desk -- not where it sits right
+# now. Answered with `_render_stage_yes_no_answer` (current `stage` only),
+# a file the Tahsildar already decided (current_stage REJECTED/COMPLETED)
+# got a confident "No", because "referred to" was read the same as "is it
+# currently with". Officers ask it this way often: CLAUDE.md's own workflow
+# chain is built from exactly these verbs ("Forward To ZDT", "Send to SIS").
+_STAGE_EVER_PHRASE_RE = re.compile(
+    r"\b(?:referred|forwarded|sent|escalated)\b[^.?!]{0,20}\bto\b|"
+    r"\breached\b|\bpassed\s+through\b|\bmoved\s+to\b", re.IGNORECASE)
+
+
+def _is_stage_ever_question(message: str) -> bool:
+    return bool(_STAGE_EVER_PHRASE_RE.search(message or ""))
+
+
+def _render_stage_ever_answer(hops: Optional[list], app_no: str, asked_stage: str,
+                               current_stage: str, language: str) -> str:
+    is_tamil = language in ("ta", "tanglish")
+    stage_names = {
+        "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
+        "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+        "COMPLETED": "completed", "REJECTED": "rejected",
+    }
+    asked_label = stage_names.get(asked_stage, asked_stage)
+    hop = next((h for h in (hops or []) if str(h.get("to_stage") or "").upper() == asked_stage), None)
+    if hop is not None:
+        when = _wfh_fmt_dt(hop["performed_at"]) or "an unrecorded date"
+        if is_tamil:
+            return f"ஆம் — {app_no} {asked_label}-க்கு {when} அன்று அனுப்பப்பட்டது."
+        return f"Yes — {app_no} was referred to {asked_label}, on {when}."
+    cur_label = stage_names.get((current_stage or "").upper(), current_stage or "not recorded")
+    if is_tamil:
+        return f"இல்லை — {app_no} {asked_label}-க்கு இன்னும் அனுப்பப்படவில்லை; தற்போது {cur_label} நிலையில் உள்ளது."
+    return f"No — {app_no} has not been referred to {asked_label}; it is currently with {cur_label}."
 
 
 def _render_stage_yes_no_answer(structured_data: dict, asked_stage: str, language: str) -> str:
@@ -15672,8 +15794,19 @@ def _scoped_list_answer(sd: dict, resolution, message: str, language: str) -> st
     # phrasing after "show details for A and B" -- so it shares the same
     # branch rather than falling through to the generic count below, which
     # answered nonsense like "2 of those 2 ... are matching".
+    # "its latest recorded WORKFLOW EVENT" (after narrowing to one application)
+    # is a question about that file's own workflow history, not about which
+    # row in the carried list has the most recent SUBMISSION date -- but
+    # "latest" alone matched the newest-superlative branch below regardless,
+    # so a narrowed one-row list answered "the most recent of those 1 is X,
+    # submitted <submission date>" to a question that never asked about
+    # submission dates at all. Both superlative branches stand aside when the
+    # message itself names the workflow/transition/event, leaving the
+    # application-aware workflow handlers (reached later in the pipeline) to
+    # answer instead.
+    _WORKFLOW_EVENT_WORDS_RE = re.compile(r"\bworkflow\b|\btransition\b|\bworkflow\s+event\b", re.IGNORECASE)
     dated = [r for r in rows if r.get("submission_date")]
-    if dated and re.search(
+    if dated and not _WORKFLOW_EVENT_WORDS_RE.search(msg_lower) and re.search(
             r"\boldest\b|\bearliest\b|\bolder\b|\bpazhusu\b|\bpazha(?:i)?y(?:a|adhu|athu)\b|பழைய",
             msg_lower):
         pick = min(dated, key=lambda r: r["submission_date"])
@@ -15695,7 +15828,7 @@ def _scoped_list_answer(sd: dict, resolution, message: str, language: str) -> st
                 f"{pick['submission_date']}." if is_tamil else
                 f"The oldest of those {total} is {pick['application_number']}, "
                 f"submitted {pick['submission_date']}.")
-    if dated and re.search(
+    if dated and not _WORKFLOW_EVENT_WORDS_RE.search(msg_lower) and re.search(
             r"\bnewest\b|\blatest\b|\bnewer\b|\bmore\s+recent\b|\bmost\s+recent\b"
             r"|\bputhusu\b|\bpudhusu\b|\bpu(?:th|dh)iy(?:a|adhu|athu)\b|சமீபத்திய|புதிய", msg_lower):
         pick = max(dated, key=lambda r: r["submission_date"])
@@ -16302,6 +16435,21 @@ def _big_plan(message: str):
     words = text.split()
     if len(words) < 8 or _howto_qa.match(text):
         return None
+    # "Show my pending ISD applications and my pending NISD applications, and
+    # tell me which has more." is ALREADY one fully-supported comparison
+    # question -- `compare_applications`'s "type" count comparison (see
+    # CLAUDE.md's comparison table) answers it in a single coherent sentence.
+    # Splitting it first broke that: clause 1 became a bare combined listing
+    # with no per-type breakdown, and clause 2 ("tell me which has more") lost
+    # all memory of ISD/NISD and answered "I could not verify a count for
+    # that from the register" -- a confident refusal to a question the
+    # register could answer perfectly well as a whole. Stand aside whenever
+    # the whole message already resolves to a real comparison, at >=14 words
+    # too (the short-message path a few lines below only ever checked this
+    # for itself).
+    from backend.services.rag import parse_comparison_query as _big_plan_cmp
+    if _big_plan_cmp(text):
+        return None
     if len(words) < 14:
         _apps_s = list(dict.fromkeys(_APP_NO_RE.findall(text)))
         _m = _multi_app_plan(text, _apps_s) if len(_apps_s) >= 2 else None
@@ -16592,7 +16740,19 @@ def _plan_requests(message: str):
         is_cue = bool(_REQ_CUE_EN.match(led)) or bool(_REQ_CUE_TA.search(c))
         if (not is_cue and len(c.split()) >= 2 and parse_intent(c) not in _NOT_A_REQUEST
                 and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", text)
-                and not re.search(r"\b(?:for|of|to|in|with|about|from|on)\b", c, re.IGNORECASE)):
+                and not re.search(r"\b(?:for|of|to|in|with|about|from|on)\b", c, re.IGNORECASE)
+                # A clause that STARTS with a bare number ("45 days overdue?")
+                # is a trailing detail of whatever the previous clause named,
+                # never a request of its own -- "Who gets notified at Level 3
+                # escalation, 45 days overdue?" split on the comma into
+                # exactly this shape and the fallback below (meant for a
+                # verb-less noun request like "isd count") wrongly promoted
+                # the second half to its own request, so one question was
+                # answered twice, each half wrong: the first half alone
+                # (no "45 days overdue" context) misrouted to a bare
+                # applications listing, and the second half, with no subject
+                # of its own, asked "which application do you mean?".
+                and not re.match(r"^\d", c)):
             is_cue = True  # "isd count", "my workload" -- a request without a verb
         if merged and not is_cue and len(c.split()) <= 4 and merged[-1][1]:
             merged[-1] = (merged[-1][0] + " " + c, True)
@@ -18369,7 +18529,33 @@ async def _process_chat_impl(
         # since that is what actually distinguishes "a list is on screen"
         # from "one record is".
         _neg_singular = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION)
-        _neg_msg2 = None if (_neg_singular or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
+        # A negation right after an attachment answer ("don't show those,
+        # just the one in our database") is a continuation of THAT answer,
+        # not the application register -- `neg_scope` knows only the
+        # register, so unguarded it read "show" + "those" as its own
+        # listing-exclusion phrase and rewrote the message into "all
+        # applications excluding ...", discarding the file context entirely
+        # and answering with the officer's whole open queue. Guarded the
+        # same way `_neg_singular` above is: by what the conversation is
+        # actually about, so the rewritten message still reaches
+        # `attachment_qa.plan_answer()` below unmolested and can resolve the
+        # negation (or decline) against the file itself.
+        _neg_attachment_topic = await attachment_qa.attachment_topic_active(db, session_id)
+        _neg_contra = _neg_scope.detect_contradiction(_RAW_MESSAGE.get() or _original_message)
+        if _neg_contra and not (_neg_singular or _neg_attachment_topic):
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_neg_contra, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None, structured_context=None)
+            return {
+                'response': _neg_contra, 'language': language, 'intent': 'clarification_needed',
+                'sources': [], 'timestamp': datetime.now(timezone.utc).isoformat(),
+                'context_used': True, 'response_time_ms': int((time.time() - start_time) * 1000),
+                'table_data': None, 'document_ids': None,
+            }
+        _neg_msg2 = None if (_neg_singular or _neg_attachment_topic
+                              or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
             else _neg_scope.rewrite(
             _original_message, _neg_prior,
             bool(_followup_ctx and _followup_ctx.application_numbers
@@ -18607,6 +18793,35 @@ async def _process_chat_impl(
                 "table_data": _build_table_data("all_service_code_applications", _original_message,
                                                 str(officer.officer_id), _wl_data),
             }
+        # "show only the invalid ones" / "hide the ones not in our database"
+        # right after a cross-check answer is a fragment with no
+        # `_followup_ctx` of its own -- `_load_followup_context` deliberately
+        # returns None the turn after an attachment answer (the same "a kind
+        # this layer does not track is a wall" rule documented there), so
+        # unguarded this fell straight into the orphan-fragment check just
+        # below and was told "nothing has been shown in this conversation
+        # yet" about an answer that was sitting right above it. Same
+        # precedence fix as `_wl_show` just above, for the same reason.
+        _cc_filtered = await attachment_qa._crosscheck_filter_followup(
+            db, session_id, _original_message, language)
+        if _cc_filtered is not None:
+            res_txt = _cc_filtered.text
+            logger.info("Cross-check follow-up filtered to %d of the previous result",
+                        len((_cc_filtered.extra or {}).get("crosscheck") or []))
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=res_txt, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=({"entity": "attachment", "document_ids": _cc_filtered.document_ids,
+                                    **(_cc_filtered.extra or {})}
+                                   if len(_cc_filtered.document_ids or []) == 1 else None))
+            return {
+                "response": res_txt, "language": language, "intent": _cc_filtered.intent,
+                "sources": _cc_filtered.sources, "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None, "document_ids": _cc_filtered.document_ids,
+            }
         if (not _followup.resolved and not _followup.ambiguous
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
@@ -18683,8 +18898,14 @@ async def _process_chat_impl(
                 include_rejected=_include_rejected,
                 sort_by=_sort_asked[0] if _sort_asked else None,
                 sort_dir=_sort_asked[1] if _sort_asked else None)
-            _scoped_text = _scoped_list_answer(
-                _scoped_sd, _followup, _original_message, language)
+            _scoped_text = None
+            if len(_followup.application_numbers) == 1 and _WF_CUE.search(_original_message or ""):
+                _scoped_text = await _single_app_workflow_answer(
+                    db, officer, _original_message, _followup.application_numbers[0],
+                    chat_history, language in ("ta", "tanglish"))
+            if _scoped_text is None:
+                _scoped_text = _scoped_list_answer(
+                    _scoped_sd, _followup, _original_message, language)
             logger.info(
                 f"Answered a list follow-up over {len(_followup.application_numbers)} "
                 f"carried application(s)")
@@ -19187,7 +19408,8 @@ async def _process_chat_impl(
             # follow-up with several files active reads this back in
             # attachment_qa._last_focused_document instead of re-asking which
             # file every single turn.
-            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids}
+            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids,
+                        **(_att_plan.extra or {})}
                        if len(_att_plan.document_ids or []) == 1 else None)
             await save_chat_messages(
                 db=db, session_id=session_id, user_message=_original_message,
@@ -19821,7 +20043,8 @@ async def _process_chat_impl(
                 res_txt = (await call_llama(_att_fallback.prompt)
                           if _att_fallback.prompt else _att_fallback.text)
                 logger.info("Application gate deferred to the one open attachment")
-                _att_ctx = ({"entity": "attachment", "document_ids": _att_fallback.document_ids}
+                _att_ctx = ({"entity": "attachment", "document_ids": _att_fallback.document_ids,
+                            **(_att_fallback.extra or {})}
                            if len(_att_fallback.document_ids or []) == 1 else None)
                 await save_chat_messages(
                     db=db, session_id=session_id, user_message=_original_message,
@@ -23498,6 +23721,13 @@ async def _process_chat_impl(
             elif _status_yes_no_question(message):
                 response_text = _render_status_yes_no_answer(
                     structured_data, _status_yes_no_question(message), language)
+            elif _stage_yes_no_question(message) and _is_stage_ever_question(message):
+                from backend.services.postgres import get_workflow_history
+                _asked_stage = _stage_yes_no_question(message)
+                _app_no = structured_data.get("application_number", "N/A")
+                _hops = await get_workflow_history(db, officer, _app_no)
+                response_text = _render_stage_ever_answer(
+                    _hops, _app_no, _asked_stage, structured_data.get("stage"), language)
             elif _stage_yes_no_question(message):
                 response_text = _render_stage_yes_no_answer(
                     structured_data, _stage_yes_no_question(message), language)
@@ -24360,7 +24590,31 @@ async def _process_chat_stream_impl(
         # since that is what actually distinguishes "a list is on screen"
         # from "one record is".
         _neg_singular = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION)
-        _neg_msg2 = None if (_neg_singular or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
+        # A negation right after an attachment answer ("don't show those,
+        # just the one in our database") is a continuation of THAT answer,
+        # not the application register -- `neg_scope` knows only the
+        # register, so unguarded it read "show" + "those" as its own
+        # listing-exclusion phrase and rewrote the message into "all
+        # applications excluding ...", discarding the file context entirely
+        # and answering with the officer's whole open queue. Guarded the
+        # same way `_neg_singular` above is: by what the conversation is
+        # actually about, so the rewritten message still reaches
+        # `attachment_qa.plan_answer()` below unmolested and can resolve the
+        # negation (or decline) against the file itself.
+        _neg_attachment_topic = await attachment_qa.attachment_topic_active(db, session_id)
+        _neg_contra = _neg_scope.detect_contradiction(_RAW_MESSAGE.get() or _original_message)
+        if _neg_contra and not (_neg_singular or _neg_attachment_topic):
+            import json as _json_contra
+            yield f"data: {_json_contra.dumps({'content': _neg_contra})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_neg_contra, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None, structured_context=None)
+            yield b"data: [DONE]\n\n"
+            return
+        _neg_msg2 = None if (_neg_singular or _neg_attachment_topic
+                              or (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))) \
             else _neg_scope.rewrite(
             _original_message, _neg_prior,
             bool(_followup_ctx and _followup_ctx.application_numbers
@@ -24547,6 +24801,28 @@ async def _process_chat_stream_impl(
                 structured_context=_wl_ctx.to_json() if _wl_ctx else None)
             yield b"data: [DONE]\n\n"
             return
+        # See the matching comment in process_chat(): a cross-check filter
+        # fragment has no `_followup_ctx` of its own and must be checked
+        # ahead of the orphan-fragment block just below, for the same reason
+        # `_wl_show` is checked ahead of it too.
+        _cc_filtered = await attachment_qa._crosscheck_filter_followup(
+            db, session_id, _original_message, language)
+        if _cc_filtered is not None:
+            import json as _json_cc
+            res_txt = _cc_filtered.text
+            logger.info("Cross-check follow-up filtered (stream) to %d of the previous result",
+                        len((_cc_filtered.extra or {}).get("crosscheck") or []))
+            yield f"data: {_json_cc.dumps({'content': res_txt})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=res_txt, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=({"entity": "attachment", "document_ids": _cc_filtered.document_ids,
+                                    **(_cc_filtered.extra or {})}
+                                   if len(_cc_filtered.document_ids or []) == 1 else None))
+            yield b"data: [DONE]\n\n"
+            return
         if (not _followup.resolved and not _followup.ambiguous
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
@@ -24604,8 +24880,14 @@ async def _process_chat_stream_impl(
                 include_rejected=_include_rejected,
                 sort_by=_sort_asked[0] if _sort_asked else None,
                 sort_dir=_sort_asked[1] if _sort_asked else None)
-            _scoped_text = _scoped_list_answer(
-                _scoped_sd, _followup, _original_message, language)
+            _scoped_text = None
+            if len(_followup.application_numbers) == 1 and _WF_CUE.search(_original_message or ""):
+                _scoped_text = await _single_app_workflow_answer(
+                    db, officer, _original_message, _followup.application_numbers[0],
+                    chat_history, language in ("ta", "tanglish"))
+            if _scoped_text is None:
+                _scoped_text = _scoped_list_answer(
+                    _scoped_sd, _followup, _original_message, language)
             logger.info(
                 f"Answered a list follow-up over {len(_followup.application_numbers)} "
                 f"carried application(s)")
@@ -25018,7 +25300,8 @@ async def _process_chat_stream_impl(
             else:
                 _acc = _att_plan.text
                 yield f"data: {_json_upl.dumps({'content': _acc})}\n\n".encode('utf-8')
-            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids}
+            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids,
+                        **(_att_plan.extra or {})}
                        if len(_att_plan.document_ids or []) == 1 else None)
             await save_chat_messages(
                 db=db, session_id=session_id, user_message=_original_message,
@@ -25434,7 +25717,8 @@ async def _process_chat_stream_impl(
                 res_txt = (await call_llama(_att_fallback.prompt)
                           if _att_fallback.prompt else _att_fallback.text)
                 logger.info("Application gate deferred to the one open attachment (stream)")
-                _att_ctx = ({"entity": "attachment", "document_ids": _att_fallback.document_ids}
+                _att_ctx = ({"entity": "attachment", "document_ids": _att_fallback.document_ids,
+                            **(_att_fallback.extra or {})}
                            if len(_att_fallback.document_ids or []) == 1 else None)
                 yield f"data: {_json_attfb.dumps({'content': res_txt})}\n\n".encode('utf-8')
                 await save_chat_messages(
@@ -28990,6 +29274,13 @@ async def _process_chat_stream_impl(
             elif _status_yes_no_question(message):
                 chunk = _render_status_yes_no_answer(
                     structured_data, _status_yes_no_question(message), language)
+            elif _stage_yes_no_question(message) and _is_stage_ever_question(message):
+                from backend.services.postgres import get_workflow_history
+                _asked_stage = _stage_yes_no_question(message)
+                _app_no = structured_data.get("application_number", "N/A")
+                _hops = await get_workflow_history(db, officer, _app_no)
+                chunk = _render_stage_ever_answer(
+                    _hops, _app_no, _asked_stage, structured_data.get("stage"), language)
             elif _stage_yes_no_question(message):
                 chunk = _render_stage_yes_no_answer(
                     structured_data, _stage_yes_no_question(message), language)

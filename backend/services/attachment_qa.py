@@ -60,6 +60,11 @@ class AttachmentPlan:
     citations: List[str] = field(default_factory=list)
     intent: str = "uploaded_doc_query"
     retry_prompt: str = ""  # one constrained retry if the model refuses despite strong evidence
+    # Extra structured context to persist beside this turn, read back by a
+    # LATER turn's follow-up handler (e.g. the cross-check's own per-value
+    # results, so "show only the invalid ones" has something to filter).
+    # Opaque to the caller otherwise -- never rendered, never sent to the LLM.
+    extra: Optional[Dict[str, Any]] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,8 +91,28 @@ _VAGUE_DOC_WORDS = ("in it", "the report")
 _PAGE_OR_FILETYPE_RE = re.compile(r"\b(?:page|pg)\s*\d+\b|\b(?:memo|pdf|csv|docx)\b")
 
 # A question shaped like a register query stays on the register even when the
-# conversation was just about the file.
-_REGISTER_SHAPED_RE = re.compile(r"\b(?:how many|count|list|show|my|all|pending|approved|rejected|fee|fees|charge|charges)\b")
+# conversation was just about the file. Split into words that are unambiguous
+# register vocabulary on their own ("pending", "how many", ...) and weaker
+# ones ("show", "my", "all") that only count when the message is not itself a
+# negation -- "don't show those, just the one in our database" and "don't
+# show these ones" both carry the weak word "show", and without this split
+# `_REGISTER_SHAPED_RE` read that alone as "show my pending applications" and
+# bounced a continuation of the attachment's own cross-check answer into an
+# unrelated register-wide listing.
+_REGISTER_SHAPED_STRONG_RE = re.compile(
+    r"\b(?:how many|count|list|pending|approved|rejected|fee|fees|charge|charges)\b")
+_REGISTER_SHAPED_WEAK_RE = re.compile(r"\b(?:show|my|all)\b")
+_NEGATION_STARTER_RE = re.compile(
+    r"\b(?:don'?t|do\s+not|dont|never|no|not|except|excluding|exclude|"
+    r"other\s+than|besides|apart\s+from|bring\s+back|undo|restore)\b",
+    re.IGNORECASE)
+
+
+def _is_register_shaped(message: str) -> bool:
+    low = (message or "").lower()
+    if _REGISTER_SHAPED_STRONG_RE.search(low):
+        return True
+    return bool(_REGISTER_SHAPED_WEAK_RE.search(low) and not _NEGATION_STARTER_RE.search(low))
 
 # Questions that are plainly about the SIS register, whatever is attached.
 _APPLICATION_NO_RE = re.compile(r"\b\d{4}\s*/\s*0?\d{3,4}\s*/\s*\d{2}\s*/\s*\d{4,6}\b")
@@ -138,6 +163,150 @@ async def attachment_topic_active(db: AsyncSession, session_id: str) -> bool:
     except Exception:  # pragma: no cover
         return False
     return bool(row and row.get("entity") == "attachment")
+
+
+async def _last_crosscheck(db: AsyncSession, session_id: str) -> Optional[Dict[str, Any]]:
+    """The previous turn's cross-check results, if that is what it was --
+    read the same way `attachment_topic_active` reads the previous turn's
+    kind, just one field further in. None for any other previous turn,
+    including an ordinary attachment answer that was not a cross-check."""
+    from sqlalchemy import and_
+    from backend.models import ChatMessage, messages_since_session_start
+    try:
+        row = (await db.execute(
+            select(ChatMessage.structured_data)
+            .where(and_(ChatMessage.session_id == session_id, ChatMessage.role == "assistant",
+                        messages_since_session_start(session_id)))
+            .order_by(ChatMessage.created_at.desc()).limit(1))).scalar_one_or_none()
+    except Exception:  # pragma: no cover
+        return None
+    if not row or row.get("entity") != "attachment" or not row.get("crosscheck"):
+        return None
+    return row
+
+
+# A result CATEGORY, not an individual row -- "show only the invalid ones"
+# filters the cross-check's own verdicts, never picks rows by position
+# (there is no reliable, stable "first"/"third" over a dict the officer
+# never numbered themselves; see the module-level note on ordinal exclusion).
+_CC_GROUP_WORDS = {
+    "invalid_format": ("invalid", "malformed", "bad format", "wrong format", "not valid"),
+    "not_found": ("not found", "unmatched", "missing", "not in our database", "not in the database",
+                 "not in our register", "not in the register", "doesn't exist", "don't exist",
+                 "do not exist", "not there"),
+    "unverifiable": ("unverifiable", "could not be checked", "couldn't be checked", "not checked"),
+    # "found"/"matched"/"verified" without a qualifier means EITHER
+    # jurisdiction outcome -- an officer asking "show the matched ones"
+    # means "is it a real application", not "is it specifically mine".
+    "_found": ("found", "matched", "verified", "confirmed", "exist", "existing", "in our database",
+              "in the database", "in our register", "in the register"),
+    "valid": ("valid",),  # well-formed, whether or not it was found
+}
+_CC_GROUP_LABELS = {
+    "invalid_format": {"invalid_format"},
+    "not_found": {"not_found"},
+    "unverifiable": {"unverifiable"},
+    "_found": {"in_jurisdiction", "outside_jurisdiction"},
+    "valid": {"not_found", "in_jurisdiction", "outside_jurisdiction"},
+}
+_CC_ONLY_RE = re.compile(r"\b(?:only|just)\b", re.IGNORECASE)
+_CC_EXCLUDE_RE = re.compile(
+    r"\b(?:don'?t\s+(?:show|display)|do\s+not\s+(?:show|display)|hide|exclude|"
+    r"remove|except|excluding)\b", re.IGNORECASE)
+# "undo that filter" / "restore the original list" / "bring back those I
+# excluded" name a filter HISTORY this layer never kept (no stack of past
+# crosscheck views is stored, only the latest one). Left unhandled these fall
+# through to the LLM fallback, which does not know that either and answers
+# anyway -- fabricating a plausible-sounding filter history ("the list
+# started with N applications matching status=pending") instead of admitting
+# it cannot do this. Caught here, ahead of the category-filter match, so a
+# crosscheck-context turn gets an honest decline instead of a confident guess.
+_CC_HISTORY_RE = re.compile(
+    r"\b(?:undo|revert|restore)\b|\bbring\s+back\b|\boriginal\s+(?:list|result)\b",
+    re.IGNORECASE)
+
+
+def _cc_phrase_re(phrase: str) -> re.Pattern:
+    return re.compile(r"\b" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"\b",
+                      re.IGNORECASE)
+
+
+# Word-BOUNDARY matching, not substring: "validate these application numbers"
+# (carried into this turn from the previous one by the ordinary short-message
+# continuation logic) contains the bare substring "valid", and a naive `in`
+# check read "validate" as the officer asking for the "valid" group --
+# turning an unrelated cross-check REQUEST into a narrow, wrong FILTER of
+# its own not-yet-existing result.
+_CC_GROUP_PATTERNS = {key: [_cc_phrase_re(w) for w in words]
+                      for key, words in _CC_GROUP_WORDS.items()}
+
+
+def _cc_matched_group(message: str) -> Optional[set]:
+    text = message or ""
+    for key, patterns in _CC_GROUP_PATTERNS.items():
+        if any(p.search(text) for p in patterns):
+            return _CC_GROUP_LABELS[key]
+    return None
+
+
+async def _crosscheck_filter_followup(
+    db: AsyncSession, session_id: str, message: str, language: str,
+) -> Optional[AttachmentPlan]:
+    """"show only the invalid ones" / "don't show the ones not in our
+    database" / "hide the unverifiable ones" over the PREVIOUS turn's own
+    cross-check results -- the only way such a follow-up can be answered at
+    all, since the register has no concept of "invalid format" or
+    "unverifiable" to query by in the first place.
+
+    Deliberately narrower than the full include/exclude/undo/restore
+    vocabulary an officer might use: it filters by OUTCOME CATEGORY only.
+    "exclude the first and third" (a position) and "bring back those I
+    excluded" / "undo that filter" (history) are not answered here -- there
+    is no stable, officer-visible numbering over a dict to exclude a
+    position FROM, and no filter history is kept. Those fall through to the
+    ordinary pipeline's own generic fallback rather than being answered
+    wrong with an invented row order.
+    """
+    prev = await _last_crosscheck(db, session_id)
+    if not prev:
+        return None
+    if _CC_HISTORY_RE.search(message or ""):
+        ta = language in ("ta", "tanglish")
+        text = ("இந்த உரையாடலில் முந்தைய வடிப்பான்களின் வரலாறு வைக்கப்படவில்லை "
+                 "— மீட்டமைக்க அல்லது செயல்தவிர்க்க முடியாது. மேலே காட்டப்பட்ட "
+                 "சரிபார்ப்பு முடிவுகள் மட்டுமே இப்போது கிடைக்கின்றன." if ta else
+                "No history of earlier filters is kept on this cross-check, so "
+                "there is nothing to undo or restore. Only the results already "
+                "shown above are available; ask for a category directly (for "
+                "example \"show only the invalid ones\").")
+        return AttachmentPlan(kind=KIND_DETERMINISTIC, text=text,
+                              document_ids=prev.get("document_ids") or [],
+                              extra={"crosscheck": prev["crosscheck"],
+                                     "crosscheck_source": prev.get("crosscheck_source", "")})
+    group = _cc_matched_group(message)
+    if group is None:
+        return None
+    exclude = bool(_CC_EXCLUDE_RE.search(message or ""))
+    only = bool(_CC_ONLY_RE.search(message or "")) or not exclude
+    rows = prev["crosscheck"]
+    kept = [r for r in rows if ((r["label"] not in group) if exclude else (r["label"] in group))]
+    ta = language in ("ta", "tanglish")
+    source = prev.get("crosscheck_source", "")
+    if not kept:
+        text = (f"{len(rows)} இல் எதுவும் இந்த வகையில் இல்லை." if ta
+                else f"None of the {len(rows)} checked value(s) fall in that group.")
+        return AttachmentPlan(kind=KIND_DETERMINISTIC, text=text,
+                              document_ids=prev.get("document_ids") or [])
+    head = (f"{len(kept)} of {len(rows)} மதிப்பு(கள்):" if ta
+            else f"{len(kept)} of {len(rows)} value(s):")
+    lines = []
+    for r in kept:
+        dup = f" ({r['count']}x)" if r.get("count", 1) > 1 else ""
+        lines.append(f"{r['value']} — {_CROSS_CHECK_LABELS[r['label']][1 if ta else 0]}{dup}")
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC, text=head + "\n" + "\n".join(lines) + (f"\n[{source}]" if source else ""),
+        document_ids=prev.get("document_ids") or [],
+        extra={"crosscheck": kept, "crosscheck_source": source})
 
 
 def explicit_attachment_signal(message: str, docs: Sequence[ChatAttachment]) -> bool:
@@ -636,6 +805,175 @@ def build_prompt(message: str, language: str, evidences: Sequence[Evidence],
 # Deterministic CSV rendering
 # ─────────────────────────────────────────────────────────────────────────────
 
+# "are these application numbers in our database?" / "compare this file with
+# our register" / "is ABC123 a valid application number format?" -- always
+# names the register/database explicitly, or asks about FORMAT validity,
+# which is what tells this apart from an ordinary content question the CSV's
+# own rows can answer ("how many rows have status approved").
+_DB_CROSS_CHECK_RE = re.compile(
+    r"\b(?:in|exist\w*\s+in|found\s+in|present\s+in|part\s+of)\s+(?:our|the|my)\s+"
+    r"(?:database|register|records?|system)\b"
+    r"|\b(?:check|compare|cross[\s-]?check|verify|match|validate)\w*\b[^.?!]{0,40}\b"
+    r"(?:database|register|records?|our\s+system)\b"
+    r"|\b(?:valid|correct|proper|right)\s+(?:application\s+number\s+)?format\b"
+    r"|எங்கள்\s+(?:தரவுத்தளத்தில்|பதிவேட்டில்)|சரியான\s+வடிவம்",
+    re.IGNORECASE)
+
+_APP_COL_RE = re.compile(r"\bapp(?:lication)?[\s_]*(?:no\.?|number|num|id)\b", re.IGNORECASE)
+
+
+def _find_app_number_column(headers: Sequence[str]) -> Optional[str]:
+    """A header that plainly names an application number -- never a guess
+    over every column, since that would just as readily flag an owner name
+    or a mystery code as an "invalid" application number."""
+    for h in headers:
+        if _APP_COL_RE.search((h or "").replace("_", " ")):
+            return h
+    return None
+
+
+_CROSS_CHECK_LABELS = {
+    "invalid_format": ("not a valid application-number format",
+                       "செல்லுபடியான விண்ணப்ப எண் வடிவம் இல்லை"),
+    "not_found": ("valid format, but not found in the register",
+                 "வடிவம் சரிதான், ஆனால் பதிவேட்டில் இல்லை"),
+    "in_jurisdiction": ("valid format, found in the register (your jurisdiction)",
+                        "வடிவம் சரிதான், பதிவேட்டில் உள்ளது (உங்கள் எல்லை)"),
+    "outside_jurisdiction": ("valid format, found in the register, but outside your jurisdiction",
+                             "வடிவம் சரிதான், பதிவேட்டில் உள்ளது, ஆனால் உங்கள் எல்லைக்கு வெளியே"),
+    "unverifiable": ("could not be checked -- the register was unreachable just now",
+                     "இப்போது சரிபார்க்க முடியவில்லை -- பதிவேடு அணுக முடியவில்லை"),
+}
+
+
+async def _cross_check_app_numbers(
+    db: AsyncSession, officer: Any, doc: ChatAttachment,
+    headers: Sequence[str], rows: Sequence[Dict[str, str]], language: str,
+) -> Optional[AttachmentPlan]:
+    """Check every value in the file's application-number column against the
+    register: malformed vs well-formed, and -- for well-formed ones --
+    whether the number actually exists (`service_register_entries`, every
+    TAMILNILAM service code, not just ISD/NISD) and sits inside the
+    officer's own jurisdiction. Returns None when the file carries no
+    column that plainly names an application number -- scanning every cell
+    of an unrelated column (an owner's name, a free-text remark) would flag
+    it as an "invalid application number" for not looking like one.
+    """
+    col = _find_app_number_column(headers)
+    if not col:
+        return None
+    # Occurrence order AND count both matter: a repeated ID is still checked
+    # once (one DB round trip per distinct value), but the officer-facing
+    # line says how many times it appeared, rather than silently collapsing
+    # three identical rows into what reads like one.
+    counts: Dict[str, int] = {}
+    order: List[str] = []
+    for r in rows:
+        v = (r.get(col) or "").strip()
+        if not v:
+            continue
+        if v not in counts:
+            order.append(v)
+        counts[v] = counts.get(v, 0) + 1
+    results = await _check_numbers_against_register(db, officer, order)
+    if not results:
+        return None
+    ta = language in ("ta", "tanglish")
+    head = (f"'{col}' இல் உள்ள {len(results)} மதிப்பு(கள்) பதிவேட்டுடன் சரிபார்க்கப்பட்டது:" if ta
+            else f"Checked {len(results)} value(s) in '{col}' against the register:")
+    lines = []
+    for v, k in results:
+        dup = f" ({counts[v]}x in file)" if counts.get(v, 1) > 1 else ""
+        lines.append(f"{v} — {_CROSS_CHECK_LABELS[k][1 if ta else 0]}{dup}")
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC,
+        text=head + "\n" + "\n".join(lines) + f"\n[{doc.filename}, rows 1–{len(rows)}]",
+        sources=[doc.filename], document_ids=[str(doc.id)],
+        extra={"crosscheck": [{"value": v, "label": k, "count": counts.get(v, 1)}
+                              for v, k in results],
+               "crosscheck_source": f"{doc.filename}, rows 1–{len(rows)}"})
+
+
+async def _check_numbers_against_register(
+    db: AsyncSession, officer: Any, values: Sequence[str],
+) -> List[Tuple[str, str]]:
+    """Classify each value as a malformed application number, a well-formed
+    one not in the register, one inside the officer's jurisdiction, one
+    outside it, or unverifiable because the register could not be reached.
+    Shared by the CSV column check above and the free-text (PDF/DOCX/TXT,
+    including OCR'd) check below -- the DB lookup is the same either way,
+    only how the candidate strings were found differs.
+    """
+    from backend.models import ServiceRegisterEntry
+    from sqlalchemy.exc import SQLAlchemyError
+    jurisdiction_ids = set(getattr(officer, "jurisdiction_ids", None) or [])
+    results: List[Tuple[str, str]] = []
+    for v in values:
+        if not _APPLICATION_NO_RE.fullmatch(v):
+            results.append((v, "invalid_format"))
+            continue
+        try:
+            hit = (await db.execute(
+                select(ServiceRegisterEntry.ward_id)
+                .where(ServiceRegisterEntry.application_number == v)
+            )).first()
+        except SQLAlchemyError:
+            # A DB outage must read as "could not check", never as "not
+            # found" -- the two look the same to the model's own prose, but
+            # mean opposite things to an officer deciding what to do next.
+            logger.warning("cross-check register lookup failed", application_number=v)
+            results.append((v, "unverifiable"))
+            continue
+        if hit is None:
+            results.append((v, "not_found"))
+        elif jurisdiction_ids and hit[0] in jurisdiction_ids:
+            results.append((v, "in_jurisdiction"))
+        else:
+            results.append((v, "outside_jurisdiction"))
+    return results
+
+
+async def _cross_check_evidence_numbers(
+    evidences: Sequence["Evidence"], db: AsyncSession, officer: Any, language: str,
+) -> Optional[AttachmentPlan]:
+    """The free-text counterpart of `_cross_check_app_numbers`, for a PDF,
+    DOCX or TXT upload (OCR'd pages included -- OCR only replaces how the
+    page's text was read, not what happens to it afterwards). Scans the
+    retrieved evidence for application-number-shaped substrings rather than
+    reading a named column, since free text carries no headers."""
+    counts: Dict[str, int] = {}
+    order: List[str] = []
+    for e in evidences:
+        for m in _APPLICATION_NO_RE.findall(e.content or ""):
+            v = re.sub(r"\s+", "", m)
+            if v not in counts:
+                order.append(v)
+            counts[v] = counts.get(v, 0) + 1
+    if not order:
+        return None
+    results = await _check_numbers_against_register(db, officer, order)
+    if not results:
+        return None
+    ta = language in ("ta", "tanglish")
+    filenames = sorted({e.filename for e in evidences})
+    head = (f"{', '.join(filenames)} இல் கண்டறியப்பட்ட {len(results)} விண்ணப்ப எண்(கள்) "
+            f"பதிவேட்டுடன் சரிபார்க்கப்பட்டது:" if ta
+            else f"Checked {len(results)} application number(s) found in "
+                 f"{', '.join(filenames)} against the register:")
+    lines = []
+    for v, k in results:
+        dup = f" ({counts[v]}x in text)" if counts.get(v, 1) > 1 else ""
+        lines.append(f"{v} — {_CROSS_CHECK_LABELS[k][1 if ta else 0]}{dup}")
+    citations = sorted({e.citation for e in evidences if e.citation})
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC, text=head + "\n" + "\n".join(lines),
+        sources=filenames, document_ids=sorted({e.document_id for e in evidences}),
+        citations=citations,
+        extra={"crosscheck": [{"value": v, "label": k, "count": counts.get(v, 1)}
+                              for v, k in results],
+               "crosscheck_source": ", ".join(filenames)})
+
+
 def _fmt_number(value: float) -> str:
     if abs(value - round(value)) < 1e-9:
         return f"{int(round(value)):,}"
@@ -808,6 +1146,18 @@ async def plan_answer(
     officer_id = getattr(officer, "officer_id", None)
     if officer_id is None:
         return None
+
+    # A filter over the PREVIOUS cross-check's own results ("show only the
+    # invalid ones") needs no re-read of the file at all -- the values and
+    # their verdicts are already in the last turn's stored context. Checked
+    # ahead of everything else below, including whether the document is
+    # still active, so the filter still works even after the file's own
+    # retention window has passed (CLAUDE.md's "clear is a context reset,
+    # not a deletion" rule: the PREVIOUS ANSWER is still readable).
+    _cc_filtered = await _crosscheck_filter_followup(db, session_id, message, language)
+    if _cc_filtered is not None:
+        return _cc_filtered
+
     try:
         docs = await attachment_store.active_documents(db, officer_id, session_id)
     except Exception as e:
@@ -833,13 +1183,25 @@ async def plan_answer(
             return AttachmentPlan(kind=KIND_DETERMINISTIC, text=_expired_notice_text(language))
         return None
 
+    # "Validate these application numbers against our database" as the very
+    # FIRST message after an upload -- no prior attachment turn for
+    # `attachment_topic_active` to have seen yet, and no "file"/"document"
+    # word for `_DOC_WORDS` to catch either, just the bare pronoun "these".
+    # With exactly one document active that pronoun has only one thing it
+    # can mean, and the cross-check cue itself ("our database"/"register")
+    # is unambiguous SIS vocabulary nothing else would produce -- so this is
+    # claimed outright rather than routed through the weaker
+    # `targets_attachment` fallback, which requires `general_query` and
+    # left it to fall through to an unrelated register-wide listing instead.
+    _cc_first_turn = len(docs) == 1 and bool(_DB_CROSS_CHECK_RE.search(message or ""))
+
     topic_active = False
-    if not targets_attachment(message, intent, docs):
+    if not (targets_attachment(message, intent, docs) or _cc_first_turn):
         # A follow-up to an answer that was itself about the file ("what should I
         # carry to the field visit?") stays with the file, unless it is shaped
         # like a register query or names an application.
         if (_APPLICATION_NO_RE.search(message or "")
-                or _REGISTER_SHAPED_RE.search((message or "").lower())
+                or _is_register_shaped(message)
                 or not await attachment_topic_active(db, session_id)):
             return None
         topic_active = True
@@ -895,7 +1257,7 @@ async def plan_answer(
                                   document_ids=[str(d.id) for d in docs])
 
     return await _answer_from_selected(db, officer_id, session_id, message, language, selected,
-                                       explicit=explicit)
+                                       explicit=explicit, officer=officer)
 
 
 async def try_single_document_fallback(
@@ -943,7 +1305,8 @@ async def try_single_document_fallback(
         return None
     if len(docs) != 1:
         return None
-    return await _answer_from_selected(db, officer_id, session_id, message, language, list(docs))
+    return await _answer_from_selected(db, officer_id, session_id, message, language, list(docs),
+                                       officer=officer)
 
 
 async def _answer_from_selected(
@@ -954,6 +1317,7 @@ async def _answer_from_selected(
     language: str,
     selected: List[ChatAttachment],
     explicit: bool = True,
+    officer: Any = None,
 ) -> Optional[AttachmentPlan]:
     # ── CSV: compute, never narrate arithmetic ──────────────────────────
     csv_docs = [d for d in selected if d.file_ext == ".csv"]
@@ -961,6 +1325,20 @@ async def _answer_from_selected(
         doc = csv_docs[0]
         headers, rows = await attachment_store.csv_data(db, doc)
         if headers:
+            # "are these application numbers in our database?" / "compare this
+            # file with our register" / "is ABC123 a valid format?" -- the
+            # attachment layer otherwise answers ONLY from the file's own
+            # text and never queries the database at all, so a cross-check
+            # question found no evidence, was a "weak" (non-explicit) claim,
+            # and silently fell through to an unrelated register-wide
+            # listing (`all_service_code_applications`) that answered a
+            # question nobody asked. Checked ahead of the ordinary CSV op
+            # parse: a cross-check cue always names the register/database
+            # explicitly, something no arithmetic question does.
+            if _DB_CROSS_CHECK_RE.search(message or ""):
+                cc = await _cross_check_app_numbers(db, officer, doc, headers, rows, language)
+                if cc is not None:
+                    return cc
             # Same fix as the evidence scorer: the CSV's own filename can
             # collide with its column names ("...boundary_observations.csv"
             # carries the word "boundary", which is also half of the header
@@ -1050,6 +1428,20 @@ async def _answer_from_selected(
     if not evidences:
         evidences = await attachment_store.retrieve_evidence(
             db, officer_id, session_id, [d.id for d in selected], message)
+
+    # Cross-check cue ("are these application numbers in our database?") over
+    # a PDF/DOCX/TXT upload, OCR'd pages included -- the CSV column check
+    # above only covers a structured file. A cross-check question's own
+    # words ("database", "register") rarely appear IN the document's text,
+    # so lexical/vector retrieval above often finds nothing to score; the
+    # opening chunks of each selected file are searched directly instead.
+    if _DB_CROSS_CHECK_RE.search(message or ""):
+        _cc_evidence = evidences or await attachment_store.leading_chunks(
+            db, officer_id, session_id, [d.id for d in selected if d.file_ext != ".csv"],
+            per_document=max(1, settings.UPLOAD_RETRIEVAL_TOP_K // max(1, len(selected))))
+        cc = await _cross_check_evidence_numbers(_cc_evidence, db, officer, language)
+        if cc is not None:
+            return cc
 
     if not evidences and (is_broad_request(message) or is_overview_request(message)
                            or is_bare_file_reference(message, [d.filename for d in selected])):

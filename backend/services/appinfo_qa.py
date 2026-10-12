@@ -89,6 +89,15 @@ BARCODE, ENCERT, VERIFYPHYS, SENT, RECEIVED, RTR, OWNERCORR, MERGE, AUTOMUT, UPD
 MOBILE, CURADDR = "mobile_no", "appl_address_cur"
 PERM, MOTHER, FATHER, GENDER, DOB, OCC, TREASURY = (
     "appl_address_perm", "mother_name", "father_name", "gender", "dob", "occupation", "treasury")
+# F-Line (0178) only: igrs_form6no / relative_mobile_no / firstpage / reversepage /
+# lastpage are real columns of f_line_service_application_information_urban (read by
+# `load()`'s star-select) that had no constant, label or parse() cue at all -- so the
+# data was fetched into the row dict but no question could ever reach it. Unlike the
+# generic register-wide IGRS rule (`_igrs_can_rule_topic` in chatbot.py, which answers
+# `applications.igrs_form6_number`), this is THIS F-Line application-information
+# record's own Form 6 number column.
+IGRS6, RELMOBILE, FIRSTPAGE, REVPAGE, LASTPAGE = (
+    "igrs_form6no", "relative_mobile_no", "firstpage", "reversepage", "lastpage")
 
 
 def parse(message: str) -> List[str]:
@@ -170,6 +179,19 @@ def parse(message: str) -> List[str]:
         add(AUTOMUT)
     if "update" in ws and "remarks" in ws:
         add(UPDATE)
+    if "igrs" in ws and ws & {"form6", "form", "6"}:
+        add(IGRS6)
+    if "relative" in ws and "mobile" in ws:
+        add(RELMOBILE)
+    if "page" in ws or ws & {"firstpage", "reversepage", "lastpage"}:
+        if "first" in ws or "firstpage" in ws:
+            add(FIRSTPAGE)
+        if "reverse" in ws or "back" in ws or "reversepage" in ws:
+            add(REVPAGE)
+        if "last" in ws or "lastpage" in ws:
+            add(LASTPAGE)
+        if not (ws & {"first", "reverse", "back", "last"}):
+            add(FIRSTPAGE); add(REVPAGE); add(LASTPAGE)
     return out
 
 
@@ -215,7 +237,7 @@ def _v(x) -> Optional[str]:
     if x is None:
         return None
     s = str(x).strip()
-    return None if s in ("", "-", "0", "None", "null", "0.00", "0.0") else s
+    return None if s in ("", "-", "0", "0.00", "0.0") or s.lower() in ("none", "null") else s
 
 
 def _t(ta, en, tamil):
@@ -239,6 +261,9 @@ _LABEL = {
     OWNERCORR: ("Owner correction reason", "உரிமையாளர் திருத்த காரணம்"), MERGE: ("Merged application id", "இணைக்கப்பட்ட விண்ணப்ப எண்"),
     AUTOMUT: ("Automutated", "தானியங்கி பட்டா மாறுதல்"), UPDATE: ("Last updated", "கடைசியாக புதுப்பித்தது"), TREASURY: ("Treasury / bank", "கருவூலம் / வங்கி"),
     NAME: ("Applicant name", "விண்ணப்பதாரர் பெயர்"), APPL_STATUS: ("Application status (as recorded)", "விண்ணப்ப நிலை (பதிவில்)"),
+    IGRS6: ("IGRS Form 6 number", "IGRS படிவம் 6 எண்"), RELMOBILE: ("Relative's mobile number", "உறவினர் கைபேசி எண்"),
+    FIRSTPAGE: ("First page (recorded)", "முதல் பக்கம் (பதிவு)"), REVPAGE: ("Reverse page (recorded)", "பின் பக்கம் (பதிவு)"),
+    LASTPAGE: ("Last page (recorded)", "கடைசி பக்கம் (பதிவு)"),
 }
 
 

@@ -76,6 +76,22 @@ assert "Owner 1" not in ans_so_multi, f"Single owner should not have Owner 1 lab
 assert "• Father / husband (relative) name: சண்முக ரெட்டி" in ans_so_multi
 assert "• Relationship: மனைவி" in ans_so_multi
 
+# Test 6: "relation code of the NEW owner" must defer -- never answer from
+# THIS (old-owner) table just because "relation"/"relation code" is a bare
+# cue it otherwise claims. A bug: it used to answer confidently from the
+# wrong owner's row (OLD instead of NEW).
+for _msg in ("what is the relation code of the new owner",
+             "relationship of the new owner's record",
+             "share of the new owner",
+             "extent of the new owner"):
+    _attrs = q.attributes(_msg)
+    assert _attrs == [], f'"{_msg}" must defer (return []), not claim the OLD-owner table: {_attrs}'
+
+# "compare the new owner and the old owner" must still work -- the "new
+# owner" guard must not swallow a genuine comparison question.
+_cmp_attrs = q.attributes("compare the new owner's survey number with the old owner's survey number")
+assert _cmp_attrs == [q.COMPARE], f"comparison involving 'new owner' must still be claimed: {_cmp_attrs}"
+
 print("All answer() format tests passed successfully!")
 raise SystemExit(1 if bad else 0)
 

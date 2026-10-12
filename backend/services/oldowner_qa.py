@@ -129,6 +129,7 @@ def _clause(toks: Sequence[str], old: bool) -> List[str]:
 
 
 _COMPARE_WORDS = {"compare", "match", "consistent", "mismatch", "conflict", "different", "incorrect", "verify"}
+_NEW_OWNER_RE = re.compile(r"\bnew\s+owner'?s?\b")
 
 
 def attributes(message: str) -> List[str]:
@@ -138,6 +139,14 @@ def attributes(message: str) -> List[str]:
     whole = text.split()
     ws = set(whole)
     if "applicant" in ws:
+        return []
+    # "relation code of the NEW owner" names the proposed sub-division owner
+    # (chitta_temp_subdivclub -> application_sub_division_owners, answered by
+    # subdivision_qa), never THIS table's OLD owner -- a bare "relation"/
+    # "share"/"extent"/"patta" cue below has no "old" vs "new" awareness of
+    # its own, so without this an explicit "new owner" question was answered
+    # confidently from the wrong owner's row instead of deferring.
+    if _NEW_OWNER_RE.search(text) and not (ws & _COMPARE_WORDS):
         return []
     # "share?" / "extent?" bare, right after an owner answer -- these are owner-row
     # fields with no application-level equivalent to fall back to (unlike "status?"
@@ -202,7 +211,7 @@ def _v(x: Any) -> Optional[str]:
     if x is None:
         return None
     s = str(x).strip()
-    return None if s in ("", "-", "...", "None", "null", "0.00") else s
+    return None if s in ("", "-", "...", "0.00") or s.lower() in ("none", "null") else s
 
 
 def _t(ta: bool, en: str, tamil: str) -> str:

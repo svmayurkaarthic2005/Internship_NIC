@@ -34,6 +34,9 @@ AI = [
     ("What is the latest upadte date and remarks?", [ai.UPDATE]), ("What documants are enclosd with this applcation?", [ai.ENCL]),
     ("what is the merge service code", []),
     ("what is the applicant name", []), ("show my pending applications", []),
+    ("is the igrs form6 number recorded for this applcation?", [ai.IGRS6]),
+    ("show the relative mobile number", [ai.RELMOBILE]),
+    ("is the first, reverse and last page recorded", [ai.FIRSTPAGE, ai.REVPAGE, ai.LASTPAGE]),
 ]
 FL = [
     ("What is the transaction stauts of the F-line applcation?", [fl.TXN]),
@@ -78,9 +81,15 @@ IG = [
     ("What is the patta numbr for this IGRS owner record?", "field", [ig.PATTA]), ("What is the door no of the owner?", "field", [ig.DOOR]),
     ("What is the IGRS form 6 no?", "field", [ig.IGRSNO]), ("What is the EPIC no for this owner?", "field", [ig.EPIC]),
     ("What is the owners aadhar no?", "field", [ig.AADHAAR]), ("Is there an owner image avalable for this record?", "field", [ig.IMAGE]),
+    ("Is the CIN number recorded for this owner?", "field", [ig.CIN]),
     ("Does the IGRS patta no match the patta no in the chitta record?", "compare", [ig.PATTA]),
     ("Is the IGRS owner the same person as the chitta old owner?", "compare", []),
     ("show my pending applications", None, []),
+    # "relative's MOBILE number" names a field this table has no column for at
+    # all (its own MOBILE key is only ever the OWNER's mobile) -- bare
+    # "relative" must not claim it, or this got answered with the relative's
+    # NAME instead of correctly deferring to appinfo_qa's relative_mobile_no.
+    ("show the relative mobile number for this application", None, []),
 ]
 NW = [
     ("Who is the new ower?", "field", [nw.OWNER]), ("What is the relitive name of the new owner?", "field", [nw.RELATIVE]),
@@ -120,6 +129,20 @@ FT = [
     ("Does the registration document number agree with the transfer reason?", "compare", None),
     ("Identify any diffrences between the full-field transfer record and the new-owner record.", "compare", None),
     ("show my pending applications", None, None),
+    # "extent ... for the NEW/OLD OWNER" names newowner_qa's own extent/share
+    # columns, not this module's extent_u1/u2/u3 on the main transfer row --
+    # found live: this used to answer with the wrong table's area and
+    # silently drop "share" (this record has no share column at all). A first
+    # fix checked for separate "new"/"owner" tokens, but normalise() always
+    # collapses that phrase into one "newowner" token first, so it still slipped
+    # through on "what is the new owner's extent" (no "share" word) -- these
+    # two cover that without relying on "share" being present.
+    ("what is the recorded extent and share for the new owner of this application", None, []),
+    ("what is the new owner's extent for this application", None, []),
+    ("what is the old owner extent", None, []),
+    ("what is the extent of the return owner", None, []),
+    ("what is the extent of the returned owner for this application", None, []),
+    ("what is the extent of this application", "field", [ft.EXTENT]),
 ]
 SA = [
     ("Are there any SD attachements for applcation 2026/0154/02/015395?", "exists"), ("How many attachements are there for this applcation?", "count"),
@@ -132,6 +155,14 @@ SA = [
     ("Are all attachements associated with applcation 2026/0154/02/015395?", "list"),
     ("SD இணைப்புகள் எத்தனை?", "count"),
     ("what is in the document I uploaded", None), ("show my pending applications", None), ("what is an attachment", None),
+    # ordinal slicing -- "second attachment" used to be answered with the
+    # same full unordered list as a bare "show the attachments"
+    ("show the second SD attachment for this application", "ordinal"),
+    ("show the first SD attachment for this application", "ordinal"),
+    ("show the last SD attachment for this application", "ordinal"),
+    ("show SD attachment number 2 for this application", "ordinal"),
+    # a bare digit inside the APPLICATION NUMBER itself must never be read as an ordinal
+    ("what SD attachments are there for 2026/0154/02/012547", "list"),
 ]
 TQ = [
     ("What is the survay no in the TSLR sktech?", "field", [tq.SURVEY]), ("What is the old patta numbr in the TSLR sktech?", "field", [tq.OLDPATTA]),
@@ -151,6 +182,16 @@ UM = [
     ("Compare ext u1 u2 u3 before and after the modification.", "compare", ["extent"]), ("Which fields remained unchanged in the modification?", "compare", []),
     ("Compare the modification status with the correction workflow status.", "status_flow", []),
     ("show my pending applications", None, None), ("modify my profile", None, None),
+    # "new/old patta NUMBER" clearly names the real new_patta_no /
+    # existing_patta_no column, never the oldpatta/newpatta pair (which is
+    # blank in every record) -- normalise() collapses "new patta" into one
+    # "newpatta" token before a separate-word check could ever see it, so
+    # this used to always answer with two blank "not recorded" lines instead
+    # of the real value.
+    ("What is the new patta number for this modification?", "field", ["new_patta"]),
+    ("What is the new patta no?", "field", ["new_patta"]),
+    ("What is the old patta number for this modification?", "field", ["existing_patta"]),
+    ("What is the new patta?", "field", ["old_new_patta"]),
 ]
 NA = [
     ("Who is the Natham ower?", "field", ["owner"]), ("What is the Natham owners relitive name?", "field", ["relative"]),
@@ -224,7 +265,20 @@ for m, desks, mode, extra in CM:
 for m, want in AI:
     if ai.parse(m) != want:
         bad.append((m, ai.parse(m), want))
+
+# A raw-SQL column holding the literal string "NULL" or "None" (any case -- an
+# upstream ETL convention, not a Python None) must read as absent, the same
+# as a real NULL. Each of these modules' own `_v()` sentinel-stripper used a
+# case-SENSITIVE check (only lowercase "null"/"None"), so a column actually
+# storing "NULL" (all caps, as several loaders write it) passed through as a
+# truthy value and was rendered as if it were real recorded data.
+import backend.services.othercode_detail as oc
+for _mod, _name in ((cm, "cmflow_qa"), (fl, "fline_qa"), (oc, "othercode_detail"),
+                     (sa, "sdattach_qa")):
+    for _literal in ("NULL", "Null", "NONE", "None", "null", "none"):
+        if _mod._v(_literal) is not None:
+            bad.append((f"{_name}._v({_literal!r})", _mod._v(_literal), None))
 for b in bad:
     print("FAIL", b)
-print(f"{len(CM) + len(AI) + len(FL) + len(MG) + len(XC) + len(IG) + len(NW) + len(RET) + len(FT) + len(SA) + len(TQ) + len(UM) + len(NA) + 2 - len(bad)}/{len(CM) + len(AI) + len(FL) + len(MG) + len(XC) + len(IG) + len(NW) + len(RET) + len(FT) + len(SA) + len(TQ) + len(UM) + len(NA) + 2} ok")
+print(f"{len(CM) + len(AI) + len(FL) + len(MG) + len(XC) + len(IG) + len(NW) + len(RET) + len(FT) + len(SA) + len(TQ) + len(UM) + len(NA) + 2 + 24 - len(bad)}/{len(CM) + len(AI) + len(FL) + len(MG) + len(XC) + len(IG) + len(NW) + len(RET) + len(FT) + len(SA) + len(TQ) + len(UM) + len(NA) + 2 + 24} ok")
 raise SystemExit(1 if bad else 0)

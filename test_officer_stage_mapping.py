@@ -9,7 +9,7 @@ Two confirmed defects, found by reading the property body against the
 
 1. No ZDT branch at all. A "Zonal Level Tahsildar" or "ZDT" designation fell
    to the final `else` and got "SIS" -- CLAUDE.md's own workflow-role table
-   maps ZDT/HQDT to the TAHSILDAR stage (the same desk the NISD chain's
+   maps ZDT to the TAHSILDAR stage (the same desk the NISD chain's
    Tahsildar sits at), and `chatbot.py`'s own `_WFH_STAGE_ALIASES` already
    treats "zdt" as an alias for "TAHSILDAR" elsewhere -- `officer_stage` was
    the one place that had not caught up.
@@ -78,7 +78,7 @@ check('"Deputy Inspector Surveyor" -> DIS', stage_for("Deputy Inspector Surveyor
 check('"DIS Officer" -> DIS', stage_for("DIS Officer") == "DIS")
 check('"Tahsildar" -> the UPPERCASE value current_stage actually stores',
       stage_for("Tahsildar") == "TAHSILDAR", stage_for("Tahsildar"))
-check('"Zonal Level Tahsildar" -> TAHSILDAR (CLAUDE.md: ZDT/HQDT share the Tahsildar desk)',
+check('"Zonal Level Tahsildar" -> TAHSILDAR (CLAUDE.md: ZDT shares the Tahsildar desk)',
       stage_for("Zonal Level Tahsildar") == "TAHSILDAR")
 check('"ZDT" -> TAHSILDAR', stage_for("ZDT") == "TAHSILDAR")
 check('"zdt" (lowercase) -> TAHSILDAR', stage_for("zdt") == "TAHSILDAR")

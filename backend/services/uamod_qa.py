@@ -155,12 +155,29 @@ def parse(message: str) -> Optional[Dict[str, Any]]:
         add("occ")
     if "remarks" in ws:
         add("remarks")
-    if ws & {"oldpatta", "newpatta"}:
+    # "new patta NUMBER/NO" clearly means the real `new_patta_no` column, not
+    # the `oldpatta`/`newpatta` pair (blank in every record -- see the
+    # "old_new_patta" rendering below). But `normalise()` above always
+    # collapses "new patta" into one "newpatta" token BEFORE this runs, so a
+    # check for separate "new" + "patta" + "number" tokens (as originally
+    # written) could never fire -- "new patta number" became {"newpatta",
+    # "number"}, not {"new", "patta", "number"}, so every such question fell
+    # through to "old_new_patta" and reported two blank columns instead of
+    # the real one. Checked on the collapsed token + a trailing qualifier
+    # instead; bare "new patta" with no "number"/"no" stays ambiguous and
+    # goes to the comparison-shaped "old_new_patta" answer as before.
+    if "newpatta" in ws and ws & {"number", "no"}:
+        add("new_patta")
+    elif "oldpatta" in ws and ws & {"number", "no"}:
+        # the real "old"/current patta equivalent is `existing_patta_no` --
+        # there is no separate `old_patta_no` column, only the blank
+        # `oldpatta` pair column -- so "what is the OLD patta NUMBER" means
+        # the real field, same reasoning as "new patta number" above.
+        add("existing_patta")
+    elif ws & {"oldpatta", "newpatta"}:
         add("old_new_patta")
     if "existingpatta" in ws:
         add("existing_patta")
-    if "new" in ws and "patta" in ws and "number" in ws:
-        add("new_patta")
     if "tempsubdivision" in ws:
         add("temp_subdiv")
     if ws & {"form6", "form7", "form8"}:

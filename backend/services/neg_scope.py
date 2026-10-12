@@ -42,15 +42,18 @@ _SUFFIX = re.compile(
     rf"(?:-?\s*(?:um|யும்|ம்)\s*)?"
     rf"(?:illama|illamal|illatha|illaatha|allatha|alla|vendam|venda|thavira|thavirthu|ozhichu|illai|illa|"
     rf"இல்லாத{_TA}*|இல்லாமல்|இல்லை|அல்லாத{_TA}*|தவிர{_TA}*|வேண்டாம்)(?![a-z])", re.IGNORECASE)
-# "<X> சேர்க்காதே" / "சேர்க்க வேண்டாம்" / "சேர்க்காமல்" -- "don't ADD/include X" -- is how
-# an officer naturally asks to EXCLUDE X. Unlike `_SUFFIX` above, the negation here sits
-# in a separate VERB word ("சேர்க்க", to add/include) with its own negative conjugation,
-# not a particle glued onto the term itself, so `_SUFFIX` never matches it. An optional
+# "X-ACC சேர்க்காதே / சேர்க்க வேண்டாம் / சேர்க்காமல்" -- "don't ADD/include X" -- a separate
+# verb-based exclusion _SUFFIX never covers: there, the negation particle (இல்லாத/தவிர/வேண்டாம்/...)
+# attaches straight onto the term; here the officer names an action ("சேர்க்க", to add/include) with
+# its own negative conjugation, with the term and the verb as two separate words. Found live: "...
+# நிராகரிக்கப்பட்டவற்றைச் சேர்க்காதே" ("don't include the rejected ones") was not recognised as an
+# exclusion at all and the listing silently fell through to the opposite reading. An optional
 # noun ("applications"/விண்ணப்பங்களை) may sit between the term and the verb.
 _SUFFIX_VERB = re.compile(
-    rf"(?<!\w)(?P<t>{_TERM})(?:\s+(?:ones?|applications?|apps?|விண்ணப்ப{_TA}*|கோப்பு{_TA}*))*\s+"
-    rf"(?:சேர்க்காதே{_TA}*|சேர்க்காமல்{_TA}*|சேர்க்க\s+வேண்டாம்|"
-    rf"serk\w*(?:adhe|aadhe|amal|aamal)\w*|serka\s*vend\w*)", re.IGNORECASE)
+    rf"(?<!\w)(?P<t>{_TERM})(?:\s+(?:ones?|applications?|apps?|விண்ணப்ப{_TA}*|கோப்பு{_TA}*|{_TA}+))*\s+"
+    rf"(?:சேர்க்க(?:ாதே{_TA}*|ாமல்{_TA}*|ாது|\s+வேண்டாம்)|"
+    rf"serkk?\w*(?:adhe|aadhe|amal|aamal|aadhu)\w*|serkk?a\s*vend\w*)(?![a-z])",
+    re.IGNORECASE)
 _SEP = re.compile(r"\s*(,|and|or|nor|&|/)\s*(?:(?:" + _CUE_ALL + "|" + _CUE_ONE + r")\s*)?", re.IGNORECASE)
 
 _STATUS_TA = (("அங்கீகரி", "approved"), ("ஒப்புத", "approved"), ("நிராகரி", "rejected"),
@@ -260,6 +263,41 @@ def _unexclude(message: str, prior_ex: Optional[Dict[str, List[str]]]):
         return None
     terms = _terms(m.group("term"))
     return terms or None
+
+
+_INCLUDE_CUE = re.compile(
+    rf"\binclude\s+(?:every\s+|all\s+|any\s+)?({_TERM})(?:\s+(?:ones?|applications?|apps?))*",
+    re.IGNORECASE)
+_CONTRA_LABEL = {"pending": "pending", "approved": "approved", "rejected": "rejected",
+                 "in_progress": "in progress", "escalated": "escalated",
+                 "isd": "ISD", "nisd": "NISD", "csc": "CSC", "citizen": "citizen portal",
+                 "sub_registrar": "Sub-Registrar"}
+
+
+def detect_contradiction(message: str) -> Optional[str]:
+    """"exclude rejected applications, but include rejected ones too" excludes
+    and (re-)includes the SAME value in one breath. `rewrite()`'s `ex` set only
+    ever grows (there is no same-message "un-exclude" the way a later turn's
+    "include rejected too" can cancel a PRIOR turn's exclusion via
+    `_unexclude`), so this silently resolved to "excluding rejected" with no
+    sign the "include ... too" half was ever read -- exactly the "silently
+    choose whichever filter was parsed last" failure this project's own audit
+    notes warn against. Returns a clarification question naming the
+    conflicting value, or None when the message carries no such
+    self-contradiction.
+    """
+    if not message or _APP_NO.search(message):
+        return None
+    ex, _ = parse(message)
+    if not ex:
+        return None
+    for m in _INCLUDE_CUE.finditer(message):
+        hit = _classify(m.group(1))
+        if hit and hit[1] in ex.get(hit[0], set()):
+            label = _CONTRA_LABEL.get(hit[1], hit[1])
+            return (f'This message both excludes and includes "{label}" applications -- '
+                    f'which did you mean: show them, or leave them out?')
+    return None
 
 
 def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,

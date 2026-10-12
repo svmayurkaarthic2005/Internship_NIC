@@ -46,7 +46,7 @@ def _v(x) -> Optional[str]:
     if x is None:
         return None
     s = str(x).strip()
-    return None if s in ("", "-", "None", "null") else s
+    return None if s in ("", "-") or s.lower() in ("none", "null") else s
 
 
 def _extent(u1, u2, u3) -> Optional[str]:

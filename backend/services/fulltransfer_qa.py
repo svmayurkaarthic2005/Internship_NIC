@@ -65,6 +65,14 @@ def normalise(message: str) -> str:
     t = re.sub(r"\bfull[\s\-]*field\b", " fullfield ", t)
     t = re.sub(r"\bnew[\s\-]*owner\b", " newowner ", t)
     t = re.sub(r"\bold[\s\-]*owner\b", " oldowner ", t)
+    # "return[ed] owner" names full_field_patta_transfer_return_owner
+    # (newowner_qa's own return_field kind), the same way "new owner" / "old
+    # owner" name THEIR tables above -- same collapsing so the EXTENT guard
+    # below can check for it the same way. Found live: "what is the extent of
+    # the return owner" was claimed here (the wrong table) exactly like the
+    # already-fixed new/old owner cases, because "return" and "owner" were
+    # never collapsed and so never excluded.
+    t = re.sub(r"\breturn(?:ed)?[\s\-]*owner\b", " returnowner ", t)
     t = re.sub(r"[?!.:()\"',;/&]", " ", t)
     return re.sub(r"\s+", " ", " ".join(_canon(x) for x in re.findall(r"[a-z0-9]+|[^\sa-z0-9]+", t))).strip()
 
@@ -116,7 +124,19 @@ def parse(message: str) -> Dict[str, Any]:
         add(OLDPATTA)
     if "land" in ws and "type" in ws and "code" in ws:
         add(LANDTYPE)
-    if ws & {"extent", "u1", "u2", "u3"} and "ares" not in ws:
+    # "extent ... for the NEW/OLD OWNER" (or "extent and share") names
+    # full_field_patta_transfer_new_owner / _old_owner's own extent column
+    # (newowner_qa's EXTENT key), never this module's extent_u1/u2/u3 on the
+    # main transfer row -- found live: "what is the recorded extent and share
+    # for the new owner of X" answered only with THIS module's u1/u2/u3 area
+    # (the wrong table) and silently dropped "share" entirely. The first fix
+    # here checked for separate "new"/"owner" tokens, but normalise() (above)
+    # always collapses "new owner" / "old owner" into one "newowner" /
+    # "oldowner" token first, so that check was never true and the guard did
+    # nothing except via the unrelated "share" exclusion -- "what is the new
+    # owner's extent" (no "share") still slipped through uncaught.
+    if (ws & {"extent", "u1", "u2", "u3"} and "ares" not in ws
+            and not (ws & {"newowner", "oldowner", "returnowner"}) and "share" not in ws):
         add(EXTENT)
     if "ares" in ws and ws & {"extent", "area"}:
         add(EXTENT_ARES)

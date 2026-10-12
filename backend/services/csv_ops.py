@@ -363,7 +363,23 @@ def parse_csv_question(question: str, headers: Sequence[str],
             return None
         return CsvOperation(op=OP_GROUP, group_column=group_col, conditions=conds)
 
-    return CsvOperation(op=op, conditions=conds)
+    if op == OP_FILTER and column is None and not conds:
+        # "show me the rows" / "don't show that one" with no resolvable
+        # column and no condition names nothing to project -- answering it
+        # anyway reads `len(matched)` (an int) as a `list` in
+        # `render_csv_result`'s OP_FILTER branch and prints "0 match(es)"
+        # for a file that matched every row. Too vague to compute; fall
+        # through to the ordinary evidence path instead of a false zero.
+        return None
+
+    # The resolved projection column must ride along -- OP_FILTER's own
+    # execution only emits per-row values when `operation.column` is set
+    # (see `execute()`); dropping it here made every "list the X" / "show
+    # me the X" question that matched an explicit op word (as opposed to
+    # the bare-projection shortcut above) report "0 match(es)" even when
+    # every row matched, because `res.value` then stayed the bare int
+    # `len(matched)` and `render_csv_result` only renders a `list` value.
+    return CsvOperation(op=op, column=column, conditions=conds)
 
 
 # ── execution ────────────────────────────────────────────────────────────────
