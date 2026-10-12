@@ -1787,7 +1787,13 @@ def _no_evidence_for_llm(original: str, intent, structured_data, resolved: str =
 
 
 def _clarification_reply(language: str) -> str:
-    if language in ("ta", "tanglish"):
+    # Tanglish is Tamil written in Latin script. Keep it distinct from a Tamil-
+    # script response; otherwise a correctly detected Tanglish query still gets
+    # a reply in a different writing system.
+    if language == "tanglish":
+        return ("Enna kekkireenga-nu puriyala. Application, survey number, service code, "
+                "field visit illa workflow pathi kelunga.")
+    if language == "ta":
         return ("நீங்கள் என்ன கேட்கிறீர்கள் என்று புரியவில்லை. விண்ணப்பம், நில அளவை எண், சேவை, "
                 "கள ஆய்வு அல்லது பணிப்பாய்வு பற்றி கேளுங்கள்.")
     return ("I'm not sure what you mean. Please ask about an application, survey number, "
@@ -4041,10 +4047,18 @@ def _is_capability_question(message: str) -> bool:
 
 
 def _scope_reply(language: str, capability: bool = False) -> str:
-    """One line naming what the SIS assistant is for. Used both for a clearly
-    off-topic message and for 'what can you do'."""
-    is_tamil = language in ("ta", "tanglish")
-    if is_tamil:
+    """One line naming what the SIS assistant is for, in the user's writing style."""
+    if language == "tanglish":
+        body = (
+            "Naan Tamil Nadu Survey Department-oda SIS assistant. Application status, ella service codes, "
+            "workflow, field visits, owner/patta details, subdivision, unga jurisdiction pathi help panna mudiyum.")
+        if capability:
+            return (body + " Try: 'my pending applications', 'F-Line applications', "
+                    "'which service code has the most', 'my field visits this week', "
+                    "'what is service code 0154'. Application details venumna, unga kitta irukkura "
+                    "application number-ai share pannunga. Enna check pannanum?")
+        return body + " General topics-ku help panna mudiyadhu."
+    if language == "ta":
         body = (
             "நான் தமிழ்நாடு நில அளவைத் துறையின் SIS உதவியாளர். விண்ணப்ப நிலை, "
             "பணிப்பாய்வு, கள ஆய்வுகள், உரிமையாளர் / பட்டா விவரங்கள், உட்பிரிவுகள், "
@@ -4057,9 +4071,11 @@ def _scope_reply(language: str, capability: bool = False) -> str:
         "with applications of every service code and their status, the mutation workflow, field "
         "visits, owner and patta details, sub-divisions, and your jurisdiction.")
     if capability:
-        return (body + " Try: 'my pending applications', 'status of 2026/0153/02/048323', "
-                "'F-Line applications', 'details of 2026/0158/02/000002', 'approved plus rejected', 'which service code has the most', "
-                "'my field visits this week', 'what is service code 0154'. I cover every service code, not only ISD / NISD. What would you like to check?")
+        return (body + " Try: 'my pending applications', 'F-Line applications', "
+                "'approved plus rejected', 'which service code has the most', "
+                "'my field visits this week', or 'what is service code 0154'. "
+                "For an application-specific question, provide the application number you already have. "
+                "I cover every service code, not only ISD / NISD. What would you like to check?")
     return body + " I can't help with general topics outside that."
 
 
