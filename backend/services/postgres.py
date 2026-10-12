@@ -1666,6 +1666,71 @@ async def get_officer_workload(
         return {"total_active": 0, "error": str(e)}
 
 
+async def get_officer_workload_applications(db: AsyncSession, officer: OfficerContext) -> Dict[str, Any]:
+    """The individual applications behind `get_officer_workload()`'s counts.
+
+    "What is my workload?" -> "show" used to fail ("I do not know which
+    application or list you mean") because the workload answer is pure
+    aggregate counts -- no application numbers were ever returned for a
+    follow-up to resolve against. Re-running a GENERIC "pending applications"
+    query for "show" would not do: that query (`get_all_service_code_applications`,
+    via `service_register_entries`) is never stage-pinned for ANY code, while
+    the workload's own ISD/NISD count IS pinned to the officer's current
+    desk (`Application.current_stage == officer_stage`) -- so it would show
+    more ISD/NISD files than the workload just counted, a scope mismatch the
+    officer has no way to notice.
+
+    This reruns the SAME two business rules `get_officer_workload()` counts
+    by, row-for-row: ISD/NISD files at the officer's own stage with an
+    active status (`get_officer_applications(status=ACTIVE_STATUSES)`), plus
+    every other service code's pending register rows (the same query
+    `get_officer_workload()`'s `by_code_rows` runs). The combined count
+    always equals `total_active_all_codes`.
+    """
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    try:
+        if not officer or not officer.jurisdiction_ids:
+            return {"count": 0, "applications": [], "query_type": "Workload Applications"}
+
+        isd_nisd = await get_officer_applications(db, officer, status=list(ACTIVE_STATUSES))
+        apps: List[Dict[str, Any]] = []
+        for a in isd_nisd.get("applications", []):
+            code = {"ISD": "0154", "NISD": "0153"}.get(a.get("type"))
+            apps.append({
+                "application_number": a.get("application_number"),
+                "application_type": a.get("type"),
+                "service_code": code,
+                "service_name": SIS_URBAN_SERVICES.get(code, {}).get("name", a.get("type")),
+                "survey_no": a.get("survey_no"),
+                "subdivision_no": a.get("sub_division_no"),
+                "status": a.get("status"),
+                "stage": a.get("stage"),
+                "submission_channel": a.get("submission_channel"),
+                "submission_date": a.get("submission_date"),
+                "ward_number": a.get("ward_number"),
+                "ward_name": "N/A",
+                "block_number": a.get("block_number"),
+                "block_name": "N/A",
+                "town_name": a.get("town_name"),
+                "taluk_name": a.get("taluk_name"),
+                "district_name": a.get("district_name"),
+            })
+
+        other = await get_all_service_code_applications(db, officer, status="pending")
+        apps.extend(r for r in other.get("applications", [])
+                    if r.get("service_code") not in ("0153", "0154"))
+
+        return {
+            "count": len(apps),
+            "applications": apps,
+            "query_type": "Workload Applications",
+            "empty_note": None if apps else "No active applications found in your jurisdiction.",
+        }
+    except Exception as e:
+        logger.error(f"Error getting officer workload applications: {e}")
+        return {"count": 0, "applications": [], "query_type": "Workload Applications", "error": str(e)}
+
+
 def _application_jurisdiction_subquery(jurisdiction_filters):
     """Subquery of application ids whose survey number falls inside the officer's jurisdiction."""
     return (

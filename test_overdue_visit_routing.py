@@ -35,6 +35,17 @@ OVERDUE_INTENT_CASES = [
     ("show the second overdue visit", "fv_overdue_inspections"),
     ("show all overdue visits", "fv_overdue_inspections"),
     ("which field visits are overdue?", "fv_overdue_inspections"),
+    # "Give me the application number, survey number, and subdivision number
+    # of the second overdue visit." -- `_is_list_action` (rag.py) recognised
+    # "show"/"list"/"get"/... but not "give", so this (and `_big_plan()`'s
+    # own per-field split of it, see test_big_message.py) fell through to the
+    # generic `field_visits` intent, which carries no overdue-only, ordinal-
+    # sorted set for "second" to resolve against -- the whole unfiltered
+    # visit table was returned instead.
+    ("Give me the application number, survey number, and subdivision number "
+     "of the second overdue visit.", "fv_overdue_inspections"),
+    ("give me the second overdue visit", "fv_overdue_inspections"),
+    ("tell me the survey number of the second overdue visit", "fv_overdue_inspections"),
     # the application-level sense must be untouched
     ("how many applications are overdue", "overdue_applications"),
     ("show overdue applications", "overdue_applications"),
@@ -87,6 +98,26 @@ def run():
         got = cb._is_ordinal_visit_reference(msg)
         if got != expected:
             failures.append(f"_is_ordinal_visit_reference({msg!r}) = {got!r}, expected {expected!r}")
+
+    # `_big_plan()` splits "Give me A, B, and C of the second overdue visit."
+    # into one bare-field question per field ("application number of the
+    # second overdue visit"), which carries no list verb of its own and so
+    # parses fresh to the generic `field_visits`, not `fv_overdue_inspections`
+    # -- `_maybe_resolve_fresh_visit_ordinal`'s own intent gate must accept
+    # `field_visits` too (on top of `fv_visit_plan`/`fv_overdue_inspections`),
+    # relying on `_is_ordinal_visit_reference` as the real, narrower gate.
+    _split_piece = "application number of the second overdue visit"
+    if parse_intent(_split_piece, prev_intent=None) != "field_visits":
+        failures.append(f"parse_intent({_split_piece!r}) regressed away from field_visits "
+                        "-- update the field_visits branch in _maybe_resolve_fresh_visit_ordinal's docstring/gate check")
+    if not cb._is_ordinal_visit_reference(_split_piece):
+        failures.append(f"_is_ordinal_visit_reference({_split_piece!r}) = False, expected True")
+    import inspect
+    _gate_src = inspect.getsource(cb._maybe_resolve_fresh_visit_ordinal)
+    if '"field_visits"' not in _gate_src:
+        failures.append("_maybe_resolve_fresh_visit_ordinal's intent gate no longer admits "
+                        "'field_visits' -- a _big_plan()-split field question would stop "
+                        "resolving its ordinal again")
 
     if failures:
         print(f"{len(failures)} failure(s):")

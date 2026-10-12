@@ -94,6 +94,8 @@ class ExtractedDocument:
     truncated: bool = False
     csv_headers: Optional[List[str]] = None
     csv_rows: Optional[List[Dict[str, str]]] = None   # row_number == index + 1
+    ocr_pages: List[int] = field(default_factory=list)      # pages read via OCR
+    failed_ocr_pages: List[int] = field(default_factory=list)  # had no native text AND OCR found nothing
 
     @property
     def char_count(self) -> int:
@@ -388,7 +390,29 @@ def _from_csv(raw: bytes) -> ExtractedDocument:
     return doc
 
 
+# A page with fewer extractable characters than this is treated as a scan and
+# sent to OCR instead — mirrors `OCR_MIN_CHARS_PER_PAGE` in `backend/ingest.py`,
+# which runs the identical rule for the offline reference corpus. Kept as its
+# own constant rather than imported: this module stays importable without the
+# app (see the module docstring), and `backend.ingest` is not.
+OCR_MIN_CHARS_PER_PAGE = 20
+
+
 def _from_pdf(raw: bytes) -> ExtractedDocument:
+    """Native text first, per page; OCR only the pages that need it.
+
+    A PDF with ordinary searchable pages mixed with scanned/image-only pages
+    used to be read wrong at the DOCUMENT level: OCR only ran when pypdf found
+    NO text anywhere in the whole file (`not doc.has_text`), so a single
+    selectable page was enough to make every image-only page come back silent
+    -- no segment, no error, nothing citing it -- while the document as a
+    whole reported `STATUS_OK`. An officer asking about something that was
+    only on the scanned page got "I could not find this in the uploaded
+    document," with no hint that a page had been skipped. Fixed by checking
+    each page's own native-text length against `OCR_MIN_CHARS_PER_PAGE`, the
+    same rule and threshold `backend/ingest.py` already uses for the offline
+    corpus, OCRing only the pages that actually need it.
+    """
     try:
         from pypdf import PdfReader
     except ImportError as e:  # pragma: no cover - depends on environment
@@ -414,18 +438,33 @@ def _from_pdf(raw: bytes) -> ExtractedDocument:
             f"This PDF has {page_count} pages; the limit is {MAX_DOC_PAGES}. "
             f"Upload only the relevant pages.")
 
-    doc = ExtractedDocument(page_count=page_count)
-    for i, page in enumerate(reader.pages):
+    native_text: List[str] = []
+    for page in reader.pages:
         try:
-            body = (page.extract_text() or "").strip()
+            native_text.append((page.extract_text() or "").strip())
         except Exception:
-            body = ""
-        if body:
-            doc.segments.append(Segment(body, {"kind": "page", "page": i + 1}))
+            native_text.append("")
+
+    needs_ocr = [i for i, t in enumerate(native_text) if len(t) < OCR_MIN_CHARS_PER_PAGE]
+    ocr_text = _ocr_pdf_pages(raw, needs_ocr) if needs_ocr else {}
+
+    doc = ExtractedDocument(page_count=page_count)
+    for i, native in enumerate(native_text):
+        if i in needs_ocr:
+            found = (ocr_text.get(i) or "").strip()
+            if found:
+                doc.segments.append(Segment(found, {"kind": "page", "page": i + 1}))
+                doc.ocr_pages.append(i + 1)
+            elif native:
+                # OCR found nothing better than the (short) native text -- keep
+                # the native text rather than discarding a genuine short page.
+                doc.segments.append(Segment(native, {"kind": "page", "page": i + 1}))
+            else:
+                doc.failed_ocr_pages.append(i + 1)
+        elif native:
+            doc.segments.append(Segment(native, {"kind": "page", "page": i + 1}))
+
     if not doc.has_text:
-        ocr_doc = _ocr_pdf_fallback(raw, page_count)
-        if ocr_doc is not None:
-            return ocr_doc
         doc.status = STATUS_NO_TEXT
         doc.detail = (
             "No selectable text found in this PDF, and OCR found nothing "
@@ -436,6 +475,16 @@ def _from_pdf(raw: bytes) -> ExtractedDocument:
             "set of page images, and the OCR engine (Tesseract) is not "
             "installed on this server. Upload a text PDF, or paste the text "
             "into the chat.")
+    elif doc.ocr_pages or doc.failed_ocr_pages:
+        parts = []
+        if doc.ocr_pages:
+            parts.append(f"page(s) {', '.join(str(p) for p in doc.ocr_pages)} read via OCR "
+                         f"(Tamil+English) rather than selectable text — verify critical "
+                         f"numbers against the original scan")
+        if doc.failed_ocr_pages:
+            parts.append(f"page(s) {', '.join(str(p) for p in doc.failed_ocr_pages)} had no "
+                         f"selectable text and OCR could not read them either")
+        doc.detail = "; ".join(parts) + "."
     return doc
 
 
@@ -454,8 +503,8 @@ def _tesseract_available() -> bool:
         return False
 
 
-def _ocr_pdf_fallback(raw: bytes, page_count: int) -> Optional["ExtractedDocument"]:
-    """OCR fallback for a scanned PDF pypdf found no selectable text in.
+def _ocr_pdf_pages(raw: bytes, page_indices: List[int]) -> Dict[int, str]:
+    """OCR exactly the given 0-based page indices of a PDF; nothing else.
 
     Reuses the exact OCR pipeline `backend/ingest.py` already runs for the
     offline reference corpus (`_ocr_page` / `_ocr_image`) -- the same engine
@@ -463,34 +512,34 @@ def _ocr_pdf_fallback(raw: bytes, page_count: int) -> Optional["ExtractedDocumen
     never adopted here -- see the origin note beside `OCR_ENGINE` in
     ingest.py), the same Tamil+English language pack, the same
     `TESSERACT_CMD` override, and the same graceful no-op when the Tesseract
-    binary is not installed -- never a guess at what a page said. Each page
-    is attempted independently, so a bad page does not drop the whole file;
-    a chunk OCR produced carries no different citation shape than a normal
-    text page (`citation_label` only ever reads `kind` / `page`), so nothing
-    downstream needs to know the text came from OCR rather than a selectable
-    layer.
+    binary is not installed -- never a guess at what a page said. Each page is
+    attempted independently (one bad page returns "" for that page, never
+    raises), and a page this finds text for carries no different citation
+    shape than a selectable-text page (`citation_label` only ever reads
+    `kind` / `page`), so nothing downstream needs to know which source it was.
+    Returns {} (not an exception) when fitz or the OCR engine is unavailable
+    -- the caller already has the native text, short as it may be.
     """
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        return None
+        return {}
     try:
         from backend.ingest import _ocr_page
     except Exception:
-        return None
+        return {}
     try:
         pdf = fitz.open(stream=raw, filetype="pdf")
     except Exception:
-        return None
-    doc = ExtractedDocument(page_count=page_count)
+        return {}
+    out: Dict[int, str] = {}
     try:
-        for i, page in enumerate(pdf):
-            text = (_ocr_page(page) or "").strip()
-            if text:
-                doc.segments.append(Segment(text, {"kind": "page", "page": i + 1}))
+        for i in page_indices:
+            if 0 <= i < pdf.page_count:
+                out[i] = _ocr_page(pdf[i])
     finally:
         pdf.close()
-    return doc if doc.has_text else None
+    return out
 
 
 def _from_docx(raw: bytes) -> ExtractedDocument:

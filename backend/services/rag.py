@@ -3024,7 +3024,17 @@ _COMPARE_STATUS_TA = (("pending", ("நிலுவை",)),
 # Words that carry their own meaning and must never be absorbed as a typo of a
 # comparison keyword. "last" is one edit from "least": left unguarded it made
 # "what about last month" a superlative and "the least time" an age question.
-_NEVER_TYPO = frozenset({"last", "late", "list", "most", "post", "are"})
+_NEVER_TYPO = frozenset({
+    "last", "late", "list", "most", "post", "are",
+    # "words" is one substitution from "wards" (ward comparison's own
+    # vocabulary): "what is ISD? in not more than 15 words" was read as a
+    # ward comparison with no named wards ("compare ward X and ward Y" with
+    # neither side given) because `_tok_index(tokens, ("ward", "wards"))`
+    # typo-matched "words" -- the exact same word/ward collision CLAUDE.md
+    # already documents for the follow-up typo corrector, here in the
+    # comparison parser instead.
+    "words",
+})
 
 
 def _tok_index(tokens: list, vocabulary, max_edits: Optional[int] = None) -> Optional[int]:
@@ -5335,7 +5345,15 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         _is_overdue = any(w in msg for w in ["overdue", "delayed", "காலதாமதமான"]) or bool(re.search(r"\blate\b", msg))
         _is_field_visit = any(w in msg for w in ["field visit", "field visits", "visit", "visits", "inspection", 
                                                    "கள ஆய்வு", "கள்ஆய்வு", "ஆய்வு"])
-        _is_list_action = any(w in msg for w in ["show", "list", "all", "display", "fetch", "get", "which", "how many", "count",
+        # "give me the application number ... of the second overdue visit"
+        # names no list verb from the original set at all -- "give" is the
+        # same request as "get", just the word an officer reaches for first
+        # when asking for specific FIELDS of one row rather than a listing.
+        # Without it, this fell through to the generic `field_visits` summary
+        # (the whole unfiltered visit table), which also then had no overdue-
+        # only, ordinal-sorted set for "second" to resolve against.
+        _is_list_action = any(w in msg for w in ["show", "list", "all", "display", "fetch", "get", "give", "tell me",
+                                                   "which", "how many", "count",
                                                    "identify", "find", "flag", "பட்டியல்", "காட்டு", "எத்தனை"])
         # A bare noun phrase IS the request. "overdue inspections" and
         # "overdue field visits" carry no list verb, so they fell through to
@@ -5785,6 +5803,17 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         # application -- answering it with both type lists ignores the question.
         if app_scoped or _APP_BACKREF_RE.search(msg):
             return "is_nisd_or_isd"
+        # Same gap this function's "16b" block guards against further down
+        # (see the comment there): "which service codes correspond to ISD
+        # and NISD?" and "ZDT handles ISD and DIS handles NISD, correct?"
+        # reach THIS earlier, unguarded check first and were dumped into a
+        # full open-applications listing before ever reaching that fix.
+        if (re.search(r'\bwhich\b.{0,25}\b(?:service\s*)?codes?\b', msg, re.IGNORECASE)
+                and not _has_list_or_app):
+            return "general_query"
+        if re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$',
+                    msg.strip(), re.IGNORECASE):
+            return "general_query"
         return "both_applications"
 
     if _has_nisd_w and _has_list_or_app:
@@ -6668,6 +6697,25 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         _has_isd_word   = bool(re.search(r'\b(isd|0154)\b', msg))
         _type_count = sum([_has_nisd_word, _has_isd_word])
         if _type_count >= 2:
+            # "and" in "ISD and NISD" was the only action word `_has_action_16`
+            # needed, so two kinds of non-listing questions were swept into
+            # a full open-applications dump instead of being answered on
+            # their own terms:
+            # - "which service codes correspond to ISD and NISD?" asks for
+            #   the CODE MAPPING (0153/0154), not the officer's files.
+            # - "ZDT handles ISD and DIS handles NISD, correct?" is a
+            #   premise to verify/correct, not a listing request -- routing
+            #   it to a bare application table answers a question nobody
+            #   asked and never addresses the (wrong) claim at all.
+            # Both stay off the applications path and fall through to
+            # `general_query` / the definitional handlers below, which can
+            # actually engage with what was asked.
+            if (re.search(r'\bwhich\b.{0,25}\b(?:service\s*)?codes?\b', msg, re.IGNORECASE)
+                    and not _has_explicit_list_action):
+                return "general_query"
+            if re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$',
+                        msg.strip(), re.IGNORECASE):
+                return "general_query"
             # Multiple types requested — combined intent
             return "both_applications"
         if _has_nisd_word:
@@ -6698,6 +6746,10 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     if bool(re.search(r'\bnisd\b', msg)) and bool(re.search(r'\bisd\b', msg)):
         if _has_app_ref:
             return "is_nisd_or_isd"
+        # Same false-premise/verification-question gap guarded against above.
+        if re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$',
+                    msg.strip(), re.IGNORECASE):
+            return "general_query"
         return "both_applications"
 
     # 17. Check documents
@@ -7271,7 +7323,17 @@ def extract_submission_channels(message: str) -> List[str]:
 # actually type instead -- just for the 3-letter codes that list
 # deliberately excludes.
 _CHANNEL_CLARIFY_VARIANTS = {
-    "sro": ("seo", "sro's", "sto", "srp", "aro", "dro", "sr0"),
+    # "dro" was in this list as a one-edit typo of "sro" until it collided
+    # with a real, distinct, documented role: the District Revenue Officer
+    # (workflow_guide.txt's escalation section; see `_GLOSSARY["dro"]` in
+    # chatbot.py). "What happens to a DRO application?" was being read as an
+    # ambiguous channel spelling and asked "CSC, SRO or Citizen?" instead of
+    # answering about the DRO at all -- the same class of trap CLAUDE.md
+    # documents for "register"/"registrar" (`_CHANNEL_FUZZY_NEVER`): a real
+    # word inside a channel code's edit budget must lose the collision, not
+    # win it. Removed rather than special-cased, the same conservative call
+    # already made there.
+    "sro": ("seo", "sro's", "sto", "srp", "aro", "sr0"),
     "csc": ("scs", "ccs", "cxc", "vsc", "cdc", "c5c"),
 }
 _CHANNEL_LISTING_SHAPE_WORDS = (

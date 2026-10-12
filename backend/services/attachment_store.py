@@ -29,6 +29,7 @@ import asyncio
 import hashlib
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import delete, select, text as sql_text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -238,6 +240,26 @@ async def _embed_chunks(texts: Sequence[str]) -> List[Optional[List[float]]]:
         return [None] * len(texts)
 
 
+async def _find_and_renew_active_match(db: AsyncSession, oid, sid, digest: str, now) -> Optional[ChatAttachment]:
+    """The officer's own active upload of these exact bytes in this session,
+    if one exists -- its expiry renewed. Shared by the ordinary pre-check in
+    `save_document` and by the race-recovery path below it: both are "found
+    a match, so reuse it" and must behave identically.
+    """
+    existing = (await db.execute(
+        select(ChatAttachment).where(
+            ChatAttachment.officer_id == oid, ChatAttachment.session_id == sid,
+            ChatAttachment.content_hash == digest,
+            ChatAttachment.is_active.is_(True), ChatAttachment.expires_at > now)
+        .order_by(ChatAttachment.created_at.desc()).limit(1))).scalar_one_or_none()
+    if existing is None:
+        return None
+    existing.expires_at = now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES)
+    await db.commit()
+    await db.refresh(existing)
+    return existing
+
+
 async def save_document(
     db: AsyncSession,
     officer_id: Any,
@@ -262,66 +284,101 @@ async def save_document(
     # The same bytes uploaded again in the same chat are the same document: reuse
     # it (and renew its window) instead of creating a second copy the officer would
     # then be asked to choose between. Scoped to officer + session, never global.
-    existing = (await db.execute(
-        select(ChatAttachment).where(
-            ChatAttachment.officer_id == oid, ChatAttachment.session_id == sid,
-            ChatAttachment.content_hash == digest,
-            ChatAttachment.is_active.is_(True), ChatAttachment.expires_at > now)
-        .order_by(ChatAttachment.created_at.desc()).limit(1))).scalar_one_or_none()
+    existing = await _find_and_renew_active_match(db, oid, sid, digest, now)
     if existing is not None:
-        existing.expires_at = now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES)
-        await db.commit()
-        await db.refresh(existing)
         logger.info("chat attachment re-uploaded; reusing existing document")
         return existing
 
-    doc = ChatAttachment(
-        officer_id=oid,
-        session_id=sid,
-        filename=filename,
-        stored_name=_write_raw(raw, ext),
-        file_ext=ext,
-        mime_type=(mime_type or "")[:120],
-        byte_size=len(raw),
-        content_hash=hashlib.sha256(raw).hexdigest(),
-        extraction_status=extracted.status,
-        status_detail=extracted.detail or None,
-        char_count=extracted.char_count,
-        page_count=extracted.page_count,
-        csv_headers=extracted.csv_headers,
-        csv_row_count=len(extracted.csv_rows) if extracted.csv_rows is not None else None,
-        is_active=(extracted.status == doc_extract.STATUS_OK),
-        expires_at=now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES),
-    )
-    db.add(doc)
-    await db.flush()      # assigns doc.id
+    stored_name = _write_raw(raw, ext)
+    # From here on, any failure must take the just-written raw file down with
+    # it -- a DB row that never committed must never leave an orphaned file
+    # on disk with nothing in PostgreSQL pointing at it, or referencing it,
+    # or ever cleaning it up (see `_sweep_orphan_raw_files`, which catches
+    # whatever this still misses, e.g. a process killed mid-write).
+    # Folded into the existing `status_detail` text column rather than a new
+    # one: truncation is a fact worth persisting (the officer re-opening this
+    # session later, or the attachment panel listing it, should see it was
+    # trimmed), but it is a short note, not structured data that anything
+    # queries on -- a new boolean column would be the second schema change
+    # this pass, for something a sentence already covers.
+    _detail = extracted.detail or ""
+    if extracted.truncated:
+        _trim_note = "This upload was trimmed to the character limit; the tail of the document was not read."
+        _detail = f"{_detail} {_trim_note}".strip() if _detail else _trim_note
+    try:
+        doc = ChatAttachment(
+            officer_id=oid,
+            session_id=sid,
+            filename=filename,
+            stored_name=stored_name,
+            file_ext=ext,
+            mime_type=(mime_type or "")[:120],
+            byte_size=len(raw),
+            content_hash=hashlib.sha256(raw).hexdigest(),
+            extraction_status=extracted.status,
+            status_detail=_detail or None,
+            char_count=extracted.char_count,
+            page_count=extracted.page_count,
+            csv_headers=extracted.csv_headers,
+            csv_row_count=len(extracted.csv_rows) if extracted.csv_rows is not None else None,
+            is_active=(extracted.status == doc_extract.STATUS_OK),
+            expires_at=now + timedelta(minutes=settings.UPLOAD_RETENTION_MINUTES),
+        )
+        db.add(doc)
+        await db.flush()      # assigns doc.id
 
-    if extracted.status == doc_extract.STATUS_OK:
-        chunks = build_chunks(filename, extracted.segments)
-        vectors = await _embed_chunks([c[0] for c in chunks])
-        for i, ((body, location), vector) in enumerate(zip(chunks, vectors)):
-            db.add(AttachmentChunk(
-                document_id=doc.id,
-                officer_id=oid,
-                session_id=sid,
-                chunk_index=i,
-                content=body,
-                content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest(),
-                char_count=len(body),
-                location=location,
-                citation=citation_label(filename, location) or filename,
-                embedding=vector,
-            ))
-        doc.chunk_count = len(chunks)
+        if extracted.status == doc_extract.STATUS_OK:
+            chunks = build_chunks(filename, extracted.segments)
+            vectors = await _embed_chunks([c[0] for c in chunks])
+            for i, ((body, location), vector) in enumerate(zip(chunks, vectors)):
+                db.add(AttachmentChunk(
+                    document_id=doc.id,
+                    officer_id=oid,
+                    session_id=sid,
+                    chunk_index=i,
+                    content=body,
+                    content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                    char_count=len(body),
+                    location=location,
+                    citation=citation_label(filename, location) or filename,
+                    embedding=vector,
+                ))
+            doc.chunk_count = len(chunks)
 
-        if extracted.csv_rows is not None:
-            for n, row in enumerate(extracted.csv_rows, start=1):
-                db.add(AttachmentRow(document_id=doc.id, officer_id=oid,
-                                     session_id=sid, row_number=n, data=row))
+            if extracted.csv_rows is not None:
+                for n, row in enumerate(extracted.csv_rows, start=1):
+                    db.add(AttachmentRow(document_id=doc.id, officer_id=oid,
+                                         session_id=sid, row_number=n, data=row))
 
-    await db.flush()
-    retired = await _retire_surplus(db, oid, sid, keep_id=doc.id)
-    await db.commit()
+        await db.flush()
+        retired = await _retire_surplus(db, oid, sid, keep_id=doc.id)
+        await db.commit()
+    except IntegrityError:
+        # Two uploads of the identical bytes, same officer and session, raced
+        # the read-then-write "is there already an active copy?" check above
+        # and both reached here before either committed. `uq_attachment_active_dedupe`
+        # (a partial unique index, active rows only -- see models.py and
+        # backend/sample_db/migrate_attachment_unique_index.py) is what makes
+        # this raise instead of silently committing a duplicate: exactly one
+        # of the two INSERTs wins, and this is the LOSING side's recovery --
+        # roll back, discard the raw file this side wrote (it lost the race,
+        # so nothing may ever reference it), and return the WINNING side's
+        # row instead, renewed, the same as an ordinary re-upload reuse.
+        await db.rollback()
+        _remove_raw(stored_name)
+        winner = await _find_and_renew_active_match(db, oid, sid, digest, now)
+        if winner is not None:
+            logger.info("chat attachment upload raced a concurrent identical "
+                        "upload; returning the winning side's document")
+            return winner
+        # The unique-violation row vanished between the rollback and this
+        # re-query (e.g. it expired in that instant) -- genuinely
+        # exceptional, not a case to paper over with an invented document.
+        raise
+    except Exception:
+        await db.rollback()
+        _remove_raw(stored_name)
+        raise
     await db.refresh(doc)
     # Not a column -- a transient note for the upload endpoint to tell the
     # officer which file(s) just aged out of this session's memory. Silently
@@ -381,6 +438,37 @@ async def active_documents(db: AsyncSession, officer_id: Any,
                ChatAttachment.is_active.is_(True),
                ChatAttachment.extraction_status == doc_extract.STATUS_OK,
                ChatAttachment.expires_at > now)
+        .order_by(ChatAttachment.created_at.desc())
+    )).scalars().all()
+    return list(rows)
+
+
+# How far back the attachment-management panel looks for a RETIRED/EXPIRED
+# row still worth showing the officer (with a re-upload action) rather than
+# letting it vanish from the list with no explanation. Independent of
+# UPLOAD_RETENTION_MINUTES -- a file that expired 10 minutes ago is still
+# worth showing as "expired"; one from last week is not worth cluttering
+# the panel with.
+RECENT_ATTACHMENT_WINDOW_HOURS = 24
+
+
+async def recent_documents(db: AsyncSession, officer_id: Any,
+                           session_id: Any) -> List[ChatAttachment]:
+    """Every attachment from this session worth showing in the attachment
+    panel: active, expired, retired (bumped past the session's file limit)
+    or failed -- not just the currently-answerable ones `active_documents()`
+    returns. Deleted rows are gone from the table entirely by design (a
+    delete is final), so they are never in this list either.
+    """
+    oid, sid = _as_uuid(officer_id), _as_uuid(session_id)
+    if oid is None or sid is None:
+        return []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=RECENT_ATTACHMENT_WINDOW_HOURS)
+    rows = (await db.execute(
+        select(ChatAttachment)
+        .where(ChatAttachment.officer_id == oid,
+               ChatAttachment.session_id == sid,
+               ChatAttachment.created_at >= cutoff)
         .order_by(ChatAttachment.created_at.desc())
     )).scalars().all()
     return list(rows)
@@ -450,8 +538,65 @@ async def cleanup_forever(session_factory) -> None:
         try:
             async with session_factory() as db:
                 await cleanup_expired(db)
+                await sweep_orphan_raw_files(db)
         except Exception as exc:
             logger.warning(f"attachment sweep failed: {exc}")
+
+
+# A raw file old enough that no in-flight upload transaction could still be
+# writing it, but young enough that it is worth telling apart from "has
+# always been orphaned" in the log. Deliberately well past any realistic
+# extraction time (UPLOAD_EXTRACTION_TIMEOUT_SECONDS is tens of seconds).
+_ORPHAN_RAW_FILE_GRACE_SECONDS = 600
+
+
+async def sweep_orphan_raw_files(db: AsyncSession) -> int:
+    """Remove raw files on disk that no `ChatAttachment` row references.
+
+    Closes the gap `save_document`'s own try/except cannot: a process killed
+    between writing the raw file and committing the row (power loss, OOM
+    kill, a worker restart mid-request) leaves a file with no DB row ever
+    pointing at it, and nothing else would ever come back to remove it --
+    unlike a row with no file, which an officer's own re-query would at
+    least surface as a readable-but-missing attachment. Skips anything
+    written in the last `_ORPHAN_RAW_FILE_GRACE_SECONDS`, so a file whose
+    insert simply has not committed YET in a concurrent, still-running
+    upload is never mistaken for an orphan and deleted out from under it.
+
+    Safe to run from multiple API workers / processes at once: each file is
+    independently checked against the DB and removed with the same
+    `missing_ok=True` unlink `_remove_raw` already uses, so two workers
+    racing on the same stale file is a harmless double-delete, not an error.
+    """
+    if not settings.UPLOAD_STORE_RAW_FILES:
+        return 0
+    d = storage_dir()
+    try:
+        on_disk = {p.name: p for p in d.iterdir() if p.is_file()}
+    except OSError as e:
+        logger.warning(f"orphan raw-file sweep could not list storage dir: {e}")
+        return 0
+    if not on_disk:
+        return 0
+    referenced = set((await db.execute(
+        select(ChatAttachment.stored_name)
+        .where(ChatAttachment.stored_name.in_(list(on_disk.keys())))
+    )).scalars().all())
+    now = time.time()
+    removed = 0
+    for name, path in on_disk.items():
+        if name in referenced:
+            continue
+        try:
+            if now - path.stat().st_mtime < _ORPHAN_RAW_FILE_GRACE_SECONDS:
+                continue
+        except OSError:
+            continue
+        _remove_raw(name)
+        removed += 1
+    if removed:
+        logger.info(f"orphan raw attachment file(s) removed: {removed}")
+    return removed
 
 
 # ─────────────────────────────────────────────────────────────────────────────

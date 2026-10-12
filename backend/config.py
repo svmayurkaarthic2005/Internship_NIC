@@ -132,6 +132,15 @@ class Settings(BaseSettings):
     # runs in a worker thread; a file that outruns this is rejected rather
     # than left holding a request open (a crafted PDF can loop pypdf).
     UPLOAD_EXTRACTION_TIMEOUT_SECONDS: float = 30.0
+    # How many extraction/OCR jobs may run at once, process-wide. OCR is CPU-
+    # bound and uncancellable once started in its worker thread (a timed-out
+    # request stops waiting, but the thread keeps running) -- this is what
+    # actually bounds concurrent CPU/RAM use when several officers upload
+    # scans at once, or when the same slow file is retried repeatedly after
+    # timing out. A request that cannot get a slot within the queue-wait
+    # window is told the server is busy rather than queued indefinitely.
+    UPLOAD_MAX_CONCURRENT_EXTRACTIONS: int = 3
+    UPLOAD_QUEUE_WAIT_SECONDS: float = 10.0
     # CSV bounds. Rows beyond the limit are dropped (and the officer told);
     # a file wider than the column limit is rejected, since a 5000-column
     # sheet is not an evidence document.
@@ -170,6 +179,23 @@ class Settings(BaseSettings):
     # path derived from the client filename, and never inside a served
     # directory.
     UPLOAD_STORE_RAW_FILES: bool = True
+    # A local directory is the right choice for THIS deployment, verified
+    # rather than assumed: `start_backend.ps1` and CLAUDE.md both launch a
+    # single `uvicorn` process with no `--workers` flag and no container
+    # orchestration, so there is exactly one filesystem for every request to
+    # share -- no cross-instance consistency problem to solve yet. It stops
+    # being the right choice the moment that changes: several workers or
+    # instances behind a load balancer would each have their OWN
+    # `UPLOAD_STORAGE_DIR` unless it is a shared/network volume, and a
+    # container restart with no persistent volume mounted here loses every
+    # raw file on disk even though the DB rows describing them survive (the
+    # DB rows are the source of truth either way -- `active_documents()` /
+    # `cleanup_expired()` never assume the file exists, but an officer asking
+    # for a "deleted-looking" file after such a restart would get a
+    # confusing refusal instead of an expected one). Moving to an object
+    # store (S3-compatible, Azure Blob, ...) is the usual fix for a
+    # multi-instance deployment; not introduced here since this project
+    # is not deployed that way.
     UPLOAD_STORAGE_DIR: str = str(_PROJECT_ROOT / "var" / "attachments")
 
 

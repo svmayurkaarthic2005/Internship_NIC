@@ -121,6 +121,7 @@ from backend.services.postgres import (
     count_rejected_by_channel,
     get_overdue_applications,
     get_officer_workload,
+    get_officer_workload_applications,
     get_application_detail,
     get_survey_detail,
     get_survey_owners,
@@ -142,7 +143,7 @@ from backend.services.postgres import (
 from backend.models import (
     ChatSession, ChatMessage, Application, SurveyNumber, Block, Ward, Town, Taluk,
     FieldVisit, ApplicationDocument, WorkflowHistory, ApplicationSubDivision,
-    OfficerJurisdiction, District, SISOfficer
+    OfficerJurisdiction, District, SISOfficer, messages_since_session_start
 )
 from backend.utils.helpers import service_code_one_liner
 from backend.utils.logger import get_logger
@@ -883,6 +884,12 @@ _DETAIL_REQUEST_PHRASES = [
     "expand on that", "expand on it",
     # bare single-word triggers ("detailed", "detail", "explain", "describe")
     "detailed", "detail", "explain", "describe",
+    # "give me a thorough explanation" / "a thorough answer" -- the noun form
+    # of "explain" and a synonym for "detailed" that weren't in this list at
+    # all, so neither `_has_detail_phrase` nor the typo-tolerant trigger-word
+    # fallback (which only budgets a 1-2 edit slip, not a different word)
+    # caught them, and the message fell through to `general_query`.
+    "explanation", "thorough",
     # Tanglish (Latin script -- \b works the same as it does for English)
     "vivaramaga solunga", "vivaramaga vilakku", "vivaramaga",
     "explain panunga", "explain pannu", "more sollu", "more vithufy",
@@ -941,6 +948,231 @@ _BRIEF_REQUEST_WORDS = ("brief", "briefly", "short", "shortly", "quick", "quickl
 _BRIEF_REQUEST_WORDS_TA = ("சுருக்கமாக", "சுருக்கமா", "சுருக்கமாய்", "சுருக்கம்",
                            "surukkamaaga", "surukkamaga", "surukkama")
 
+# Multi-word brevity cues that single-token matching against
+# `_BRIEF_REQUEST_WORDS` can't catch -- "sentence" and "words" are common
+# enough words that adding them to that list unqualified would false-match
+# unrelated messages, so they are only treated as a brevity request in these
+# specific phrasings. Without this, "explain in a sentence" / "explain in
+# simple words" carried the bare trigger word "explain" (in
+# `_DETAIL_REQUEST_TRIGGER_WORDS`) and NOTHING recognised as brief, so
+# `_is_detail_request` read it as a request for MORE detail -- the opposite
+# of what was asked -- and "tell me in one sentence" (no explain/describe
+# word at all) didn't even register as a re-explain request.
+_SENT_ADJ = (r"(?:detailed|detail|full|complete|long|short|brief|simple|plain|"
+            r"single|proper|clear|concise)")
+_BRIEF_REQUEST_PHRASES_RE = re.compile(
+    # "sentence" names the FORM (prose, not a bulleted card); an adjective
+    # before it ("in a DETAILED sentence", "a detailed sentence") names how
+    # thorough that prose should be, not a switch to the card. Without the
+    # adjective group, "in detailed sentence" fell through this regex (the
+    # bare "in sentence(s)" alternative needs "in" immediately before
+    # "sentence", with nothing but "a"/"one" allowed between them) to the
+    # bare word "detailed" in `_has_detail_phrase`, which reads any mention
+    # of "detailed" as "give the full bulleted card" -- so an explicit
+    # request for a SENTENCE still got the 9-row table.
+    rf'\bin\s+(?:a\s+|one\s+|the\s+)?(?:{_SENT_ADJ}\s+)?sentences?\b|'
+    rf'\b{_SENT_ADJ}\s+sentences?\b|'
+    r'\bsentence\s+or\s+two\b|'
+    # "sentence/short/summary FORMAT" named without a leading "in" --
+    # "don't use sentence format" has no "in" for the alternative above to
+    # anchor on.
+    r'\b(?:sentence|short|summary)\s+format\b|'
+    r'\b(?:in\s+)?simple\s+(?:words|terms|language)\b|'
+    r'\b(?:in\s+)?plain\s+(?:words|terms|language)\b|'
+    r'\bone[\s-]?liner\b|\bin\s+a\s+few\s+words\b|\bin\s+short\b',
+    re.IGNORECASE,
+)
+
+# "answer in 20 words", "explain within 25 words", "in not more than 15
+# words", "20 words or less/fewer" -- a word-count ceiling. The register
+# answers are fixed, deterministic text (never truncated or LLM-rewritten to
+# an exact length -- that risks cutting a fact mid-sentence), so this is
+# treated the same as any other brevity request: the shortest honest answer
+# already on hand (the one-liner / brief chain), not a literal N-word cut.
+# Without this, "explain within 25 words" carried the bare trigger word
+# "explain" and nothing recognised as brief, so it was read as a DETAIL
+# request and answered with the full bulleted card -- the opposite of a
+# 25-word ceiling.
+_WORD_LIMIT_RE = re.compile(
+    r'\b(?:in|within|under)\s+(?:not\s+more\s+than\s+)?\d{1,3}\s*words?\b'
+    r'|\bnot\s+more\s+than\s+\d{1,3}\s*words?\b'
+    r'|\b\d{1,3}\s*words?\s+or\s+(?:less|fewer)\b',
+    re.IGNORECASE,
+)
+
+# A NEGATED brevity instruction -- "dont explain in sentence", "not in
+# sentence format", "don't use sentence format" -- asks for the OPPOSITE of
+# the phrase it names: the full, detailed explanation, not the one-liner the
+# phrase itself describes. Without this, the negator was ignored outright:
+# `_BRIEF_REQUEST_PHRASES_RE` matched "in sentence" regardless of the "dont"
+# in front of it, so the negative instruction was read as a repeat of the
+# positive one and produced the SAME one-line answer the officer had just
+# said not to give.
+#
+# The negator must govern the format phrase itself, not some unrelated
+# clause in the same message -- "I don't understand ISD; explain it in a
+# sentence" is still a plain request for a sentence, since the "don't" there
+# negates "understand", not "in a sentence". The message is split on clause
+# boundaries first (a semicolon, a sentence end, or "but"/"however"/...), and
+# only a negator and a format cue inside the SAME clause, within a few words
+# of each other, counts.
+_CLAUSE_SPLIT_RE = re.compile(r'[;.!?]|\b(?:but|however|although|though)\b|ஆனால்', re.IGNORECASE)
+_FORMAT_NEGATOR_RE_PART = r"(?:don'?t|do\s+not|dont|never|not)"
+_FORMAT_NEGATED_RE = re.compile(
+    rf"\b{_FORMAT_NEGATOR_RE_PART}\b(?:\s+\w+){{0,4}}?\s+(?:{_BRIEF_REQUEST_PHRASES_RE.pattern})",
+    re.IGNORECASE,
+)
+# Tanglish follows the same postfix idiom `neg_scope.py` already uses for
+# "ISD vendam" (= "not ISD"): the negator trails the noun it negates, so
+# "sentence-a venda" / "short beda" negates the format word in front of it.
+_FORMAT_NEGATED_POSTFIX_RE = re.compile(
+    # the optional `[\s-]*\w{0,3}` soaks up a Tanglish case suffix ("-a", "-o")
+    # between the noun and the negator, as in "short-a beda"
+    r'\b(?:sentence|short|brief|summary|simple)\w*[\s-]*\w{0,3}[\s-]*(?:venda\w*|vendam\w*|beda\w*|illa\w*|kudathu\w*)\b',
+    re.IGNORECASE,
+)
+_FORMAT_NEGATOR_TA = ("வேண்டாம்", "இல்லை", "கூடாது")
+
+
+# "what happens at each stage?" / "what happens at every step?" -- a process
+# question phrased without the word "explain"/"detail" at all, so neither
+# `_has_detail_phrase` nor `_DETAIL_REQUEST_TRIGGER_WORDS` caught it and it
+# fell to `general_query` instead of the service-code's own detailed answer.
+# Narrow on purpose (just this one shape) -- a bare "what happens" with no
+# "stage"/"step" is left alone (it is already its own self-contained-question
+# rule elsewhere, `_followup_is_self_contained`'s "what happens" check).
+_STAGE_QUESTION_RE = re.compile(
+    r"\bwhat\s+(?:happens?|occurs?|takes?\s+place)\s+(?:at|in|during)\s+(?:each|every)\s+(?:stage|step)\b",
+    re.IGNORECASE)
+
+
+def _is_format_negation_request(message: str) -> bool:
+    """True for "don't explain in a sentence", "not in sentence format",
+    "sentence-a venda" -- a NEGATED format instruction. These ask for the
+    detailed answer, not the brief one the phrase itself names, so callers
+    must check this BEFORE treating a matched brevity phrase as a request
+    for brevity."""
+    msg = message or ""
+    if _FORMAT_NEGATED_POSTFIX_RE.search(msg):
+        return True
+    for clause in _CLAUSE_SPLIT_RE.split(msg):
+        if _FORMAT_NEGATED_RE.search(clause):
+            return True
+        if (any(neg in clause for neg in _FORMAT_NEGATOR_TA)
+                and (any(w in clause for w in _BRIEF_REQUEST_WORDS_TA)
+                     or _BRIEF_REQUEST_PHRASES_RE.search(clause))):
+            return True
+    return False
+
+
+# The mirror image of `_FORMAT_NEGATED_RE`: a negator governing a DETAIL
+# phrase ("don't explain in detail", "no need for a detailed explanation",
+# "not in detail please") asks for the SHORT answer, not a repeat of the
+# detailed one the phrase itself names. Without this, "don't explain in
+# detail" contained the bare word "detail" (one of `_DETAIL_REQUEST_PHRASES`),
+# so `_has_detail_phrase` matched it and `_is_detail_request` returned True --
+# exactly backwards from what was asked.
+_DETAIL_NEGATED_RE = re.compile(
+    rf"\b{_FORMAT_NEGATOR_RE_PART}\b(?:\s+\w+){{0,4}}?\s+(?:{_DETAIL_REQUEST_RE.pattern})"
+    # "no need for (a) detailed explanation", "no more detail(s) needed" --
+    # "no" on its own is too common a word to add to the shared negator
+    # above (it would false-match unrelated "no overdue applications"-style
+    # sentences), so this narrower, self-contained shape is checked instead.
+    r"|\bno\s+(?:need|further)\s+(?:for\s+)?(?:a\s+|more\s+)?detail(?:ed|s)?\b"
+    # "no detail", "no details" -- a short, bare refusal with nothing else in
+    # the message for `_has_detail_phrase` to misread as a POSITIVE request.
+    # The explain-reroute concatenates an unqualified follow-up with the
+    # PREVIOUS question with no punctuation between them ("no detail what is
+    # service code 0154?"), so this cannot be fenced to end-of-string the way
+    # a standalone check could be -- same unanchored shape as "no need for
+    # details" right above it.
+    r"|\bno\s+detail(?:ed|s)?\b"
+    # "skip the detail(s)", "skip detail", "avoid detail(s)" / "avoid a
+    # detailed explanation" -- "skip"/"avoid" name the same refusal as
+    # "don't"/"not" without being one of them.
+    r"|\b(?:skip|avoid)(?:ping|ing)?\b(?:\s+\w+){0,4}?\s+(?:" + _DETAIL_REQUEST_RE.pattern + r")"
+    # "without going into detail", "without a detailed explanation" -- a
+    # second common negator verb the generic pattern above doesn't carry
+    # (`_FORMAT_NEGATOR_RE_PART` is `don't`/`do not`/`dont`/`never`/`not`
+    # only).
+    r"|\bwithout\b(?:\s+\w+){0,4}?\s+(?:" + _DETAIL_REQUEST_RE.pattern + r")"
+    # "nothing too detailed", "nothing too long" -- the English idiom "nothing
+    # too X" means "not very X"; "nothing" alone is too common a word to add
+    # to the shared negator (it would false-match ordinary "nothing was
+    # found"-style sentences), so only this fixed idiom is recognised.
+    r"|\bnothing\s+too\s+(?:detailed|long|much)\b"
+    # "less detail", "slightly less detail" -- asks for LESS than whatever was
+    # just given, which is the same request as "briefly" even though no
+    # negator word ("don't"/"not"/...) appears in it at all.
+    r"|\bless\s+detail(?:ed|s)?\b"
+    # "no long explanation needed" -- "explanation" (added to
+    # `_DETAIL_REQUEST_PHRASES`) made `_has_detail_phrase` match this as a
+    # POSITIVE request; the idiom needs its own fixed shape for the same
+    # reason "nothing too X" does above ("no" alone is too common to add to
+    # the shared negator).
+    r"|\bno\s+long\s+(?:explanation|detail(?:ed|s)?)\b"
+    # "keep the explanation minimal" / "keep it minimal" -- "minimal" is a
+    # brevity word with no negator in front of it at all.
+    r"|\bminimal\b",
+    re.IGNORECASE,
+)
+
+# The negator-side vocabulary above only matches an EXACTLY-spelled detail
+# word (`_DETAIL_REQUEST_RE`), so "dont explian in detial" -- a double typo,
+# on both the negator-adjacent verb and "detail" itself -- slipped past every
+# alternative and fell through to `_is_detail_request`'s own typo-tolerant
+# fallback (`is_token_typo_match` against `_DETAIL_REQUEST_TRIGGER_WORDS`),
+# which has no notion of negation at all and read it as a positive request.
+_DETAIL_NEGATOR_WORDS = frozenset({
+    "dont", "don", "not", "never", "no", "avoid", "avoiding", "skip",
+    "skipping", "without", "less",
+})
+
+
+def _detail_negated_by_typo(message: str) -> bool:
+    """Typo-tolerant fallback for `_is_detail_negation_request`: a negator
+    token within a few words of a typo'd `_DETAIL_REQUEST_TRIGGER_WORDS` word
+    ("explian", "detial", ...). Only runs when the exact-spelling regex above
+    already found nothing, so a clean "don't explain in detail" is answered
+    by the faster, simpler regex path as before."""
+    tokens = re.findall(r"[a-zA-Z]+", message or "")
+    for i, tok in enumerate(tokens):
+        if tok.lower() not in _DETAIL_NEGATOR_WORDS:
+            continue
+        for w in tokens[i + 1:i + 6]:
+            if any(is_token_typo_match(w.lower(), target) for target in _DETAIL_REQUEST_TRIGGER_WORDS):
+                return True
+    return False
+
+
+# Tanglish postfix idiom, the mirror of `_FORMAT_NEGATED_POSTFIX_RE`:
+# "detail venda" / "vivaramaa venda" ("don't want detail(s)").
+_DETAIL_NEGATED_POSTFIX_RE = re.compile(
+    r'\b(?:detail\w*|vivaram\w*|விரிவா\w*|விவரமா\w*)[\s-]*\w{0,3}[\s-]*'
+    r'(?:venda\w*|vendam\w*|beda\w*|illa\w*|kudathu\w*)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_detail_negation_request(message: str) -> bool:
+    """True for "don't explain in detail", "not in detail", "no need for a
+    detailed explanation", "விரிவாக வேண்டாம்", "detail venda" -- a NEGATED
+    detail instruction. Still a request to (re-)explain, just in the brief
+    form, so callers check this BEFORE treating a matched detail phrase as a
+    request for more detail."""
+    msg = message or ""
+    if _DETAIL_NEGATED_POSTFIX_RE.search(msg):
+        return True
+    for clause in _CLAUSE_SPLIT_RE.split(msg):
+        if _DETAIL_NEGATED_RE.search(clause):
+            return True
+        if (any(neg in clause for neg in _FORMAT_NEGATOR_TA)
+                and (_has_detail_phrase(clause) or _STAGE_QUESTION_RE.search(clause))):
+            return True
+        if _detail_negated_by_typo(clause):
+            return True
+    return False
+
 
 def _is_explain_request(message: str) -> bool:
     """True when the officer is asking to (re-)explain the previous answer AT
@@ -951,7 +1183,23 @@ def _is_explain_request(message: str) -> bool:
     toggles the brief/full answer.
     """
     tokens = re.findall(r"[a-zA-Z]+", message or "")
+    # A NEGATED format instruction ("dont explain in sentence", "not in
+    # sentence format") is still a request to re-explain -- just not in the
+    # brief form it names. Checked first so a message with no "explain"/
+    # "detail" word of its own ("don't use sentence format") is still
+    # recognised as a re-explain follow-up.
+    if _is_format_negation_request(message):
+        return True
+    # A NEGATED detail instruction ("don't explain in detail", "detail
+    # venda") is likewise still a request to re-explain -- just in the brief
+    # form it names, not a repeat of the full one. Covers a Tamil/Tanglish
+    # negated phrase that `_has_detail_phrase` below would not otherwise
+    # recognise at all (no English trigger word, no exact Tamil phrase match).
+    if _is_detail_negation_request(message):
+        return True
     if _has_detail_phrase(message):
+        return True
+    if _STAGE_QUESTION_RE.search(message or ""):
         return True
     # A typo on the trigger word itself ("ezplain", "eplain") -- every other
     # rule in this codebase tolerates a slip within edit distance, but this
@@ -961,6 +1209,8 @@ def _is_explain_request(message: str) -> bool:
     if any(is_token_typo_match(tok, target) for tok in tokens for target in _DETAIL_REQUEST_TRIGGER_WORDS):
         return True
     if any(w in message for w in _BRIEF_REQUEST_WORDS_TA):
+        return True
+    if _BRIEF_REQUEST_PHRASES_RE.search(message or "") or _WORD_LIMIT_RE.search(message or ""):
         return True
     return any(is_token_typo_match(tok, target) for tok in tokens for target in _BRIEF_REQUEST_WORDS)
 
@@ -972,11 +1222,26 @@ def _is_detail_request(message: str) -> bool:
     appears in the same message.
     """
     tokens = re.findall(r"[a-zA-Z]+", message or "")
+    # Checked BEFORE the brevity-phrase checks below: "dont explain in
+    # sentence" contains the brevity phrase "in sentence", but the "dont" in
+    # front of it asks for the opposite -- the full explanation, not a
+    # repeat of the one-liner it just refused.
+    if _is_format_negation_request(message):
+        return True
+    # The mirror case: "don't explain in detail" contains the bare word
+    # "detail", which `_has_detail_phrase` below would otherwise match on its
+    # own -- checked first so the negator wins.
+    if _is_detail_negation_request(message):
+        return False
     if any(w in message for w in _BRIEF_REQUEST_WORDS_TA):
+        return False
+    if _BRIEF_REQUEST_PHRASES_RE.search(message or "") or _WORD_LIMIT_RE.search(message or ""):
         return False
     if any(is_token_typo_match(tok, target) for tok in tokens for target in _BRIEF_REQUEST_WORDS):
         return False
     if _has_detail_phrase(message):
+        return True
+    if _STAGE_QUESTION_RE.search(message or ""):
         return True
     return any(is_token_typo_match(tok, target)
                for tok in tokens for target in _DETAIL_REQUEST_TRIGGER_WORDS)
@@ -4927,7 +5192,17 @@ _FULLFORM_DETAIL_TOPIC = {"igrs": "igrs_who", "sro": "sro_what", "can": "can_wha
 def _fullform_detail_term(message: str, chat_history):
     """The acronym a bare "in detail" follow-up means, from the most recent
     "full form of X" exchange in the history -- or None when this message is
-    not that shape at all."""
+    not that shape at all.
+
+    Must be the actual "full form of X" / "what does X stand for" SHAPE
+    (`_fullform_term`, via `_FULLFORM_ASK_RE`), not merely a message that
+    happens to CONTAIN the acronym as a token. "What is ISD?" names "ISD" too,
+    but it is a `service_code_lookup` question, not a fullform ask -- that
+    richer handler already has its own full, documented detailed answer
+    (`describe_service_code(..., brief=False)`), and "in detailed" right
+    after it was being hijacked here first, well before intent routing ever
+    ran, and answered with this module's terse one-liner instead.
+    """
     if not _DETAIL_FOLLOWUP_RE.match((message or "").strip()):
         return None
     for m in reversed(chat_history or []):
@@ -4939,12 +5214,12 @@ def _fullform_detail_term(message: str, chat_history):
         # `message` variable, never the history. Re-applying the same fixer
         # here is what let this function find "igrs" in "irgs" at all.
         _hist_text = _fragment_typo_fix(m.get("content") or "") or (m.get("content") or "")
-        t = _FULLFORM_TERM_RE.findall(_hist_text)
-        if t:
-            return t[-1].lower()
-        # The nearest user turn named no acronym at all -- this "in detail"
-        # belongs to whatever THAT was about, not to some earlier fullform
-        # question several turns further back.
+        term = _fullform_term(_hist_text)
+        if term:
+            return term
+        # The nearest user turn was not a fullform ask (whatever else it
+        # named) -- this "in detail" belongs to whatever THAT turn actually
+        # was, not to some earlier fullform question several turns back.
         return None
     return None
 
@@ -5268,7 +5543,8 @@ async def _recent_answers(db, session_id, chat_history=None, depth: int = 5) -> 
         rows = (await db.execute(
             select(ChatMessage.content)
             .where(and_(ChatMessage.session_id == session_id,
-                        ChatMessage.role == "assistant"))
+                        ChatMessage.role == "assistant",
+                        messages_since_session_start(session_id)))
             .order_by(ChatMessage.created_at.desc())
             .limit(depth)
         )).scalars().all()
@@ -10836,9 +11112,19 @@ def _render_reformatted(parsed: dict, fmt: str, language: str) -> str:
 
 def _reformat_previous_answer(chat_history: list, fmt: str, language: str) -> str:
     """The previous assistant answer in `fmt`, or "" if it cannot be reshaped."""
-    return _render_reformatted(
-        _parse_previous_answer(_last_assistant_message(chat_history)), fmt, language
-    )
+    prev = _last_assistant_message(chat_history)
+    rendered = _render_reformatted(_parse_previous_answer(prev), fmt, language)
+    if rendered:
+        return rendered
+    # Nothing tabular/bulleted was found to reshape. If the previous answer
+    # was already a single plain-prose line (no HTML table, no bullet/field
+    # rows) and prose or a short form is what's being asked for, it already
+    # IS that -- "summarise briefly" / "in a sentence" right after a one-line
+    # service-code answer used to report "it wasn't a set of fields" instead
+    # of just repeating the sentence it already was.
+    if fmt in ("prose", "short") and prev and "<table" not in prev.lower():
+        return prev.strip()
+    return ""
 
 
 _REFORMAT_NAMES = {
@@ -12104,7 +12390,8 @@ async def _find_base_query_filters(db, session_id, officer_id):
             select(ChatMessage.structured_data)
             .where(and_(ChatMessage.session_id == session_id,
                         ChatMessage.role == "assistant",
-                        ChatMessage.created_at >= _cutoff))
+                        ChatMessage.created_at >= _cutoff,
+                        messages_since_session_start(session_id)))
             .order_by(ChatMessage.created_at.desc())
             .limit(_FOLLOWUP_CONTEXT_WINDOW)
         )).scalars().all()
@@ -12778,6 +13065,16 @@ _WORKFLOW_STEPS_WORD_RE = re.compile(
     r"|\bsteps?\b|\bstges?\b|\bstages?\b|\bprocess\b|\bprocedure\b"
     r"|படிகள்|பணிப்பாய்வு|வழிமுறை|செயல்முறை"
     r"|\bworkflow\s+steps\b", re.IGNORECASE)
+_WORKFLOW_ISD_ONLY_NOUN_RE = re.compile(
+    r"\bfield\s+verif\w*|\bfield\s+visit\w*|\bsubdivision\s+sketch|\bsketch\b"
+    r"|\btemporary\s+sub[\s-]?division", re.IGNORECASE)
+_WORKFLOW_SHARED_NOUN_RE = re.compile(
+    r"\bfinal\s+(?:digital\s+)?sign[\s-]?off|\bdsc\b|\bpatta\s+order|\bpatta\s+transfer",
+    re.IGNORECASE)
+_WORKFLOW_STEP_NOUN_RE = re.compile(
+    _WORKFLOW_ISD_ONLY_NOUN_RE.pattern + "|" + _WORKFLOW_SHARED_NOUN_RE.pattern, re.IGNORECASE)
+_WORKFLOW_STEP_ROLE_RE = re.compile(
+    r"\bsd\b|\bdis\b|\bsenior\s+draughtsman|\bdeputy\s+inspector", re.IGNORECASE)
 _WORKFLOW_LISTING_RE = re.compile(
     r"\bshow\b|\blist\b|\bdisplay\b|\bmy\b|\bpending\b|\bhow\s+many\b"
     # `\bapplic\b` only ever matched the bare word "applic", which nobody
@@ -12907,13 +13204,29 @@ def _workflow_steps_alt_text(topic: str, is_tamil: bool) -> Optional[str]:
     return _WORKFLOW_STEPS_ALT_TEXT[topic][lang]
 
 
-_GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|zdt|hqdt|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
-                   r"|sub\s+inspector\s+surveyor|deputy\s+inspector\s+surveyor|senior\s+draughtsman)")
+_GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|zdt|hqdt|dro|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
+                   r"|sub\s+inspector\s+surveyor|deputy\s+inspector\s+surveyor|senior\s+draughtsman"
+                   r"|district\s+revenue\s+officer)")
 _GLOSSARY_ALIAS = {"draughtsman": "sd", "draftsman": "sd", "seniordraughtsman": "sd",
-                   "subinspectorsurveyor": "sis", "deputyinspectorsurveyor": "dis"}
+                   "subinspectorsurveyor": "sis", "deputyinspectorsurveyor": "dis",
+                   "districtrevenueofficer": "dro"}
 _ROLE_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+is\s+the\s+role\s+of|role\s+of|what\s+does\s+(?:a\s+|an\s+|the\s+)?)\s*(?:a\s+|an\s+|the\s+)?"
     + _GLOSSARY_TERMS + r"\s*(?:do|does)?\s*[?.!]*$", re.IGNORECASE)
+# Tanglish word order puts the subject first and "role" before the question
+# particle ("zdt role enna", "tahsildar role enna?") -- `_ROLE_RE` above is
+# English-order only, and `_GLOSSARY_TA_RE` right below requires the question
+# particle immediately after the TERM with no "role" in between, so neither
+# matched this. It fell through to `rag.parse_intent`'s generic "short
+# message naming a field keyword" fallback instead -- "role" is also a real
+# database field name (a workflow actor's role id on one application), so a
+# bare "zdt role enna" (3 words) was read as a question about THAT field on
+# whatever application happened to be in view, and answered
+# `application_status` nonsense instead of the glossary definition.
+_ROLE_TA_RE = re.compile(
+    r"^" + _GLOSSARY_TERMS + r"\s+(?:role|பங்கு|வேலை)\s*"
+    r"(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna)?\s*[?.!]*$",
+    re.IGNORECASE)
 _AFTER_RE = re.compile(
     r"(?:what\s+happens|what\s+is\s+the\s+next\s+step|what\s+comes|next\s+step)\s+after\s+(?:the\s+)?(sis|sd|dis|tahsildar)\b", re.IGNORECASE)
 _AFTER = {
@@ -12927,7 +13240,7 @@ _AFTER = {
                   "தாசில்தார் DSC மூலம் கையொப்பமிட்ட பிறகு ஆணை உருவாகி கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்)."),
 }
 _GLOSSARY_RE = re.compile(
-    r"^(?:please\s+)?(?:what\s+(?:is|are|does)|what's|whats|define|explain|meaning\s+of|full\s+form\s+of|expand)\s+"
+    r"^(?:please\s+)?(?:what\s+(?:is|are|does)|who\s+is|who's|whos|what's|whats|define|explain|meaning\s+of|full\s+form\s+of|expand)\s+"
     r"(?:a\s+|an\s+|the\s+)?" + _GLOSSARY_TERMS + r"\s*(?:stand\s+for|mean|means)?\s*[?.!]*$", re.IGNORECASE)
 _GLOSSARY_TA_RE = re.compile(
     r"^" + _GLOSSARY_TERMS + r"\s+(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna)\s*[?.!]*$", re.IGNORECASE)
@@ -12958,6 +13271,25 @@ _GLOSSARY = {
             "FMB (Field Measurement Book) இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை — FMB புத்தகம், பக்கம் அல்லது வரைபடம் பதிவாகவில்லை; எனவே பதிவுகளிலிருந்து எதுவும் சொல்ல முடியாது."),
 }
 _GLOSSARY["zdt"] = _GLOSSARY["hqdt"] = _GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
+# DRO (District Revenue Officer) is not part of the ordinary ISD/NISD
+# processing chain at all -- it is named ONLY in the escalation section
+# (workflow_guide.txt's "Level 3 Escalation (45 days overdue)"), which this
+# codebase has no deterministic logic for (no escalation-level handler, no
+# `current_stage` value for it, and CLAUDE.md records that no seeded
+# application even carries "escalated" status). Asked without a deterministic
+# answer, this reached the LLM fallback and got "The Tahsildar (Zonal Level
+# Tahsildar) holds the DSC and approves the file" -- a fluent, confident
+# answer about a DIFFERENT role entirely, to a question about DRO. Grounding
+# it here the same way every other role is grounded closes that gap.
+_GLOSSARY["dro"] = (
+    "DRO = District Revenue Officer -- named only in the escalation section of the workflow guide, notified at "
+    "Level 3 Escalation (45 working days overdue): an officer performance review is triggered and the application "
+    "may be reassigned. The DRO is not part of the ordinary ISD or NISD processing chain and holds no approval or "
+    "sign-off role there -- that stays with the Tahsildar / Zonal Level Tahsildar. This codebase has no "
+    "deterministic escalation-level logic and no application in this register is marked \"escalated\".",
+    "DRO = மாவட்ட வருவாய் அலுவலர் (District Revenue Officer) — பணிப்பாய்வு வழிகாட்டியின் தீவிரமடைதல் பிரிவில் மட்டுமே "
+    "குறிப்பிடப்பட்டவர்; மூன்றாம் நிலை தீவிரமடைதலில் (45 வேலை நாட்கள் தாமதம்) அறிவிக்கப்படுவார். இது வழக்கமான ISD/NISD "
+    "செயல்முறையின் ஒரு பகுதி அல்ல; ஒப்புதல் அதிகாரம் தாசில்தார் / மண்டல நிலை தாசில்தாரிடமே உள்ளது.")
 
 # More terms an officer asks the meaning of. Each is stated from the department documents (land_rules,
 # workflow_guide, faq) or CLAUDE.md -- no figure is quoted, so nothing here goes stale against the register.
@@ -13181,7 +13513,8 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
             break  # only the most recent assistant turn is a continuation
     if _fullform_term(msg):
         return None          # "full form of IGRS" is the one-line expansion (special scope), not the definition
-    _g = _GLOSSARY_RE.match(msg.strip()) or _GLOSSARY_TA_RE.match(msg.strip()) or _ROLE_RE.match(msg.strip())
+    _g = (_GLOSSARY_RE.match(msg.strip()) or _GLOSSARY_TA_RE.match(msg.strip())
+          or _ROLE_RE.match(msg.strip()) or _ROLE_TA_RE.match(msg.strip()))
     if _g:
         _k = re.sub(r"[\s-]", "", _g.group(1).lower())
         return "GLOSS:" + _GLOSSARY_ALIAS.get(_k, _k)
@@ -13212,6 +13545,59 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
             and re.search(r"explain|enna|sollu|pannu|what|how|tell|describe|விளக்க|என்ன|சொல்", msg)
             and not _WORKFLOW_ALL_BLOCK_RE.search(msg) and not _WORKFLOW_LISTING_RE.search(msg)):
         return "ALL"
+    # A role/step question that never says "workflow"/"steps"/"process" at all
+    # ("who prepares the subdivision sketch?", "what is the DIS's
+    # responsibility after SD prepares the sketch?", "who carries out the
+    # final digital sign-off?") names the chain just as surely as one that
+    # does -- it names a STEP NOUN (sketch, temporary subdivision number,
+    # field verification, digital sign-off, DSC/patta order) or a STEP ROLE
+    # that exists in only one chain (SD/DIS: ISD only; ZDT: NISD only)
+    # instead. Without this these fell through to `general_query` and were
+    # either misrouted to an application-specific handler (which then asked
+    # for an application number or said "not found", for a question that
+    # named no application at all) or reached the LLM, which has hallucinated
+    # a wrong role for exactly this kind of question before (see
+    # `_workflow_steps_topic`'s own docstring). Gated on a real "who"/"which
+    # role"/"responsib*" question shape and a short-ish sentence, so an
+    # ordinary data question that happens to mention "DIS" or "sketch" in
+    # passing (longer, differently shaped) is left alone.
+    # A narrower listing-exclusion than `_WORKFLOW_LISTING_RE`: that one's
+    # `\bapplic\w*\b` blocks the bare word "application", which a role
+    # question ends up using naturally ("...of an ISD APPLICATION?") without
+    # asking for a listing at all -- it is the LISTING VERBS that signal a
+    # listing, not the noun every such question is implicitly about.
+    if (not _WORKFLOW_STEPS_WORD_RE.search(msg) and len(msg.split()) <= 20
+            and re.search(r"\bwho\b|\bwhich\s+role\b|\bresponsib\w*", msg)
+            and not re.search(r"\bshow\b|\blist\b|\bdisplay\b|\bmy\b|\bpending\b"
+                              r"|\bhow\s+many\b|\bcount\b|\bapps?\b|\bfiles?\b", msg)
+            and (_WORKFLOW_STEP_NOUN_RE.search(msg) or _WORKFLOW_STEP_ROLE_RE.search(msg))):
+        _has_isd = (bool(re.search(r'\b(isd|0154)\b', msg)) or bool(_WORKFLOW_STEP_ROLE_RE.search(msg))
+                    or bool(_WORKFLOW_ISD_ONLY_NOUN_RE.search(msg)))
+        _has_nisd = bool(re.search(r'\b(nisd|0153)\b', msg)) or bool(re.search(r'\bzdt\b', msg))
+        if _has_isd and not _has_nisd:
+            return "ISD"
+        if _has_nisd and not _has_isd:
+            return "NISD"
+        # Both or neither is genuinely ambiguous (e.g. the question names no
+        # service code and no role unique to one chain) -- fall through
+        # rather than guess which chain was meant.
+
+    # A claim to be VERIFIED ("ZDT handles ISD and DIS handles NISD,
+    # correct?"), not a question -- naming a role from each chain plus a
+    # verification tag at the end. Confirmed live: this used to reach
+    # `general_query` (after the service-code/application-listing traps
+    # above were fixed) and llama3.1:8b answered "Yes, that is correct" to a
+    # claim that is backwards -- DIS exists only in the ISD chain, ZDT only
+    # in NISD -- agreeing with the officer rather than correcting a false
+    # premise. Routed to the "ALL" side-by-side comparison instead: it
+    # states both chains' real roles in one answer, which is self-correcting
+    # (DIS appears only under ISD, ZDT only under NISD) without this
+    # function having to parse out and negate the specific claim made.
+    if (re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$',
+                 msg.strip(), re.IGNORECASE)
+            and _WORKFLOW_STEP_ROLE_RE.search(msg) and re.search(r'\bzdt\b', msg)):
+        return "ALL"
+
     if not _WORKFLOW_STEPS_WORD_RE.search(msg):
         return None
     if _WORKFLOW_LISTING_RE.search(msg):
@@ -13238,12 +13624,18 @@ def _workflow_steps_answer(topic: str, is_tamil: bool, brief: bool = False) -> s
         return _AFTER[topic[6:]][1 if is_tamil else 0]
     if topic.startswith("WHO:"):
         return _WHO_APPROVES[topic[4:]][1 if is_tamil else 0]
-    _src = _WORKFLOW_STEPS_BRIEF_TEXT if (brief and topic in _WORKFLOW_STEPS_BRIEF_TEXT) else _WORKFLOW_STEPS_TEXT
+    # `topic == "ALL"` never matched a key of `_WORKFLOW_STEPS_BRIEF_TEXT`
+    # itself (only "ISD"/"NISD" are keys there), so `brief` was silently
+    # ignored for the combined ISD+NISD answer: "explain the workflow step by
+    # step" -> "explain briefly" gave back the exact same full chain. Brief
+    # now governs the ISD/NISD pieces it is built from instead of requiring
+    # "ALL" itself to be a brief-text key.
+    _src = _WORKFLOW_STEPS_BRIEF_TEXT if brief else _WORKFLOW_STEPS_TEXT
     if topic == "ALL":
         head = ("ஒவ்வொரு விண்ணப்ப வகைக்கும் பணிப்பாய்வு வேறு:\n\n" if is_tamil
                 else "The workflow depends on the application type:\n\n")
         return head + "\n\n".join(_src[t][lang] for t in ("ISD", "NISD"))
-    return _src[topic][lang]
+    return _src.get(topic, _WORKFLOW_STEPS_TEXT.get(topic, {}))[lang]
 
 
 def _last_assistant_message(chat_history) -> str:
@@ -13401,10 +13793,24 @@ _FV_RULE_TA = {
 _FV_TA_WORDS = r"(?:கள\s*ஆய்வு|kala\s*aaivu|kalaaivu)"
 
 
+# A negation flips the answer only when it governs the field-visit requirement itself:
+# "do not require a field visit", "need no field visit", "without a field visit",
+# "field visit is not required". In "require a field visit without prior approval" or
+# "... if no sketch is available" the negation belongs to another condition.
+_FV_NEED_WORD = r"(?:need|requir|necessar|mandatory|compulsory)"
+_FV_VISIT_WORD = r"field\s*[- ]?(?:visits?|inspections?)"
+_FV_NEG_NEED_RE = re.compile(
+    rf"\b(?:not|never|dont|doesnt|don't|doesn't|isn't|aren't|won't)\s+(?:\w+\s+)?{_FV_NEED_WORD}"
+    rf"|\b{_FV_NEED_WORD}\w*\s+no\s+(?:\w+\s+)?{_FV_VISIT_WORD}"
+    rf"|\bno\s+(?:need\b|{_FV_VISIT_WORD})"
+    rf"|\bwithout\s+(?:a\s+|any\s+|the\s+)?{_FV_VISIT_WORD}"
+    rf"|\b{_FV_VISIT_WORD}\s+(?:is\s+|are\s+)?(?:not|never)\s+(?:\w+\s+)?{_FV_NEED_WORD}")
+
+
 def _field_visit_rule_topic(msg: str) -> Optional[str]:
     """"which service needs a field visit", "who does the field visit", "why is a field visit needed" -- the
     rule, not the officer's own visit table. Nothing that mentions the officer's own files or a count."""
-    if not re.search(rf"field\s*[- ]?visits?|{_FV_TA_WORDS}", msg) or re.search(
+    if not re.search(rf"{_FV_VISIT_WORD}|{_FV_TA_WORDS}", msg) or re.search(
             r"\b(?:my|mine|i|me|list|show|display|how\s+many|count|scheduled|pending|overdue|completed|today|tomorrow|week|month)\b|\d", msg):
         return None
     # This whole topic only ever has an ISD/NISD answer baked in (_FV_RULE_ANSWERS).
@@ -13419,7 +13825,7 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     _fvr_codes = _fvr_find_codes(msg)
     if _fvr_codes and any(c not in ("0153", "0154") for c in _fvr_codes):
         return None
-    need = r"(?:need\w*|requir\w*|necessar\w*|mandatory|compulsory|venum|vendum|thevai\w*|தேவை\w*|வேண்டும்|கட்டாயம்|kattayam)"
+    need = r"(?:need\w*|requir\w*|necessar\w*|mandatory|compulsory|venum|vendum|vendam|thevai\w*|தேவை\w*|வேண்டும்|கட்டாயம்|kattayam)"
     # Tamil / Tanglish: "எந்த சேவைக்கு கள ஆய்வு தேவை", "evlo service ku field visit venum"
     if re.search(r"(?:எந்த|எது|evlo|edhu|ethu|yentha|entha)\s*(?:சேவை|வகை|விண்ணப்ப|service|type|application)", msg) and re.search(need, msg):
         return "fv_not_needed" if re.search(r"(?:தேவையில்லை|வேண்டாம்|vendam|thevai\s*illa|venda)", msg) else "fv_needed"
@@ -13437,14 +13843,14 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     # hardcoded-allowlist omission this audit looks for. "type(s)"/"kind(s)
     # of application" keeps the existing ISD/NISD answer: "type" is
     # overloaded as ISD/NISD everywhere else in this app.
-    if re.search(r"\b(?:which|what)\s+service\s*codes?\b", msg):
-        return "fv_not_needed_catalog" if re.search(r"\b(?:not|no|n't|without|dont|doesnt|don't|doesn't)\b", msg) else "fv_needed_catalog"
+    if re.search(r"\b(?:which|what)\s+(?:service\s*)?codes?\b", msg):
+        return "fv_not_needed_catalog" if _FV_NEG_NEED_RE.search(msg) else "fv_needed_catalog"
     kind = r"(?:services?|types?|application\s+types?|applications?\s+types?|kinds?\s+of\s+applications?|categor\w+)"
     if re.search(rf"\b(?:which|what)\s+{kind}\b", msg):
-        return "fv_not_needed" if re.search(r"\b(?:not|no|n't|without|dont|doesnt|don't|doesn't)\b", msg) else "fv_needed"
+        return "fv_not_needed" if _FV_NEG_NEED_RE.search(msg) else "fv_needed"
     if re.search(r"\bwho\b.*\b(?:does|do|did|conducts?|carr(?:y|ies)\s+out|performs?|makes?|goes?)\b", msg):
         return "fv_who"
-    _neg = re.search(r"\b(?:not|no|without|isn'?t|doesn'?t|don'?t)\b", msg)
+    _neg = _FV_NEG_NEED_RE.search(msg)
     if re.search(r"\bwhy\b.*\b(?:need\w*|required|require\w*|necessary|mandatory|must|compulsory)\b", msg):
         return "fv_not_needed" if _neg else "fv_why"
     return None
@@ -14078,7 +14484,8 @@ async def _type_swap_followup(db, session_id, chat_history, message: str) -> str
         try:
             row = (await db.execute(
                 select(ChatMessage.content)
-                .where(ChatMessage.session_id == session_id, ChatMessage.role == "user")
+                .where(ChatMessage.session_id == session_id, ChatMessage.role == "user",
+                       messages_since_session_start(session_id))
                 .order_by(ChatMessage.created_at.desc()).limit(1))).first()
             prev = (row[0] if row else "") or ""
         except Exception:
@@ -14363,7 +14770,9 @@ _FOLLOWUP_CONTEXT_WINDOW = 12
 async def _mark_session_cleared(db, session_id, officer) -> None:
     """A typed "clear": nothing said before this moment may be continued. The frontend
     opens a fresh session, but an API client may keep the same one, so the session's
-    start is moved to now and the follow-up loader ignores anything older."""
+    start is moved to now. Nothing is deleted: the older rows stay in chat_messages
+    for audit, and every reader of the transcript or its context filters them out
+    through `messages_since_session_start()`."""
     try:
         sess = (await db.execute(select(ChatSession).where(ChatSession.id == session_id))).scalar_one_or_none()
         if sess is not None and officer is not None and str(sess.officer_id) == str(officer.officer_id):
@@ -14415,7 +14824,8 @@ async def _load_followup_context(db, session_id, chat_history=None, message=None
             select(ChatMessage.structured_data)
             .where(and_(ChatMessage.session_id == session_id,
                         ChatMessage.role == "assistant",
-                        ChatMessage.created_at >= _cutoff))
+                        ChatMessage.created_at >= _cutoff,
+                        messages_since_session_start(session_id)))
             .order_by(ChatMessage.created_at.desc())
             .limit(_FOLLOWUP_CONTEXT_WINDOW)
         )).scalars().all()
@@ -15568,6 +15978,36 @@ def _is_orphan_list_followup(message: str, context) -> bool:
             and not _followup_is_self_contained(message))
 
 
+# "What is my workload?" -> "show" -- a bare request to see the records the
+# workload summary just counted. `get_officer_workload()` returns aggregate
+# counts only (no application numbers), so this never had a FollowupContext
+# to resolve against and fell into `_orphan_followup_reply()`'s "nothing has
+# been shown in this conversation yet" -- confidently wrong, since something
+# WAS just shown, a summary of exactly these records. Deliberately narrow (no
+# trailing words beyond "me"/"us"/"my"/"them"/"applications"/"files"), so a
+# more specific follow-up ("show applications in ward 102") is untouched and
+# reaches the normal pipeline instead.
+_WORKLOAD_SHOW_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:show|list|display|give)\b"
+    r"(?:\s+(?:me|us))?(?:\s+(?:my|the|them|those|it))?"
+    r"(?:\s+(?:applications?|apps?|files?|list))?"
+    r"\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+async def _workload_show_followup(db, officer, message: str, chat_history: list, language: str):
+    """`(structured_data, response_text)` for a "show" that follows a
+    workload summary, or None when the message doesn't fit that shape."""
+    if not _WORKLOAD_SHOW_RE.match(message or ""):
+        return None
+    if _resolve_prev_intent(chat_history) != "officer_workload":
+        return None
+    data = await get_officer_workload_applications(db, officer)
+    text = _render_all_service_code_answer(data, language in ("ta", "tanglish"))
+    return data, text
+
+
 def _list_was_asked(chat_history: list) -> bool:
     return any(parse_intent(h.get("content") or "") in _LIST_FOLLOWUP_INTENTS
                for h in (chat_history or []) if (h.get("role") or "user") == "user"
@@ -16403,12 +16843,18 @@ async def _maybe_resolve_fresh_visit_ordinal(db, officer, message: str, intent: 
     """
     # An ordinal+field visit-queue question can parse fresh to either
     # `fv_visit_plan` (via `parse_visit_plan_query`'s own phrasings, "which
-    # application should I visit next") or `fv_overdue_inspections` (a bare
-    # "overdue visit(s)" phrasing, see `_has_fv_terms` in rag.py) depending on
-    # the exact wording -- "Show the survey number and subdivision number of
-    # the second overdue visit." lands on the second. Both point at the same
-    # plan, so both are resolved here the same way.
-    if intent not in ("fv_visit_plan", "fv_overdue_inspections") or not _is_ordinal_visit_reference(message):
+    # application should I visit next"), `fv_overdue_inspections` (a bare
+    # "overdue visit(s)" phrasing, see `_has_fv_terms` in rag.py), or the
+    # generic `field_visits` -- the last one is what a single FIELD split off
+    # by `_big_plan()` lands on ("application number of the second overdue
+    # visit" carries no list verb of its own once "give me ... and ..." is
+    # split away from it, and is too long to count as the bare-noun-phrase
+    # shape `rag.py` also accepts). `_is_ordinal_visit_reference` below is
+    # the real gate (it already requires both a visit word and an ordinal/
+    # slice reference), so admitting `field_visits` here does not widen what
+    # this function acts on -- only which parses of the SAME shape reach it.
+    if intent not in ("fv_visit_plan", "fv_overdue_inspections", "field_visits") \
+            or not _is_ordinal_visit_reference(message):
         return message
     _vp_ward, _vp_block = await _geo_scope(db, session_id, message, chat_history, officer)
     plan = await _fetch_visit_plan(db, message, officer, ward_number=_vp_ward, block_number=_vp_block)
@@ -17989,6 +18435,31 @@ async def _process_chat_impl(
                     and not fctx.is_bare_deictic(_original_message)):
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
+        # "What is my workload?" -> "show" / "show applications" / "list" /
+        # "display" -- the workload answer is aggregate counts only, so there
+        # is no FollowupContext for it to resolve against; checked ahead of
+        # the orphan-fragment check just below, which would otherwise answer
+        # "nothing has been shown in this conversation yet" to a message that
+        # follows directly on from a summary of exactly these records.
+        _wl_show = await _workload_show_followup(db, officer, _original_message, chat_history, language)
+        if _wl_show:
+            _wl_data, _wl_text = _wl_show
+            _wl_ctx = fctx.build_context("all_service_code_applications", _wl_data)
+            logger.info("Workload follow-up: showed the %d application(s) behind the workload count",
+                        _wl_data.get("count", 0))
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_wl_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_wl_ctx.to_json() if _wl_ctx else None)
+            return {
+                "response": _wl_text, "language": language, "intent": "all_service_code_applications",
+                "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": _build_table_data("all_service_code_applications", _original_message,
+                                                str(officer.officer_id), _wl_data),
+            }
         if (not _followup.resolved and not _followup.ambiguous
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
@@ -18435,7 +18906,9 @@ async def _process_chat_impl(
                 if _prev_q:
                     message = f"{message} {_prev_q}"
         elif (intent == "general_query" and _is_explain_request(message)
-                and not await attachment_qa.attachment_topic_active(db, session_id)):
+                and not await attachment_qa.attachment_topic_active(db, session_id)
+                and not await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
             # "explain" / "explain more" after a LISTING or a single record
             # card -- the same gap the service_code_lookup re-route above
             # closes for a definitional answer, but general enough that it
@@ -23856,6 +24329,24 @@ async def _process_chat_stream_impl(
                     and not fctx.is_bare_deictic(_original_message)):
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
+        # "What is my workload?" -> "show" / "show applications" / "list" /
+        # "display" -- see the matching comment in process_chat().
+        _wl_show = await _workload_show_followup(db, officer, _original_message, chat_history, language)
+        if _wl_show:
+            import json as _json_wl
+            _wl_data, _wl_text = _wl_show
+            _wl_ctx = fctx.build_context("all_service_code_applications", _wl_data)
+            logger.info("Workload follow-up (stream): showed the %d application(s) behind the workload count",
+                        _wl_data.get("count", 0))
+            yield f"data: {_json_wl.dumps({'content': _wl_text})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_wl_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_wl_ctx.to_json() if _wl_ctx else None)
+            yield b"data: [DONE]\n\n"
+            return
         if (not _followup.resolved and not _followup.ambiguous
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
@@ -24193,7 +24684,9 @@ async def _process_chat_stream_impl(
                 if _prev_q:
                     message = f"{message} {_prev_q}"
         elif (intent == "general_query" and _is_explain_request(message)
-                and not await attachment_qa.attachment_topic_active(db, session_id)):
+                and not await attachment_qa.attachment_topic_active(db, session_id)
+                and not await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
             # "explain" / "explain more" after a LISTING or a single record
             # card -- the same gap the service_code_lookup re-route above
             # closes for a definitional answer, but general enough that it
@@ -29023,8 +29516,11 @@ async def get_session_history(
         List of chat messages
     """
     try:
+        # Only the current conversation: after a typed "clear" the older rows are
+        # kept for audit but must not be restored into the officer's transcript.
         query = select(ChatMessage).where(
-            ChatMessage.session_id == session_id
+            ChatMessage.session_id == session_id,
+            messages_since_session_start(session_id)
         ).order_by(ChatMessage.created_at.desc()).limit(limit)
         
         result = await db.execute(query)

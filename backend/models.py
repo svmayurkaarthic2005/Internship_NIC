@@ -755,6 +755,18 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="chat_messages")
 
 
+def messages_since_session_start(session_id):
+    """Filter for ChatMessage: only what was said since the session (re)started.
+
+    A typed "clear" moves `ChatSession.started_at` to the moment of the clear and
+    keeps every row for the audit trail, so this is what makes the older rows
+    part of no conversation: every reader of the transcript or its follow-up
+    context must apply it."""
+    from sqlalchemy import select
+    return ChatMessage.created_at >= (
+        select(ChatSession.started_at).where(ChatSession.id == session_id).scalar_subquery())
+
+
 # ========== VECTOR STORE TABLE ==========
 
 class KnowledgeEmbedding(Base):
@@ -860,6 +872,20 @@ class ChatAttachment(Base):
         Index("idx_attachment_session_active", "session_id", "is_active"),
         Index("idx_attachment_officer", "officer_id"),
         Index("idx_attachment_expires", "expires_at"),
+        # Enforces at THE DATABASE LEVEL what `save_document`'s own
+        # "reuse an existing upload of the same bytes" check could only ever
+        # do as read-then-write: two requests racing with the identical file
+        # could both miss each other's still-uncommitted row and both insert
+        # a duplicate. A PARTIAL unique index -- only among is_active rows --
+        # is deliberate: an expired or retired row with the same hash is
+        # history, not a conflict, and must stay insertable (and is also
+        # what `_retire_surplus`'s is_active=False flip on an old row relies
+        # on never raising). See `backend/sample_db/migrate_attachment_unique_index.py`
+        # for how this was added to an already-running database, and
+        # `save_document`'s IntegrityError handling for the recovery path
+        # when two concurrent uploads collide on it.
+        Index("uq_attachment_active_dedupe", "officer_id", "session_id", "content_hash",
+              unique=True, postgresql_where=(is_active == True)),  # noqa: E712
     )
 
 

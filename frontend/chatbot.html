@@ -27,6 +27,7 @@
     <link rel="stylesheet" href="css/chatbot.css?v=20261003_001">
     <link rel="stylesheet" href="css/responsive.css?v=20261003_001">
     <link rel="stylesheet" href="css/table_styles.css?v=20261003_001">
+    <link rel="stylesheet" href="css/attachments_panel.css?v=20261012_002">
 </head>
 <body class="chatbot-page">
     <div class="chat-main-container-new">
@@ -57,6 +58,11 @@
             </div>
 
             <div class="header-right-new">
+                <button class="icon-btn-new" id="attachmentsPanelBtn" aria-label="View attached files" title="View attached files">
+                    <i data-lucide="paperclip" class="icon-new"></i>
+                    <span>Files</span>
+                    <span id="attachmentsPanelBadge" class="attachments-badge" hidden>0</span>
+                </button>
                 <button class="icon-btn-new" id="newChatBtn" aria-label="Start a new conversation" title="Start a new conversation">
                     <i data-lucide="plus" class="icon-new"></i>
                     <span>New Chat</span>
@@ -111,15 +117,33 @@
                 </div>
             </div>
         </main>
+
+        <!-- Attachments panel: server state is the only source of truth --
+             rendered fresh from GET /sessions/{id}/attachments every time it
+             opens, after an upload, after a delete and after a session
+             change. Never built from localStorage. -->
+        <aside class="attachments-panel" id="attachmentsPanel" hidden aria-label="Attached files">
+            <div class="attachments-panel-header">
+                <h2>Attached files</h2>
+                <span class="attachments-panel-count" id="attachmentsPanelCount"></span>
+                <button class="icon-btn-new" id="attachmentsPanelCloseBtn" aria-label="Close">
+                    <i data-lucide="x" class="icon-new"></i>
+                </button>
+            </div>
+            <div class="attachments-panel-body" id="attachmentsPanelBody">
+                <p class="attachments-panel-empty">No files attached in this session yet.</p>
+            </div>
+        </aside>
+        <div class="attachments-panel-backdrop" id="attachmentsPanelBackdrop" hidden></div>
     </div>
-    
+
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
     
     <!-- JavaScript -->
     <script src="js/chatStorage.js?v=20260909_001"></script>
     <script src="js/table_renderer.js?v=20261006_004"></script>
-    <script src="js/chat.js?v=20261004_003"></script>
+    <script src="js/chat.js?v=20261012_002"></script>
     <script>
         lucide.createIcons();
 

@@ -17,6 +17,12 @@ let officerData = null;
 let activeRequestController = null; // AbortController for the in-flight send, so the stop button can cancel it
 let userStoppedResponse = false;    // distinguishes a manual stop from a timeout/network abort
 let longConversationNoticeShown = false; // "start a new chat" notice is shown once per session
+// Bumped by every New Chat / typed "clear". A request started under an older
+// value belongs to a conversation that is gone: it may not touch the DOM,
+// localStorage or the send state of the current one.
+let conversationGen = 0;
+let sessionGen = 0;          // latest session-creation attempt; an older attempt's reply is dropped
+let newChatInFlight = null;  // the New Chat transition in progress, so a double click joins it
 const CONTEXT_MESSAGE_LIMIT = 40;         // messages sent to the backend as context (older ones are dropped)
 
 // Shell-style input history (Up/Down arrows recall previously sent
@@ -101,7 +107,9 @@ async function initChat() {
         console.log('Step 5: Setting up event listeners...');
         setupEventListeners();
         console.log('✓ Event listeners setup');
-        
+
+        initAttachmentsPanel();
+
         // Initialize Lucide icons
         if (typeof lucide !== 'undefined') {
             lucide.createIcons();
@@ -231,6 +239,7 @@ function updateOfficerInfo(officer) {
  * Create new chat session
  */
 async function createNewSession() {
+    const myGen = ++sessionGen;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
     
@@ -253,10 +262,18 @@ async function createNewSession() {
             throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
         
-        const data = await response.json();
-        currentSessionId = data.data.session_id;
+        let data = null;
+        try { data = await response.json(); } catch (_) { /* reported below */ }
+        const sessionId = data && data.data && data.data.session_id;
+        if (typeof sessionId !== 'string' || !sessionId) {
+            throw new Error('Invalid session response from server');
+        }
+        // A newer attempt started while this one was in flight: its session wins.
+        if (myGen !== sessionGen) return null;
+        currentSessionId = sessionId;
         console.log('Session created:', currentSessionId);
-        
+        return sessionId;
+
     } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
@@ -419,7 +436,7 @@ function handleInputChange() {
     // While a response is streaming, the button stays enabled but switches to
     // "stop" mode (see setSendButtonState) instead of being disabled.
     if (!isTyping) {
-        sendBtn.disabled = !text;
+        sendBtn.disabled = !text || !currentSessionId;
     }
     
     // Detect language
@@ -450,8 +467,9 @@ function setSendButtonState(streaming) {
     if (streaming) {
         sendBtn.disabled = false;
     } else {
-        // Restore normal enabled/disabled logic based on current input text
-        sendBtn.disabled = !messageInput.value.trim();
+        // Restore normal enabled/disabled logic based on current input text;
+        // nothing can be sent until a session is confirmed by the server
+        sendBtn.disabled = !messageInput.value.trim() || !currentSessionId;
     }
 }
 
@@ -608,7 +626,8 @@ async function sendMessage() {
     
     if (!currentSessionId) {
         console.error('❌ Cannot send: No session ID');
-        showToast('Session error. Please refresh the page.', 'error');
+        showToast(newChatInFlight ? 'Starting a new chat, please wait...'
+                                  : 'No active chat session. Click "Start new conversation" to retry.', 'warning');
         return;
     }
     
@@ -660,6 +679,10 @@ async function sendMessage() {
     // Abort controller so we can cancel if the LLM hangs, or the user clicks Stop
     const controller = new AbortController();
     activeRequestController = controller;
+    // This request's conversation. Once New Chat / "clear" bumps conversationGen
+    // nothing below may write to the page, storage or state any more.
+    const gen = conversationGen;
+    const isStale = () => gen !== conversationGen;
     // 90 second hard timeout — LLMs can be slow but shouldn't run forever
     const timeoutId = setTimeout(() => {
         controller.abort();
@@ -704,7 +727,8 @@ async function sendMessage() {
         });
         
         console.log('✓ Request sent with chat history');
-        
+        if (isStale()) return;
+
         // Remove typing indicator now that the server has responded
         removeTypingIndicator();
         
@@ -757,7 +781,8 @@ async function sendMessage() {
         
         while (true) {
             const { value, done } = await reader.read();
-            
+            if (isStale()) return;
+
             if (done) {
                 // Stream complete
                 break;
@@ -876,6 +901,9 @@ async function sendMessage() {
         }
 
     } catch (error) {
+        // Aborted (or failed) after the conversation was cleared: the new one
+        // owns the page, the typing indicator and the toasts now.
+        if (isStale()) return;
         removeTypingIndicator();
         if (clearRequested && !(error.name === 'AbortError' && userStoppedResponse)) {
             // The wipe instruction already arrived; the stream breaking
@@ -937,11 +965,15 @@ async function sendMessage() {
         }
     } finally {
         clearTimeout(timeoutId);
-        isTyping = false;
-        activeRequestController = null;
-        userStoppedResponse = false;
-        setSendButtonState(false); // restore the normal send icon/behaviour
-        handleInputChange();
+        // Only the request that still owns the send state restores it; after a
+        // New Chat that state was already reset and may belong to a newer request.
+        if (activeRequestController === controller) {
+            isTyping = false;
+            activeRequestController = null;
+            userStoppedResponse = false;
+            setSendButtonState(false); // restore the normal send icon/behaviour
+            handleInputChange();
+        }
         console.log('=== SEND MESSAGE COMPLETE ===');
     }
 }
@@ -1350,7 +1382,33 @@ function renderSessionHistory(sessions) {
 /**
  * Handle new chat
  */
-async function handleNewChat(options) {
+function handleNewChat(options) {
+    // A second click (or a "clear" typed meanwhile) joins the transition
+    // already running instead of opening a second session.
+    if (!newChatInFlight) {
+        newChatInFlight = startNewChat(options).finally(() => { newChatInFlight = null; });
+    }
+    return newChatInFlight;
+}
+
+async function startNewChat(options) {
+    // The old session's attachment list belongs to a conversation that is
+    // about to stop existing -- close the panel rather than let it keep
+    // showing files from a session the officer just left.
+    closeAttachmentsPanel();
+    // Retire the old conversation first: its in-flight answer is cancelled and,
+    // through conversationGen, can no longer write to the page or storage.
+    conversationGen++;
+    if (activeRequestController) activeRequestController.abort();
+    activeRequestController = null;
+    isTyping = false;
+    userStoppedResponse = false;
+    removeTypingIndicator();
+    // No session until the server confirms a new one, so nothing can be sent
+    // to the old one in the meantime.
+    currentSessionId = null;
+    setSendButtonState(false);
+
     chatMessages.innerHTML = '';
     messageHistory = [];
     inputHistoryIndex = -1;
@@ -1360,15 +1418,27 @@ async function handleNewChat(options) {
     if (window.chatStorage) {
         window.chatStorage.clear();
     }
-    
-    await createNewSession();
-    
-    if (window.chatStorage && currentSessionId) {
+
+    try {
+        if (!await createNewSession()) return;  // superseded by a newer attempt
+    } catch (error) {
+        console.error('Could not start a new chat session:', error);
+        appendAssistantNotice('<strong>Could not start a new chat.</strong> ' +
+            escapeHtml(error.message || 'Unknown error') +
+            '<br>Nothing can be sent until a new chat is started.', true);
+        showToast('Could not start a new chat. Please retry.', 'error');
+        return;
+    } finally {
+        handleInputChange();
+    }
+
+    if (window.chatStorage) {
         window.chatStorage.saveSessionId(currentSessionId);
     }
-    
+
     renderWelcomeMessage();
-    
+    refreshAttachmentsPanel();  // resets the badge to the new, empty session
+
     if (quickSuggestions) {
         quickSuggestions.style.display = 'block';
     }
@@ -1784,6 +1854,11 @@ function showFilePreview(file, analysis) {
  * Upload file to server (placeholder for future implementation)
  */
 async function uploadFile(file) {
+    if (!currentSessionId) {
+        const err = new Error('No active chat session');
+        err.detail = 'No active chat session. Start a new conversation and try again.';
+        throw err;
+    }
     const formData = new FormData();
     formData.append('file', file);
     formData.append('session_id', currentSessionId);
@@ -1818,5 +1893,171 @@ async function uploadFile(file) {
     } else {
         showToast('File attached', 'success');
     }
+    refreshAttachmentsPanel();
     return body;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Attachment management panel -- server state only. Every render re-fetches
+// GET /sessions/{id}/attachments; nothing here is read from localStorage,
+// because a cached list surviving from before a restart/expiry would read
+// as proof a document is still queryable when the server may have already
+// expired, retired or deleted it.
+// ─────────────────────────────────────────────────────────────────────────
+
+const ATTACHMENT_LIFECYCLE_LABEL = {
+    active: 'Active',
+    expired: 'Expired',
+    retired: 'Retired',
+    failed: 'Extraction failed',
+    no_extractable_text: 'No readable text',
+};
+
+function _authHeaders() {
+    return officerData && officerData.access_token
+        ? { 'Authorization': `Bearer ${officerData.access_token}` } : {};
+}
+
+async function fetchAttachments() {
+    if (!currentSessionId) return { attachments: [], count: 0, max_files: 0 };
+    const r = await fetch(`${API_BASE_URL}/api/v1/chat/sessions/${currentSessionId}/attachments`,
+                         { credentials: 'include', headers: _authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const body = await r.json();
+    return (body && body.data) || { attachments: [], count: 0, max_files: 0 };
+}
+
+function _formatExpiry(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const mins = Math.round((d.getTime() - now.getTime()) / 60000);
+    if (mins <= 0) return 'expired';
+    if (mins < 60) return `expires in ${mins} min`;
+    return `expires ${d.toLocaleString()}`;
+}
+
+function _renderAttachmentCard(doc) {
+    const statusClass = `attachment-status-${doc.lifecycle_status}`;
+    const statusLabel = ATTACHMENT_LIFECYCLE_LABEL[doc.lifecycle_status] || doc.lifecycle_status;
+    const needsReupload = doc.lifecycle_status !== 'active';
+    const expiryLine = doc.lifecycle_status === 'active' ? _formatExpiry(doc.expires_at) : '';
+    const createdLine = doc.created_at ? new Date(doc.created_at).toLocaleString() : '';
+
+    return `
+        <div class="attachment-card" data-document-id="${escapeHtml(doc.document_id)}">
+            <div class="attachment-card-top">
+                <div>
+                    <div class="attachment-card-name">${escapeHtml(doc.filename)}</div>
+                    <div class="attachment-card-type">${escapeHtml((doc.type || '').replace('.', ''))}</div>
+                </div>
+                <span class="attachment-status-pill ${statusClass}">${escapeHtml(statusLabel)}</span>
+            </div>
+            ${doc.status_detail ? `<div class="attachment-card-warning">${escapeHtml(doc.status_detail)}</div>` : ''}
+            <div class="attachment-card-meta">
+                ${doc.chars != null ? `${doc.chars.toLocaleString()} chars` : ''}
+                ${doc.pages ? ` &middot; ${doc.pages} page(s)` : ''}
+                ${doc.csv_rows != null ? ` &middot; ${doc.csv_rows} row(s)` : ''}
+            </div>
+            <div class="attachment-card-meta">
+                ${createdLine ? `uploaded ${createdLine}` : ''}${expiryLine ? ` &middot; ${expiryLine}` : ''}
+            </div>
+            <div class="attachment-card-actions">
+                ${needsReupload
+                    ? `<button type="button" class="attachment-reupload-btn">Re-upload</button>`
+                    : ''}
+                <button type="button" class="attachment-delete-btn" data-document-id="${escapeHtml(doc.document_id)}">Delete</button>
+            </div>
+        </div>`;
+}
+
+async function refreshAttachmentsPanel() {
+    const body = document.getElementById('attachmentsPanelBody');
+    const countEl = document.getElementById('attachmentsPanelCount');
+    const badge = document.getElementById('attachmentsPanelBadge');
+    if (!body) return;
+    let data;
+    try {
+        data = await fetchAttachments();
+    } catch (e) {
+        body.innerHTML = `<p class="attachments-panel-empty">Could not load attachments right now.</p>`;
+        return;
+    }
+    const docs = data.attachments || [];
+    const activeCount = data.count || 0;
+    const maxFiles = data.max_files || 0;
+
+    if (badge) {
+        badge.hidden = activeCount === 0;
+        badge.textContent = String(activeCount);
+    }
+    if (countEl) {
+        countEl.textContent = maxFiles ? `${activeCount} / ${maxFiles} active` : '';
+    }
+    if (!docs.length) {
+        body.innerHTML = `<p class="attachments-panel-empty">No files attached in this session yet.</p>`;
+        return;
+    }
+    body.innerHTML = docs.map(_renderAttachmentCard).join('');
+
+    body.querySelectorAll('.attachment-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const documentId = btn.getAttribute('data-document-id');
+            btn.disabled = true;
+            try {
+                await deleteAttachment(documentId);
+                showToast('File removed', 'success');
+            } catch (e) {
+                showToast('Could not delete this file right now.', 'error');
+            } finally {
+                refreshAttachmentsPanel();
+            }
+        });
+    });
+    body.querySelectorAll('.attachment-reupload-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            closeAttachmentsPanel();
+            handleFileAttachment();
+        });
+    });
+}
+
+async function deleteAttachment(documentId) {
+    if (!currentSessionId) throw new Error('No active chat session');
+    const r = await fetch(
+        `${API_BASE_URL}/api/v1/chat/sessions/${currentSessionId}/attachments/${documentId}`,
+        { method: 'DELETE', credentials: 'include', headers: _authHeaders() });
+    if (!r.ok) {
+        let detail = '';
+        try { detail = (await r.json()).detail || ''; } catch (_) { /* no body */ }
+        throw new Error(detail || `HTTP ${r.status}`);
+    }
+    return r.json();
+}
+
+function openAttachmentsPanel() {
+    document.getElementById('attachmentsPanel').hidden = false;
+    document.getElementById('attachmentsPanelBackdrop').hidden = false;
+    refreshAttachmentsPanel();
+}
+
+function closeAttachmentsPanel() {
+    const panel = document.getElementById('attachmentsPanel');
+    const backdrop = document.getElementById('attachmentsPanelBackdrop');
+    if (panel) panel.hidden = true;
+    if (backdrop) backdrop.hidden = true;
+}
+
+function initAttachmentsPanel() {
+    const openBtn = document.getElementById('attachmentsPanelBtn');
+    const closeBtn = document.getElementById('attachmentsPanelCloseBtn');
+    const backdrop = document.getElementById('attachmentsPanelBackdrop');
+    if (openBtn) openBtn.addEventListener('click', openAttachmentsPanel);
+    if (closeBtn) closeBtn.addEventListener('click', closeAttachmentsPanel);
+    if (backdrop) backdrop.addEventListener('click', closeAttachmentsPanel);
+    // The badge count should reflect reality even before the panel is ever
+    // opened, and must never be left showing a count from a PRIOR session
+    // after a session change / history restore / new chat.
+    refreshAttachmentsPanel();
 }

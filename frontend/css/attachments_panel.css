@@ -1,0 +1,174 @@
+/* Attachment management panel -- slide-in from the right, server state only. */
+
+.attachments-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 4px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.attachments-panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.25);
+    z-index: 40;
+}
+
+.attachments-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(380px, 100vw);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+}
+
+/* A class selector's `display: flex` above otherwise beats the UA
+   stylesheet's low-specificity `[hidden] { display: none }`, so the panel
+   stayed visible (and full-height, pushing the layout) even with the
+   `hidden` attribute set. This wins the cascade back for it. */
+.attachments-panel[hidden],
+.attachments-panel-backdrop[hidden] {
+    display: none;
+}
+
+.attachments-panel-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--border);
+}
+
+.attachments-panel-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.attachments-panel-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+.attachments-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-md);
+}
+
+.attachments-panel-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    margin-top: var(--spacing-2xl);
+}
+
+.attachment-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    background: var(--background);
+}
+
+.attachment-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.attachment-card-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.attachment-card-type {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.attachment-status-pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.attachment-status-active { background: #DCFCE7; color: var(--success); }
+.attachment-status-expired,
+.attachment-status-retired { background: #FEF3C7; color: var(--warning); }
+.attachment-status-failed,
+.attachment-status-no_extractable_text { background: #FEE2E2; color: var(--danger); }
+
+.attachment-card-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: var(--spacing-xs);
+}
+
+.attachment-card-warning {
+    font-size: 12px;
+    color: var(--warning);
+    margin-top: var(--spacing-xs);
+}
+
+.attachment-card-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: var(--spacing-xs);
+}
+
+.attachment-card-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+}
+
+.attachment-card-actions button {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.attachment-card-actions button:hover {
+    background: var(--primary-light);
+    border-color: var(--primary);
+}
+
+.attachment-card-actions .attachment-delete-btn:hover {
+    background: #FEE2E2;
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+@media (max-width: 640px) {
+    .attachments-panel { width: 100vw; }
+}

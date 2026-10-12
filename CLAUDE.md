@@ -1832,6 +1832,21 @@ cleared. **Bump the `?v=` on every `js/*.js` file you change.** `clearRequested`
 is also read in `sendMessage`'s `catch`, so a stream that breaks *after* the
 instruction arrived still carries the wipe out.
 
+**Clear is a context reset, not a deletion.** The frontend opens a new session;
+the backend also moves the old session's `started_at` to the moment of the clear
+(`_mark_session_cleared`) for an API client that keeps the session. The
+`chat_messages` rows are **kept** (audit). Every reader of the transcript or its
+context -- the follow-up loader, `_recent_answers`, `_type_swap_followup`, the
+listing fallback, the attachment-focus readers and `GET /sessions/{id}/history`
+-- filters through `models.messages_since_session_start()`, so the older rows
+cannot reach an answer or be restored into the page. On the frontend, New Chat
+and a streamed `clear_chat` bump `conversationGen` and abort the in-flight
+stream, so a late answer from the old conversation writes nothing to the page or
+localStorage; `currentSessionId` is null (send disabled) until the server
+confirms the new session, a failed creation shows a retry, and a second click
+joins the transition already running. `python test_clear_chat.py`
+(`--routing` skips the DB; runs `node test_clear_chat_frontend.js`).
+
 `python test_clear_command.py` (117 classification cases — 70 wordings that must
 wipe, 13 register-mutation requests that must not, 13 ordinary questions, 2 long
 real Tamil/English questions, plus other contentless kinds; and an end-to-end

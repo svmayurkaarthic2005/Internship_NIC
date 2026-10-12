@@ -75,6 +75,11 @@ _DOC_WORDS = (
     "in it", "the spreadsheet", "the order copy", "the letter",
     "கோப்பு", "கோப்பில்", "ஆவணம்", "ஆவணத்தில்", "இணைப்பு", "பதிவேற்ற",
     "file la", "file-la", "filela", "documentla", "attach panna",
+    # "andha" (Tanglish "that") + an English file noun -- the same explicit
+    # reference as "that file"/"that document", just with a Tanglish
+    # determiner. The noun itself still names the file; only the determiner
+    # changed scripts.
+    "andha file", "andha document", "andha doc", "andha pdf", "andha attachment",
 )
 
 _VAGUE_DOC_WORDS = ("in it", "the report")
@@ -96,15 +101,39 @@ _DB_ONLY_MARKERS = (
 )
 
 
+async def any_active_documents(db: AsyncSession, officer_id: Any, session_id: str) -> bool:
+    """Whether this session has at least one answerable attachment right now.
+
+    Deliberately broader than `attachment_topic_active()`: that asks "was
+    the PREVIOUS turn about a file", which is False on the very first
+    question about a just-uploaded file. "summarize it" / "explain this
+    document" right after uploading two files, with NO prior attachment
+    turn yet, used to be swallowed by `chatbot.py`'s "explain/summarize
+    follow-up" handler (gated only on `attachment_topic_active`) before the
+    attachment planner ever got a chance to ask which file was meant --
+    answered with the generic "I'm not sure what you mean" instead of the
+    clarification `plan_answer()` already knows how to give. Callers that
+    need to stand aside whenever an attachment COULD legitimately be what
+    is being asked about -- not just when the previous turn already
+    confirmed it -- use this one instead.
+    """
+    try:
+        docs = await attachment_store.active_documents(db, officer_id, session_id)
+        return bool(docs)
+    except Exception:  # pragma: no cover - a convenience, never fatal
+        return False
+
+
 async def attachment_topic_active(db: AsyncSession, session_id: str) -> bool:
     """True when the assistant's previous reply was itself about an uploaded file --
     the conversation is about the document until something else is asked."""
     from sqlalchemy import and_
-    from backend.models import ChatMessage
+    from backend.models import ChatMessage, messages_since_session_start
     try:
         row = (await db.execute(
             select(ChatMessage.structured_data)
-            .where(and_(ChatMessage.session_id == session_id, ChatMessage.role == "assistant"))
+            .where(and_(ChatMessage.session_id == session_id, ChatMessage.role == "assistant",
+                        messages_since_session_start(session_id)))
             .order_by(ChatMessage.created_at.desc()).limit(1))).scalar_one_or_none()
     except Exception:  # pragma: no cover
         return False
@@ -147,12 +176,13 @@ async def _last_focused_document(db: AsyncSession, session_id: str) -> Optional[
     clarify/refusal answer carries nothing forward.
     """
     from sqlalchemy import and_
-    from backend.models import ChatMessage
+    from backend.models import ChatMessage, messages_since_session_start
     try:
         row = (await db.execute(
             select(ChatMessage.structured_data)
             .where(and_(ChatMessage.session_id == session_id,
-                        ChatMessage.role == "assistant"))
+                        ChatMessage.role == "assistant",
+                        messages_since_session_start(session_id)))
             .order_by(ChatMessage.created_at.desc())
             .limit(1)
         )).scalar_one_or_none()
@@ -786,7 +816,22 @@ async def plan_answer(
 
     if not docs:
         notice = await _maybe_no_text_notice(db, officer_id, session_id, message, language)
-        return notice or _maybe_expired_notice(message, language)
+        if notice:
+            return notice
+        explicit_notice = _maybe_expired_notice(message, language)
+        if explicit_notice:
+            return explicit_notice
+        # A bare pronoun ("what about its status?") right after a turn that
+        # was itself about an attachment is still a continuation of that same
+        # conversation -- without this, `active_documents()` already came
+        # back empty (expired/deleted) and nothing told the officer why; the
+        # turn fell through to the ordinary pipeline, which could resolve
+        # "its" against something else entirely (an unrelated application
+        # number, or nothing) instead of the honest "please re-upload".
+        if (_is_bare_doc_backref(message)
+                and await attachment_topic_active(db, session_id)):
+            return AttachmentPlan(kind=KIND_DETERMINISTIC, text=_expired_notice_text(language))
+        return None
 
     topic_active = False
     if not targets_attachment(message, intent, docs):
@@ -1045,8 +1090,26 @@ async def _answer_from_selected(
         citations=[e.citation for e in evidences if e.citation])
 
 
+def _expired_notice_text(language: str) -> str:
+    minutes = settings.UPLOAD_RETENTION_MINUTES
+    if language in ("ta", "tanglish"):
+        return (f"பதிவேற்றிய ஆவணம் இப்போது கிடைக்கவில்லை. கோப்புகள் {minutes} நிமிடங்கள் "
+                f"மட்டுமே வைக்கப்படும். தயவுசெய்து ஆவணத்தை மீண்டும் பதிவேற்றவும்.")
+    return (f"I don't have an uploaded document for this chat any more — uploaded files "
+            f"are kept for {minutes} minutes only. Please upload the document again.")
+
+
 def _maybe_expired_notice(message: str, language: str) -> Optional[AttachmentPlan]:
-    """A question about a document when none is attached (expired or never uploaded)."""
+    """A question about a document when none is attached (expired or never uploaded).
+
+    Explicit references only (a filename, "page 2", "the document/file/pdf"
+    etc.) -- deliberately conservative, the same "never infer when the
+    question does not say so" rule as everything else in this module. A bare
+    pronoun ("it", "its") is handled separately in `plan_answer`, gated on
+    the previous turn having actually been about an attachment -- see
+    `_is_bare_doc_backref` -- because a bare "it" with NO such history is not
+    reliably about a file at all and must be left to the ordinary pipeline.
+    """
     low = (message or "").lower()
     if _APPLICATION_NO_RE.search(low) or any(m in low for m in _DB_ONLY_MARKERS):
         return None
@@ -1055,14 +1118,34 @@ def _maybe_expired_notice(message: str, language: str) -> Optional[AttachmentPla
             or _PAGE_OR_FILETYPE_RE.search(low)
             or any(w in low_words for w in _DOC_WORDS if w not in _VAGUE_DOC_WORDS)):
         return None
-    minutes = settings.UPLOAD_RETENTION_MINUTES
-    if language in ("ta", "tanglish"):
-        text = (f"பதிவேற்றிய ஆவணம் இப்போது கிடைக்கவில்லை. கோப்புகள் {minutes} நிமிடங்கள் "
-                f"மட்டுமே வைக்கப்படும். தயவுசெய்து ஆவணத்தை மீண்டும் பதிவேற்றவும்.")
-    else:
-        text = (f"I don't have an uploaded document for this chat any more — uploaded files "
-                f"are kept for {minutes} minutes only. Please upload the document again.")
-    return AttachmentPlan(kind=KIND_DETERMINISTIC, text=text)
+    return AttachmentPlan(kind=KIND_DETERMINISTIC, text=_expired_notice_text(language))
+
+
+# A bare pronoun ("it", "its", "that", and the Tanglish/Tamil equivalents
+# "adhu"/"adhoda"/"athu"/"andha"/அது/இது) with no noun of its own -- "that
+# file" / "andha document" etc. are already explicit matches
+# `_maybe_expired_notice` owns (they're in `_DOC_WORDS`) and never reach this
+# check at all, since `plan_answer` tries that function first. A bare
+# pronoun carries no attachment evidence BY ITSELF (an unrelated "is that
+# correct?" / "adhu correct ah?" out of nowhere is not reliably about a
+# file), so this is only ever consulted together with
+# `attachment_topic_active()` confirming the PREVIOUS turn was itself about
+# an attachment -- never on its own. `\b` is safe for அது/இது here (unlike
+# the Tamil virama trap documented elsewhere in this codebase) because they
+# are matched as whole tokens, not via a stem that collides with a longer
+# word; "adhu"/"adhoda"/"athu" are the same Tanglish spellings
+# `followup_context.py`'s own back-reference patterns already use.
+_BARE_DOC_BACKREF_RE = re.compile(
+    r"\b(?:it|its|that|adhu|adhoda|athu|andha)\b|அது|இது", re.IGNORECASE)
+
+
+def _is_bare_doc_backref(message: str) -> bool:
+    low = (message or "").lower()
+    if _APPLICATION_NO_RE.search(low) or any(m in low for m in _DB_ONLY_MARKERS):
+        return False
+    if typed_filenames(message) or _PAGE_OR_FILETYPE_RE.search(low):
+        return False  # names something explicit -- _maybe_expired_notice already owns this
+    return bool(_BARE_DOC_BACKREF_RE.search(low))
 
 
 async def _maybe_no_text_notice(db: AsyncSession, officer_id: Any, session_id: str,

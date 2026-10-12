@@ -647,6 +647,13 @@ _NEVER_CORRECT = frozenset({
     # ranking question about the fewest count, answered as if it named no
     # ranking at all.
     "least",
+    # "words" (as in "explain in simple words") is one substitution from
+    # "wards" -- a domain cue word -- so "explain in simple words" was
+    # silently rewritten to "explain in simple wards" before the
+    # plain-language brevity phrase ("simple words") ever got a chance to
+    # match, and the officer got the full bulleted answer instead of a
+    # sentence.
+    "words",
 })
 
 

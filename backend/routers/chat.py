@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Any, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 import asyncio
+import concurrent.futures as _cf
 
 from backend.config import settings
 from backend.database import get_db
@@ -243,6 +244,112 @@ async def stream_chat_message(
 # caller is, and a document_id that is not theirs is indistinguishable from one
 # that does not exist.
 
+UPLOAD_READ_CHUNK_BYTES = 256 * 1024  # read in 256 KB steps, never the whole body at once
+
+
+async def _read_bounded(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile up to `max_bytes`, rejecting it the moment it is
+    exceeded instead of reading the whole (possibly huge) body first.
+
+    `Content-Length` is client-supplied and never trusted as proof of size --
+    this measures what was actually read. Stops after at most one chunk past
+    the limit, so a multi-gigabyte upload against a 5 MB ceiling never costs
+    more than ~`max_bytes + UPLOAD_READ_CHUNK_BYTES` of memory.
+    """
+    chunks: list = []
+    total = 0
+    while True:
+        chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds the {max_bytes // (1024 * 1024)} MB limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+# ── Scope of this limit: PROCESS-LOCAL, not global ──────────────────────────
+# `_extraction_semaphore` / `_extraction_executor` are plain module-level
+# Python objects: the cap they enforce (UPLOAD_MAX_CONCURRENT_EXTRACTIONS)
+# holds only within the one OS process that imported this module. That is
+# exactly right for how this app is actually started -- `start_backend.ps1`
+# and the `uvicorn backend.main:app` command in CLAUDE.md both launch a
+# SINGLE process with no `--workers N` flag -- and verified against that
+# command, not assumed: confirmed by reading start_backend.ps1 directly.
+#
+# It stops being sufficient the moment that changes. Running this app under
+# `--workers 4` (or four separate containers/instances) gives each worker
+# its OWN semaphore and its OWN thread pool, each independently allowing up
+# to UPLOAD_MAX_CONCURRENT_EXTRACTIONS jobs -- so the REAL ceiling becomes
+# `UPLOAD_MAX_CONCURRENT_EXTRACTIONS * worker_count`, invisibly, with no
+# error and no log line pointing at why OCR load is higher than the config
+# implies. Multi-worker deployment needs a limiter that lives OUTSIDE any
+# one process -- a Redis/Postgres-backed semaphore, or routing OCR work
+# through an external job queue with its own worker-count cap -- neither of
+# which exists here. Do not raise `UPLOAD_MAX_CONCURRENT_EXTRACTIONS` to
+# compensate for a multi-worker deployment without adding one of those; it
+# would multiply the problem instead of fixing it.
+#
+# A dedicated pool (rather than `asyncio.to_thread`'s shared default
+# executor) keeps OCR's thread usage isolated and its size tied directly to
+# the same cap the semaphore enforces, and is shut down from `main.py`'s
+# lifespan (`_extraction_executor.shutdown(wait=False, cancel_futures=True)`
+# -- `wait=False` is deliberate: shutdown must not block on a stuck OCR job
+# that may never finish; `cancel_futures=True` only cancels jobs that have
+# not started running yet, consistent with the "cannot hard-kill a running
+# thread" limitation documented on `_extract_bounded` below).
+_extraction_semaphore = asyncio.Semaphore(settings.UPLOAD_MAX_CONCURRENT_EXTRACTIONS)
+_extraction_executor = _cf.ThreadPoolExecutor(
+    max_workers=settings.UPLOAD_MAX_CONCURRENT_EXTRACTIONS, thread_name_prefix="ocr-extract")
+
+
+async def _extract_bounded(ext: str, raw: bytes):
+    """Run `doc_extract.extract` under both a concurrency cap and a wall-clock
+    timeout.
+
+    `asyncio.wait_for` around a thread only stops AWAITING it -- the OCR call
+    already running inside keeps using CPU after the request moves on. Left
+    alone, repeated timed-out uploads (the same slow scan retried, or several
+    officers at once) accumulate orphaned OCR threads with no ceiling.
+
+    The semaphore slot is acquired before the job is submitted and released
+    by a callback on the RAW `concurrent.futures.Future` the thread pool
+    returns -- not on the asyncio wrapper `wait_for` cancels. This distinction
+    is the whole point: cancelling the asyncio wrapper (what `wait_for`'s
+    timeout does) unwinds immediately and, if the release were attached
+    there instead, would free the slot the moment the CALLER stopped
+    waiting -- while the real OS thread kept running underneath, defeating
+    the cap. The raw future's own done-callback only fires when the thread
+    itself actually finishes (success or exception), so an abandoned job
+    still occupies its slot for as long as it genuinely runs, and THAT is
+    what keeps total concurrent OCR work bounded regardless of how many
+    requests time out and retry.
+
+    ponytail: a thread cannot be hard-killed from here, so a pathological
+    file can occupy one of the `UPLOAD_MAX_CONCURRENT_EXTRACTIONS` slots for
+    as long as pypdf/Tesseract actually takes on it, not just for the
+    request's own timeout window. True hard-cancellation needs the OCR work
+    moved to a separate process (where `.terminate()` actually stops it) --
+    not done here because this deployment has no reported backlog of runaway
+    scans to justify the extra moving part; add it if that changes.
+    """
+    try:
+        await asyncio.wait_for(_extraction_semaphore.acquire(),
+                               timeout=settings.UPLOAD_QUEUE_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The server is busy processing other uploads right now. "
+                   "Try again in a few moments.")
+
+    real_future = _extraction_executor.submit(doc_extract.extract, ext, raw)
+    real_future.add_done_callback(lambda _f: _extraction_semaphore.release())
+    return await asyncio.wait_for(
+        asyncio.wrap_future(real_future), timeout=settings.UPLOAD_EXTRACTION_TIMEOUT_SECONDS)
+
 @router.post("/upload", response_model=StandardResponse)
 async def upload_chat_file(
     file: UploadFile = File(...),
@@ -263,23 +370,26 @@ async def upload_chat_file(
     """
     name = (file.filename or "file").strip()
     ext = doc_extract.normalise_extension(name)
-    raw = await file.read()
 
-    # Size is measured on the bytes actually read, not on a client header.
-    if len(raw) > settings.UPLOAD_MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds the "
-                   f"{settings.UPLOAD_MAX_FILE_BYTES // (1024 * 1024)} MB limit.")
-    if not raw:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="The file is empty.")
-
-    # Ownership of the session before anything is parsed or written.
+    # Ownership of the session before a single byte of the body is read — a
+    # request for a session the caller does not own is refused for the cost
+    # of one DB query, never for the cost of reading whatever body it sent.
     try:
         await attachment_store.verify_session(db, session_id, current_officer.officer_id)
     except attachment_store.AttachmentAccessError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Bounded, chunked read. `Content-Length` is never trusted (a client can
+    # lie or omit it), so the limit is enforced on bytes actually read: the
+    # moment the running total crosses the configured ceiling, reading stops
+    # and the request is rejected -- an oversized upload is never buffered
+    # whole first. `file.read(n)` keeps returning the SAME amount at most,
+    # not the file's total size, so this never holds more than one chunk past
+    # the limit in memory regardless of how large the real body is.
+    raw = await _read_bounded(file, settings.UPLOAD_MAX_FILE_BYTES)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="The file is empty.")
 
     if ext in doc_extract.UNSUPPORTED_HINT:
         return StandardResponse.success_response(
@@ -300,12 +410,12 @@ async def upload_chat_file(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail=str(e))
 
-    # Extraction runs in a worker thread under a wall-clock budget: a crafted
-    # file must not hold a request open indefinitely.
+    # Extraction runs in a worker thread, under both a wall-clock budget and a
+    # process-wide concurrency cap (see `_extract_bounded`) -- a crafted file
+    # must not hold a request open indefinitely, and several such files must
+    # not be free to run without limit just because each request times out.
     try:
-        extracted = await asyncio.wait_for(
-            asyncio.to_thread(doc_extract.extract, ext, raw),
-            timeout=settings.UPLOAD_EXTRACTION_TIMEOUT_SECONDS)
+        extracted = await _extract_bounded(ext, raw)
     except asyncio.TimeoutError:
         logger.warning("attachment extraction timed out", ext=ext, bytes=len(raw))
         raise HTTPException(
@@ -354,6 +464,14 @@ async def upload_chat_file(
            + (", trimmed" if extracted.truncated else "")
            + f"). {len(names)} file(s) attached this session — ask your question "
              f"about them now.")
+    if extracted.ocr_pages:
+        msg += (f" Page(s) {', '.join(str(p) for p in extracted.ocr_pages)} had no "
+                f"selectable text and were read via OCR — verify critical numbers "
+                f"against the original scan.")
+    if extracted.failed_ocr_pages:
+        msg += (f" Page(s) {', '.join(str(p) for p in extracted.failed_ocr_pages)} "
+                f"could not be read at all (no selectable text, and OCR found "
+                f"nothing) — they are not part of what this assistant can answer from.")
     if doc.csv_row_count is not None:
         msg += (f" {doc.csv_row_count} data row(s) stored, so counts and totals "
                 f"are computed from the rows themselves.")
@@ -383,6 +501,11 @@ async def upload_chat_file(
               "chars": doc.char_count, "pages": doc.page_count,
               "chunks": doc.chunk_count, "csv_rows": doc.csv_row_count,
               "truncated": extracted.truncated,
+              "ocr_pages": extracted.ocr_pages,
+              "failed_ocr_pages": extracted.failed_ocr_pages,
+              # Authoritative, server-calculated -- the browser clock is never
+              # the source of truth for when an upload stops being answerable.
+              "expires_at": doc.expires_at.isoformat() if doc.expires_at else None,
               "attached_files": names, "attached_count": len(names),
               "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION,
               "retired_files": retired},
@@ -395,22 +518,46 @@ async def list_session_attachments(
     db: AsyncSession = Depends(get_db),
     current_officer: OfficerContext = Depends(get_current_officer),
 ):
-    """List the attachments of one of the officer's own sessions."""
+    """List the attachments of one of the officer's own sessions.
+
+    Includes recently-retired/expired rows (not just currently-answerable
+    ones) so the attachment panel can show an officer a file that just aged
+    out of the session's active limit or expired, with a clear re-upload
+    action, instead of the file simply vanishing from the list with no
+    explanation -- the same "don't make the officer wonder if the assistant
+    forgot" rule `_retire_surplus()`'s own officer-facing note already
+    follows for the upload response.
+    """
     try:
         await attachment_store.verify_session(db, session_id, current_officer.officer_id)
     except attachment_store.AttachmentAccessError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    docs = await attachment_store.active_documents(
+    docs = await attachment_store.recent_documents(
         db, current_officer.officer_id, session_id)
+    now = datetime.now(timezone.utc)
+
+    def _status(d):
+        if not d.is_active:
+            return "retired"
+        if d.expires_at and d.expires_at <= now:
+            return "expired"
+        if d.extraction_status != doc_extract.STATUS_OK:
+            return d.extraction_status  # 'no_extractable_text' | 'failed'
+        return "active"
+
     return StandardResponse.success_response(
         data={"attachments": [
             {"document_id": str(d.id), "filename": d.filename,
              "type": d.file_ext, "chars": d.char_count, "pages": d.page_count,
              "csv_rows": d.csv_row_count,
              "extraction_status": d.extraction_status,
+             "status_detail": d.status_detail,
+             "lifecycle_status": _status(d),
              "created_at": d.created_at.isoformat() if d.created_at else None,
              "expires_at": d.expires_at.isoformat() if d.expires_at else None}
-            for d in docs], "count": len(docs)},
+            for d in docs],
+            "count": sum(1 for d in docs if _status(d) == "active"),
+            "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION},
         message="Attachments retrieved successfully")
 
 

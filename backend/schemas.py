@@ -45,24 +45,46 @@ class OfficerContext(BaseModel):
         """
         Determine the workflow stage this officer handles based on designation.
         SIS Officer -> SIS stage
-        DIS Officer -> DIS stage  
+        DIS Officer -> DIS stage
         SD Officer -> SD stage
-        Tahsildar -> Tahsildar stage
+        Tahsildar / Zonal Level Tahsildar (ZDT) -> TAHSILDAR stage (CLAUDE.md's
+            documented workflow-role table maps ZDT/HQDT to the TAHSILDAR
+            stage, the same desk the NISD chain's Zonal Level Tahsildar sits
+            at -- there is no separate ZDT value in `current_stage`)
+
+        An unrecognised designation (a typo, a future role this mapping has
+        not been taught, or no designation at all) used to fall through to
+        "SIS" -- silently handing that officer the SIS desk's queue in every
+        `Application.current_stage == officer.officer_stage` filter
+        throughout chatbot.py/postgres.py, rather than refusing to guess.
+        It now returns a sentinel outside `current_stage`'s own CHECK
+        constraint (`'SIS','SD','DIS','TAHSILDAR','COMPLETED','REJECTED'`),
+        so every one of those filters fails closed to an empty desk instead
+        of a stage this officer was never shown to hold -- no caller needs
+        to change, since the comparison stays a plain string equality that
+        simply never matches a stored row.
         """
         if not self.designation:
-            return "SIS"  # Default to SIS
-        
+            return "UNASSIGNED_STAGE"
         designation_lower = self.designation.lower()
+        if "zdt" in designation_lower or "zonal level tahsildar" in designation_lower:
+            return "TAHSILDAR"
         if "sis" in designation_lower or "sub inspector" in designation_lower:
             return "SIS"
         elif "dis" in designation_lower or "deputy inspector" in designation_lower:
             return "DIS"
-        elif "sd" in designation_lower or "sub divisional" in designation_lower or "subdivisional" in designation_lower:
+        elif ("sd" in designation_lower or "sub divisional" in designation_lower
+                or "subdivisional" in designation_lower or "draughtsman" in designation_lower):
+            # "Senior Draughtsman" (the SD desk's real designation, per
+            # workflow_guide.txt and chatbot.py's own `_WFH_STAGE_ALIASES`)
+            # contains no "sd" substring at all and fell through to the
+            # fail-closed default until this branch was widened to match it
+            # the same way the rest of the codebase already does.
             return "SD"
         elif "tahsildar" in designation_lower:
-            return "Tahsildar"
+            return "TAHSILDAR"
         else:
-            return "SIS"  # Default
+            return "UNASSIGNED_STAGE"
 
 
 class StandardResponse(BaseModel):

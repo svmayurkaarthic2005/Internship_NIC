@@ -130,6 +130,8 @@ async def lifespan(app: FastAPI):
         _overdue_task.cancel()
     if _sweep_task:
         _sweep_task.cancel()
+    from backend.routers.chat import _extraction_executor
+    _extraction_executor.shutdown(wait=False, cancel_futures=True)
     await engine.dispose()
     print("   ✅ Database connections closed")
     print("=" * 60)
