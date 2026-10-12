@@ -2461,7 +2461,18 @@ _YN_WORDS = {"pending": "pending", "approved": "approved", "approve": "approved"
              "completed": "completed", "complete": "completed", "escalated": "escalated", "escalate": "escalated",
              "closed": "completed", "decided": "completed"}
 _YN_SKIP = re.compile(r"\b(?:how\s+long|how\s+many|overdue|late|delay\w*|since|days?|sla|why|when|reason|remarks?|visit|"
-                      r"documents?|fee|ward|block|survey|patta|owner)\b", re.IGNORECASE)
+                      r"documents?|fee|ward|block|survey|patta|owner|"
+                      # A role/desk named in the question ("has the ZDT approved
+                      # X?") has no decision-desk evidence to attribute from here
+                      # -- this is the register-row path, with no workflow_history
+                      # to check against. Declining sends it to
+                      # `_render_status_role_answer` / `_stage_yes_no_question`
+                      # instead, which DO have that evidence, rather than
+                      # answering from the overall status alone and silently
+                      # crediting a role that may never have touched the file.
+                      r"zdt|hqdt|dro|tahsildar\w*|draughtsman|draftsman|\bsd\b|\bdis\b|\bsis\b|"
+                      r"deputy\s+inspect\w*|sub\s+inspect\w*|senior\s+draughtsman|district\s+revenue\s+officer)\b",
+                      re.IGNORECASE)
 
 
 def _status_yes_no(msg: str, app_no: str, status, stage, ta: bool) -> Optional[str]:
@@ -13252,11 +13263,25 @@ def _workflow_steps_alt_text(topic: str, is_tamil: bool) -> Optional[str]:
 
 
 _GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|zdt|hqdt|dro|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
-                   r"|sub\s+inspector\s+surveyor|deputy\s+inspector\s+surveyor|senior\s+draughtsman"
+                   # "inspector"/"inspecter" and "surveyor"/"surveyer" are both ordinary
+                   # misspellings an officer actually types, and "surveyor" is optional --
+                   # "who is the deputy inspector" (bare, no "surveyor") is still clearly
+                   # asking about DIS. Without this, only the exact phrase
+                   # "deputy inspector surveyor" matched, and "who is the deputy inspecter"
+                   # fell through to an unrelated officer-directory handler entirely.
+                   r"|(?:sub|deputy)\s+inspect(?:or|er)(?:\s+survey(?:or|er))?|senior\s+draughtsman"
                    r"|district\s+revenue\s+officer)")
 _GLOSSARY_ALIAS = {"draughtsman": "sd", "draftsman": "sd", "seniordraughtsman": "sd",
                    "subinspectorsurveyor": "sis", "deputyinspectorsurveyor": "dis",
                    "districtrevenueofficer": "dro"}
+# Every combination the widened "(sub|deputy) inspect(or|er) (survey(or|er))?"
+# alternative above can match, built by a loop instead of hand-enumerated so the
+# alias table can't drift out of sync with the regex.
+for _prefix, _code in (("sub", "sis"), ("deputy", "dis")):
+    for _insp in ("inspector", "inspecter"):
+        for _surv in ("", "surveyor", "surveyer"):
+            _GLOSSARY_ALIAS.setdefault(f"{_prefix}{_insp}{_surv}", _code)
+del _prefix, _code, _insp, _surv
 _ROLE_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+is\s+the\s+role\s+of|role\s+of|what\s+does\s+(?:a\s+|an\s+|the\s+)?)\s*(?:a\s+|an\s+|the\s+)?"
     + _GLOSSARY_TERMS + r"\s*(?:do|does)?\s*[?.!]*$", re.IGNORECASE)
@@ -14406,6 +14431,43 @@ def _stage_yes_no_question(message: str) -> Optional[str]:
     if not message or not _STATUS_YES_NO_OPEN_RE.search(message):
         return None
     return _named_stage(message)
+
+
+_DECISION_DESK_LABEL = {
+    "SIS": "the Sub Inspector Surveyor (SIS)", "SD": "the Senior Draughtsman (SD)",
+    "DIS": "the Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+}
+
+
+def _render_status_role_answer(structured_data: dict, asked_status: str, asked_role: str, language: str) -> str:
+    """"has the ZDT approved X?" -- a yes/no question naming BOTH a status and a
+    role/desk. Answered from `decision_desk` (the FROM-stage of the workflow hop
+    that actually closed the file), never from the overall status alone -- an
+    ISD file closed at SD (see CLAUDE.md's documented workflow chains) was never
+    touched by the Tahsildar, even though its overall status reads "approved"."""
+    app_no = structured_data.get("application_number", "N/A")
+    desk = structured_data.get("decision_desk")
+    actual_status = (structured_data.get("status") or "").lower()
+    is_tamil = language in ("ta", "tanglish")
+    if not desk:
+        lead = "இல்லை" if is_tamil else "No"
+        tail = f"{app_no} இன்னும் முடிவு செய்யப்படவில்லை." if is_tamil else f"{app_no} has not yet been decided."
+        return f"{lead} — {tail}"
+    desk_label = _DECISION_DESK_LABEL.get(desk, desk)
+    role_matches = desk == asked_role
+    status_matches = bool(actual_status) and actual_status == asked_status
+    if role_matches and status_matches:
+        lead, tail = "Yes", f"{app_no} was {actual_status} by {desk_label}."
+    elif role_matches:
+        lead = "No"
+        tail = f"{app_no} was {actual_status or 'not recorded'} (not {asked_status}) by {desk_label}."
+    else:
+        asked_label = _DECISION_DESK_LABEL.get(asked_role, asked_role)
+        lead = "No"
+        tail = f"{app_no} was decided by {desk_label}, not {asked_label}."
+    if is_tamil:
+        lead = "ஆம்" if lead == "Yes" else "இல்லை"
+    return f"{lead} — {tail}"
 
 
 def _render_stage_yes_no_answer(structured_data: dict, asked_stage: str, language: str) -> str:
@@ -19365,6 +19427,36 @@ async def _process_chat_impl(
                 "table_data": None
             }
 
+        # Step 2b-ter-ii: a SAME-message filter contradiction ("exclude rejected
+        # applications, but include rejected ones too") is asked about instead of
+        # silently resolved to whichever filter neg_scope.parse() happens to read
+        # last. Checked against `_RAW_MESSAGE.get()`, not `_original_message` --
+        # by this point `_original_message` may already have been rewritten by an
+        # earlier normalisation pass (`followup_context._UNNEGATE_RE` turns
+        # "include X too" into the generic phrase "all pending approved rejected",
+        # destroying which specific value was being re-included).
+        _neg_contra = _neg_scope.detect_contradiction(_RAW_MESSAGE.get())
+        if _neg_contra:
+            logger.info(f"Same-message filter contradiction: {_RAW_MESSAGE.get()!r}")
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=_neg_contra,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": _neg_contra,
+                "language": language,
+                "intent": "clarification",
+                "action": None,
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+
         # Step 2b-quater-i: a message that names an unsupported service code
         # ("Compare 0155 and 0154.", "Show applications for service code
         # 0155.", "Which workflow applies to 0155?") is answered with the
@@ -23379,6 +23471,14 @@ async def _process_chat_impl(
                 response_text = await _not_found_or_register(db, officer, structured_data, language)
             elif "history" in structured_data:
                 response_text = _render_workflow_history(structured_data, language)
+            # A role AND a status both named ("has the ZDT approved X?") is
+            # attributed from `decision_desk`, tried before either single-axis
+            # answer below -- the status alone would credit a role that may
+            # never have touched the file.
+            elif _status_yes_no_question(message) and _stage_yes_no_question(message):
+                response_text = _render_status_role_answer(
+                    structured_data, _status_yes_no_question(message),
+                    _stage_yes_no_question(message), language)
             elif _status_yes_no_question(message):
                 response_text = _render_status_yes_no_answer(
                     structured_data, _status_yes_no_question(message), language)
@@ -24951,6 +25051,22 @@ async def _process_chat_stream_impl(
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=_original_message, assistant_message=response_text,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return
+
+        # Same guard as the non-streaming path: a SAME-message filter
+        # contradiction is asked about, not silently resolved.
+        _neg_contra = _neg_scope.detect_contradiction(_RAW_MESSAGE.get())
+        if _neg_contra:
+            import json as _json_contra
+            logger.info(f"Same-message filter contradiction: {_RAW_MESSAGE.get()!r}")
+            yield f"data: {_json_contra.dumps({'content': _neg_contra})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=_neg_contra,
                 language=language,
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None
@@ -28851,6 +28967,10 @@ async def _process_chat_stream_impl(
                 chunk = await _not_found_or_register(db, officer, structured_data, language)
             elif "history" in structured_data:
                 chunk = _render_workflow_history(structured_data, language)
+            elif _status_yes_no_question(message) and _stage_yes_no_question(message):
+                chunk = _render_status_role_answer(
+                    structured_data, _status_yes_no_question(message),
+                    _stage_yes_no_question(message), language)
             elif _status_yes_no_question(message):
                 chunk = _render_status_yes_no_answer(
                     structured_data, _status_yes_no_question(message), language)

@@ -42,6 +42,15 @@ _SUFFIX = re.compile(
     rf"(?:-?\s*(?:um|யும்|ம்)\s*)?"
     rf"(?:illama|illamal|illatha|illaatha|allatha|alla|vendam|venda|thavira|thavirthu|ozhichu|illai|illa|"
     rf"இல்லாத{_TA}*|இல்லாமல்|இல்லை|அல்லாத{_TA}*|தவிர{_TA}*|வேண்டாம்)(?![a-z])", re.IGNORECASE)
+# "<X> சேர்க்காதே" / "சேர்க்க வேண்டாம்" / "சேர்க்காமல்" -- "don't ADD/include X" -- is how
+# an officer naturally asks to EXCLUDE X. Unlike `_SUFFIX` above, the negation here sits
+# in a separate VERB word ("சேர்க்க", to add/include) with its own negative conjugation,
+# not a particle glued onto the term itself, so `_SUFFIX` never matches it. An optional
+# noun ("applications"/விண்ணப்பங்களை) may sit between the term and the verb.
+_SUFFIX_VERB = re.compile(
+    rf"(?<!\w)(?P<t>{_TERM})(?:\s+(?:ones?|applications?|apps?|விண்ணப்ப{_TA}*|கோப்பு{_TA}*))*\s+"
+    rf"(?:சேர்க்காதே{_TA}*|சேர்க்காமல்{_TA}*|சேர்க்க\s+வேண்டாம்|"
+    rf"serk\w*(?:adhe|aadhe|amal|aamal)\w*|serka\s*vend\w*)", re.IGNORECASE)
 _SEP = re.compile(r"\s*(,|and|or|nor|&|/)\s*(?:(?:" + _CUE_ALL + "|" + _CUE_ONE + r")\s*)?", re.IGNORECASE)
 
 _STATUS_TA = (("அங்கீகரி", "approved"), ("ஒப்புத", "approved"), ("நிராகரி", "rejected"),
@@ -127,9 +136,41 @@ def parse(text: str) -> Tuple[Dict[str, Set[str]], str]:
         return " " + " ".join(kept) + " "
 
     text = text or ""
+    text = _SUFFIX_VERB.sub(lambda m: (_take(_terms(m.group("t"))) or " "), text)
     text = _SUFFIX.sub(lambda m: (_take(_terms(m.group("t"))) or " "), text)
     residual = _GROUP.sub(_group, text)
     return {k: v for k, v in ex.items() if v}, residual
+
+
+# "exclude rejected applications, but include rejected ones too" -- a SAME-message
+# contradiction. `parse()`'s exclusion set only ever grows within one message (the
+# across-turn "include it back" case is `_unexclude`, below), so without this a
+# same-message contradiction silently resolved to whichever filter happened to be
+# read last, instead of asking which one the officer meant.
+_INCLUDE_TOO_RE = re.compile(
+    rf"\binclude\s+(?:every\s+|all\s+)?(?P<term>{_TERM})(?:\s+(?:ones?|applications?|apps?))*\s*(?:too|also)\b",
+    re.IGNORECASE)
+
+
+def detect_contradiction(message: str) -> Optional[str]:
+    """A clarification question when `message` both excludes and re-includes
+    (via an explicit "include X too/also") the SAME value, or None when there
+    is no such same-message contradiction. Checked ahead of `rewrite()` so the
+    contradiction is surfaced instead of silently resolved."""
+    if not message or _APP_NO.search(message):
+        return None
+    ex, _ = parse(message)
+    if not ex:
+        return None
+    ex_values = {v for vs in ex.values() for v in vs}
+    inc_values = {c[1] for m in _INCLUDE_TOO_RE.finditer(message)
+                  for c in [_classify(m.group("term"))] if c}
+    conflicts = sorted(ex_values & inc_values)
+    if not conflicts:
+        return None
+    names = ", ".join(conflicts)
+    return (f"You asked to exclude {names} and also include {names} in the same message "
+            f"-- which did you mean? Please clarify.")
 
 
 def _clean(residual: str, has_positive: bool) -> Tuple[str, bool]:

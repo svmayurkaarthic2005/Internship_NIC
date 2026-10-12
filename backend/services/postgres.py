@@ -2261,6 +2261,13 @@ async def get_application_detail(
         )).scalars().first()
         decision_date = decision_hop.performed_at.date().isoformat() if decision_hop else None
         decision_stage = decision_hop.to_stage if decision_hop else None
+        # The DESK that actually made the call -- the FROM-stage of the hop that
+        # closed the file (SD for a seeded ISD file, TAHSILDAR for NISD), not the
+        # terminal to_stage (COMPLETED/REJECTED) `decision_stage` already carries.
+        # "has the ZDT approved X?" on an ISD file (closed at SD; ZDT never
+        # reaches one -- see CLAUDE.md's documented workflow chains) must be
+        # answered from THIS, never from `application_status` alone.
+        decision_desk = decision_hop.from_stage if decision_hop else None
         decision_by = None
         if decision_hop is not None and decision_hop.performed_by_officer_id:
             decision_by = await db.scalar(
@@ -2455,6 +2462,7 @@ async def get_application_detail(
             # file is still open -- never fall back to the submission date.
             "decision_date": decision_date,
             "decision_stage": decision_stage,
+            "decision_desk": decision_desk,
             "decision_by": decision_by,
             "approval_date": decision_date if app.current_status == "approved" else None,
             "rejection_date": decision_date if app.current_status == "rejected" else None,
