@@ -49,6 +49,44 @@ logger = get_logger(__name__)
 # ways -- it still refuses to match a stem inside a longer word.
 _TA_NB, _TA_NA = r'(?<![஀-௿])', r'(?![஀-௿])'
 
+# Common Romanized Tamil (Tanglish) tokens and spelling variants. Keep this broad
+# enough for real conversational wording, but do NOT use every entry as a fuzzy
+# target: several valid English words (for example "India") are close to common
+# Tanglish words ("indha"). Exact lexical evidence is safe; typo matching below is
+# limited to distinctive forms.
+_TANGLISH_WORDS = frozenset("""
+    enna yenna ennanu ennanga ennathu ennaachu ennachu enapa ennapa
+    eppadi epdi eppidi eppadiya epdiya eppo epo eppavum epovum appo ippa ippo
+    endha entha enda yentha yendha edhu ethu edha etha edhuku ethuku edhukku ethukku yethuku
+    enga engae enge engay yenga yengae yenge yengay inga ingae inge ingay ingu ingaye inki
+    yaaru yaru yaar yarru evlo evalo ivlo avlo evvalavu evalavu ethana ethanai ethane
+    vanakkam vanakam nandri nanri
+    enakku enaku ennaku ennoda enoda yenoda unakku unaku unnaku unnoda unga ungaloda
+    naan naanga nanga neenga nenga namma nammaku avanga ivanga avan ava avaru
+    indha intha inda andha antha idhu ithu idha itha adhu athu atha athula ithula
+    irukku iruka irukka irukaa irukkuma irukuma irukkanga irukanga irukingala irukiya
+    irundha iruntha irundhucha illa illai illaya illaiya illena illana illaama
+    venum venuma venduma venam vendam venda thevai thevaiya thevaya
+    aama ama amaam seri sari romba nalla nallaa konjam puriyala theriyala theriyum theriyanum
+    mudiyuma mudiyathu mudiyadhu varum vanthu vandha vanga vaanga ponga pogum poga
+    kudunga kudu kudutha kuduthu sollunga solunga sollu solla sollitu
+    pannunga panunga pannu panu pannala pannina panra pannra pannitu pannidu pannalam
+    kaatu kaattu kaatunga kaami kaaminga kaamikka tharunga tharu kodu
+    appuram aparum aprom apram apdi appadi ippadi apdina aachu aaguma
+    ellam ellaam ellaa ellathayum mothama muzhu kooda kitta
+    panichumai velaichumai kaalathaamadham niluvai niluvaiyil utpirivu kanakku
+""".split())
+
+# Only these distinctive words may trigger typo-based Tanglish recognition.
+# Common near-neighbours like "India", "today", "date", and "status" are
+# intentionally excluded, so English input is not accidentally reclassified.
+_TANGLISH_TYPO_WORDS = (
+    "evvalavu", "sollunga", "pannunga", "irukkanga", "vanakkam",
+    "ennoda", "enakku", "edhukku", "eppadi", "puriyala", "theriyala",
+    "kaatunga", "kudunga", "thevaiya", "venduma", "irukku", "illaya",
+    "ennanu", "pannalam", "pannidu", "eppavum", "yengae",
+)
+
 # Initialize Ollama LLM
 # num_predict controls the maximum number of output tokens Ollama will generate.
 # Without it, Ollama defaults to a very small cap (num_predict=128 on many
@@ -130,22 +168,19 @@ def detect_language(text: str) -> str:
         # Any Tamil script present alongside English → tanglish
         return "tanglish"
 
-    # Check for Romanized Tanglish keywords
-    tanglish_words = {
-        "enna", "eppadi", "engay", "yenge", "yenga", "eppo", "vanakkam",
-        "sollunga", "pannunga", "solla", "kaattu", "irukku", "irukkanga",
-        "kudunga", "yaaru", "evvalavu", "edhu", "edhukku", "aama", "illai",
-        "varum", "seri", "romba", "nalla", "panno", "kuduthu",
-        "venuma", "venduma", "thevaiya", "ennanu", "nandri", "nanri",
-        "kaatu", "kami", "kaami", "elam", "ellam", "ellaa", "ellaam", "sollu", "avatroda", "evlo", "yaru", "yaaru"
-    }
-    words = set(re.findall(r'\b[a-zA-Z]+\b', text.lower()))
-    if words.intersection(tanglish_words):
+    # Romanized Tamil has many regional and personal spellings. Exact common
+    # function words ("endha", "inga", "enakku", "illaya", etc.) are the
+    # strongest signal. Normalize whitespace/case first, then use typo matching
+    # only against distinctive words so a normal English sentence is not labelled
+    # Tanglish just because it contains a near-neighbour such as "India".
+    words = set(re.findall(r"\b[a-zA-Z]+\b", normalize_text(text)))
+    if words & _TANGLISH_WORDS:
         return "tanglish"
-    # A slipped letter in a Tanglish word ("ena", "edgu", "solu", "kaatuu") must not
-    # flip the reply to English.
-    for w in words:
-        if len(w) >= 4 and any(len(t) >= 4 and is_token_typo_match(w, t) for t in tanglish_words):
+    for word in words:
+        if len(word) >= 4 and any(
+            is_token_typo_match(word, target)
+            for target in _TANGLISH_TYPO_WORDS
+        ):
             return "tanglish"
 
     return "en"
