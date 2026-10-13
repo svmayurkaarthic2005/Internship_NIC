@@ -2145,12 +2145,12 @@ def _build_general_negative_correction_response(message: str, chat_history: Sequ
     msg_low = (message or "").lower()
     if (("f-line" in msg_low or "fline" in msg_low) and "appeal" in msg_low) or ("0178" in msg_low and "0185" in msg_low) or re.search(r"\b(?:f[- ]?line\s+(?:and|&)\s+f[- ]?line\s+appeal|0178\s+(?:and|&)\s+0185)\b", msg_low):
         if is_ta:
-            resp = ("அதிகாரப்பூர்வ TAMILNILAM வருவாய் வழிகாட்டுதல்களின்படி சேவை குறியீடு வரையறைகள் சரிபார்க்கப்பட்டன:\n"
+            resp = ("அதிகாரப்பூர்வ TAMILNILAM நகர்ப்புற வழிகாட்டுதல்களின்படி சேவை குறியீடு வரையறைகள் சரிபார்க்கப்பட்டன:\n"
                     "• **0178 (F-Line Demarcation)**: ஆரம்ப எல்லை நிர்ணய அளவை பணிப்பாய்வு. சர்வே எண் அல்லது நிலத்தின் எல்லைகளை அளந்து நிர்ணயிக்க SIS மற்றும் DIS கள ஆய்வு மேற்கொள்வர் (கள ஆய்வு தேவை).\n"
                     "• **0185 (F-Line Appeal)**: முந்தைய எல்லை நிர்ணய உத்தரவு அல்லது சர்வே முடிவுக்கு எதிரான நிர்வாக மேல்முறையீட்டு நடைமுறை (கள ஆய்வு தேவை).\n\n"
                     "இவை இரண்டும் வெவ்வேறு சட்டப்பூர்வ நடைமுறைகள்: 0178 என்பது முதன்மை எல்லை அளவை, 0185 என்பது முந்தைய முடிவின் மீதான மேல்முறையீடு.")
         else:
-            resp = ("Rechecked against authoritative TAMILNILAM revenue service code guidelines:\n"
+            resp = ("Rechecked against authoritative TAMILNILAM Urban service code guidelines:\n"
                     "• **0178 (F-Line Demarcation)**: Initial boundary demarcation survey workflow. Handled by Sub Inspector Surveyor (SIS) and Deputy Inspector Surveyor (DIS) to measure and demarcate parcel boundaries (requires field visit).\n"
                     "• **0185 (F-Line Appeal)**: Administrative appeal procedure filed against a prior demarcation decision or survey order (requires field visit).\n\n"
                     "These are distinct statutory procedures: 0178 is the primary demarcation survey, whereas 0185 is the formal appeal against a previous demarcation decision.")
@@ -23450,7 +23450,14 @@ async def _process_chat_impl(
                 _field_keywords = [
                     "name", "address", "mobile", "phone", "status", "stage",
                     "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
-                    "survey", "patta", "can", "reason", "priority",
+                    # "can number" (not bare "can") -- "can" alone is also the
+                    # commonest modal verb in English ("Can you explain?",
+                    # "Can I see...") and a substring match on bare "can" made
+                    # every such question a false-positive field query that
+                    # got answered with the CAN number instead of what was
+                    # actually asked. Mirrors the same "can you/i/we" guard
+                    # already established in _is_conversation_recall() above.
+                    "survey", "patta", "can number", "can_number", "reason", "priority",
                     "subdivision", "subdiv", "user", "role",
                     "service", "source", "district", "taluk", "ward", "block",
                     "received", "workflow",
@@ -24017,7 +24024,12 @@ async def _process_chat_impl(
             "saturday", "sunday",
             "reason", "overdue", "nisd", "isd", "pending", "long", "duration",
             "days", "since", "how long", "serial", "serial number", "serial_number",
-            "can", "can number", "can_number", "patta", "patta number", "patta_number",
+            # Bare "can" removed -- it is also the commonest English modal
+            # verb ("Can you explain?"), and a substring match made every
+            # such question a false-positive field query answered with the
+            # CAN number instead of what was actually asked. "can number" /
+            # "can_number" below already cover the genuine CAN-lookup cues.
+            "can number", "can_number", "patta", "patta number", "patta_number",
             "subdivision", "subdivision number", "subdivision_number", "current subdivision",
             "current_subdivision_number", "role", "role id",
             "role_id", "user", "user id", "user_id",
@@ -29302,7 +29314,12 @@ async def _process_chat_stream_impl(
                     _field_keywords = [
                         "name", "address", "mobile", "phone", "status", "stage",
                         "overdue", "days", "scheduled", "visit", "delay", "delayed", "late",
-                        "survey", "patta", "can", "reason", "priority",
+                        # "can number" (not bare "can") -- see the matching
+                        # comment in process_chat's copy of this list: bare
+                        # "can" is also the commonest English modal verb
+                        # ("Can you explain?"), and a substring match made
+                        # every such question a false-positive field query.
+                        "survey", "patta", "can number", "can_number", "reason", "priority",
                         "subdivision", "subdiv", "user", "role",
                         "service", "source", "district", "taluk", "ward", "block",
                         "received", "workflow",
@@ -29749,7 +29766,12 @@ async def _process_chat_stream_impl(
             "saturday", "sunday",
             "reason", "overdue", "nisd", "isd", "pending", "long", "duration",
             "days", "since", "how long", "serial", "serial number", "serial_number",
-            "can", "can number", "can_number", "patta", "patta number", "patta_number",
+            # Bare "can" removed -- it is also the commonest English modal
+            # verb ("Can you explain?"), and a substring match made every
+            # such question a false-positive field query answered with the
+            # CAN number instead of what was actually asked. "can number" /
+            # "can_number" below already cover the genuine CAN-lookup cues.
+            "can number", "can_number", "patta", "patta number", "patta_number",
             "subdivision", "subdivision number", "subdivision_number", "current subdivision",
             "current_subdivision_number", "role", "role id",
             "role_id", "user", "user id", "user_id",

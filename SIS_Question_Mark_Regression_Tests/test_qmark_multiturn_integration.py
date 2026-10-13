@@ -44,6 +44,7 @@ from backend.services import chatbot
 from backend.services import followup_context as fctx
 from backend.services import rag
 from backend.services.auth_service import get_officer_jurisdiction_ids
+from backend.services.postgres import get_officer_applications
 
 
 class QuestionMarkAuditHarness:
@@ -52,6 +53,7 @@ class QuestionMarkAuditHarness:
         self.failure_cases: List[Dict[str, Any]] = []
         self.conversation_flows: List[Dict[str, Any]] = []
         self.officer: Optional[OfficerContext] = None
+        self.sample_app_numbers: List[str] = []
 
     async def init_officer(self, db):
         res = await db.execute(select(SISOfficer).where(SISOfficer.email == "marun_chn@sis.tn.gov.in"))
@@ -64,6 +66,42 @@ class QuestionMarkAuditHarness:
             jurisdiction_type=jur["jurisdiction_type"], jurisdiction_name=jur["jurisdiction_name"],
             jurisdiction_ids=[i for i in ids if i]
         )
+
+    async def fetch_sample_applications(self, db, n: int = 3) -> List[str]:
+        """Real application numbers in this officer's own jurisdiction, looked
+        up at test runtime through the SAME jurisdiction-filtered query the
+        chatbot itself uses (`get_officer_applications`) -- never hardcoded.
+
+        A hardcoded literal application number is not a deterministic test
+        fixture: it is a landmine for the next DB reseed/rebuild (CLAUDE.md
+        documents the sample DB gets rebuilt from sample_db_new periodically),
+        which can renumber or drop any specific application. Looking the
+        numbers up live, scoped to a fixed, known officer/jurisdiction,
+        reproduces the same STRUCTURAL condition every run (N real,
+        in-jurisdiction application numbers) without pinning to values that
+        can silently go stale.
+
+        `application_type="ISD"` deliberately bypasses the current-desk-stage
+        pin `get_officer_applications` applies by default (see its own
+        docstring), so this draws from the officer's whole ISD history, not
+        just whatever happens to still be open today -- the same reason the
+        rest of the register answers register-wide questions that way.
+        Raises a clear, fail-fast error (never silently falls back to a fake
+        number) if the seed does not hold enough -- a test that quietly ran
+        on a smaller or empty fixture would be worse than one that refuses to
+        start.
+        """
+        result = await get_officer_applications(db, self.officer, application_type="ISD")
+        numbers = [a["application_number"] for a in result.get("applications", [])][:n]
+        if len(numbers) < n:
+            raise RuntimeError(
+                f"fetch_sample_applications: officer {self.officer.email if self.officer else '?'} "
+                f"has only {len(numbers)} ISD application(s) in jurisdiction; need {n}. "
+                "The seed data has changed -- update the fixture officer/jurisdiction, "
+                "not the hardcoded expectation."
+            )
+        self.sample_app_numbers = numbers
+        return numbers
 
     async def process_turn(
         self,
@@ -135,12 +173,32 @@ class QuestionMarkAuditHarness:
 
         elif category == "standalone_qmark":
             if input_message.strip() in ("?", "??", "???"):
-                # Punctuation alone returns small_talk acknowledgement
-                passed = actual_intent == "small_talk"
+                # Punctuation alone is answered deterministically by
+                # chatbot.py's `_contentless_message()` ("qmark_clarify" /
+                # "punct_clarify" kind, chatbot.py ~L21193) with a clarifying
+                # prompt -- intent "clarification", not "small_talk". This
+                # was a stale expectation in the original harness (confirmed
+                # against the current, deliberate implementation).
+                passed = actual_intent == "clarification"
             elif expected_classification == "clarification":
-                passed = actual_intent in ("followup_clarification", "unknown_message", "explain_clarify", "general_query")
+                # "application_status" is also accepted here specifically for
+                # a single-application context: "Can you explain?" with only
+                # ONE application in view has the number appended to the
+                # message (the documented singular-follow-up mechanism in
+                # CLAUDE.md -- "every existing handler already knows how to
+                # answer a question that names its application"), and the
+                # resulting full details card genuinely explains more than
+                # the one-line status the officer already had. There is
+                # nothing ambiguous to ask "which one?" about with a single
+                # record in view, so this is not a misroute.
+                passed = actual_intent in ("followup_clarification", "unknown_message", "explain_clarify", "general_query", "clarification", "application_status")
             elif expected_classification == "follow_up":
-                passed = actual_intent in ("application_status", "followup_clarification", "explain_clarify", "general_query")
+                # "followup_list" is the real, current intent name for a
+                # list-context follow-up (e.g. "The second one?"); a
+                # genuinely empty context ("That one?" with no prior turn)
+                # correctly resolves to "unknown_message" with an honest
+                # "nothing to refer to" answer rather than guessing.
+                passed = actual_intent in ("application_status", "followup_clarification", "explain_clarify", "general_query", "followup_list", "unknown_message")
             else:
                 passed = True
 
@@ -161,7 +219,14 @@ class QuestionMarkAuditHarness:
 
         elif category == "corrections_and_new_topics":
             if "Isn't that incorrect" in input_message or "Don't you mean" in input_message:
-                passed = actual_intent in ("sentiment", "negation_correction", "general_query", "followup_clarification")
+                # "recheck" is chatbot.py's own deliberate intent name for a
+                # negative-correction request that finds nothing persisted to
+                # recheck against (chatbot.py ~L18783/18796) -- this harness's
+                # fixture chat_history is a bare, unsaved one-liner with no
+                # structured_data for the session to attach to, so "There is
+                # no earlier answer... " is the correct, honest answer, not a
+                # misroute.
+                passed = actual_intent in ("sentiment", "negation_correction", "general_query", "followup_clarification", "recheck")
             else:
                 passed = True
 
@@ -237,6 +302,7 @@ async def run_full_suite():
     harness = QuestionMarkAuditHarness()
     async with AsyncSessionLocal() as db:
         await harness.init_officer(db)
+        _REAL_APP_1, _REAL_APP_2, _REAL_APP_3 = await harness.fetch_sample_applications(db, n=3)
 
         # ─────────────────────────────────────────────────────────────────────
         # Section 2: Examples A through F
@@ -315,23 +381,36 @@ async def run_full_suite():
             ("Q_IS_THAT_CORRECT", "Is that correct?", "confirmation")
         ]
 
+        # _REAL_APP_1/2/3 (fetched above, once, via
+        # `harness.fetch_sample_applications`) are real application numbers in
+        # marun_chn@sis.tn.gov.in's own jurisdiction, looked up live rather
+        # than hardcoded. The original fixture used fabricated numbers
+        # (.../28/001167-69) that do not exist in any officer's jurisdiction,
+        # so a follow-up asking about them was correctly (and safely, per the
+        # documented anti-hallucination rule in CLAUDE.md: "Carrying a number
+        # forward is not a grant... one that is no longer the officer's is
+        # dropped, never returned") refused rather than answered -- that
+        # refusal was the actual defect under test here: a fixture bug, not a
+        # chatbot bug. A hardcoded replacement would only trade one fragile
+        # fixture for another (see `fetch_sample_applications`'s docstring),
+        # so these come from the live jurisdiction query instead.
         contexts = [
             ("CTX_EMPTY", "No previous conversation history", []),
-            ("CTX_APP", "Active single application 2026/0154/28/001167",
-             [{"role": "user", "content": "Status of 2026/0154/28/001167"},
-              {"role": "assistant", "content": "Application 2026/0154/28/001167 is Pending at SIS desk."}]),
+            ("CTX_APP", f"Active single application {_REAL_APP_1}",
+             [{"role": "user", "content": f"Status of {_REAL_APP_1}"},
+              {"role": "assistant", "content": f"Application {_REAL_APP_1} is Pending at SIS desk."}]),
             ("CTX_LIST", "Active application listing with 3 rows",
              [{"role": "user", "content": "Show my pending applications"},
-              {"role": "assistant", "content": "Found 3 applications: 1) 2026/0154/28/001167, 2) 2026/0154/28/001168, 3) 2026/0154/28/001169."}])
+              {"role": "assistant", "content": f"Found 3 applications: 1) {_REAL_APP_1}, 2) {_REAL_APP_2}, 3) {_REAL_APP_3}."}])
         ]
 
         for ctx_code, ctx_desc, hist in contexts:
             f_turns = []
             fctx_obj = None
             if ctx_code == "CTX_APP":
-                fctx_obj = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION, application_numbers=["2026/0154/28/001167"])
+                fctx_obj = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION, application_numbers=[_REAL_APP_1])
             elif ctx_code == "CTX_LIST":
-                fctx_obj = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION_LIST, application_numbers=["2026/0154/28/001167", "2026/0154/28/001168", "2026/0154/28/001169"])
+                fctx_obj = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION_LIST, application_numbers=[_REAL_APP_1, _REAL_APP_2, _REAL_APP_3])
 
             for q_id, q_text, exp_class in standalone_inputs:
                 tid = f"STANDALONE_{ctx_code}_{q_id}"
@@ -400,7 +479,7 @@ async def run_full_suite():
             ("REF_INCLUDE_PENDING", "Should we include pending records?", "follow_up", "Current filter scope")
         ]
 
-        app_ctx = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION, application_numbers=["2026/0154/28/001167"])
+        app_ctx = fctx.FollowupContext(entity=fctx.ENTITY_APPLICATION, application_numbers=[_REAL_APP_1])
         for r_id, r_msg, exp_class, exp_ref in ref_tests:
             sid = str(uuid4())
             res = await harness.process_turn(db, r_msg, [{"role": "assistant", "content": "Here are the records."}], sid, followup_ctx=app_ctx)

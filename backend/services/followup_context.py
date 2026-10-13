@@ -1882,7 +1882,7 @@ def field_for_each(message: str) -> Optional[str]:
     if not message:
         return None
     message = _correct_typos(message)
-    lowered = message.lower()
+    lowered = _strip_can_modal(message.lower())
     for key, needles in _PROJECT_FIELDS:
         for n in needles:
             if _needle_hit(n, lowered, message):
@@ -1906,7 +1906,7 @@ def fields_for_each(message: str) -> Optional[List[str]]:
     if not message:
         return None
     message = _correct_typos(message)
-    lowered = message.lower()
+    lowered = _strip_can_modal(message.lower())
     hits: List[Tuple[int, str]] = []
     seen = set()
     for key, needles in _PROJECT_FIELDS:

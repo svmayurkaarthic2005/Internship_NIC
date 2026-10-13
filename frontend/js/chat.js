@@ -643,6 +643,8 @@ async function sendMessage() {
         await window.uploadFileFromData("file_b.csv", "application_number,service_code,applicant_name\n2026/0154/01/0004,0154,Dinesh\n2026/0178/01/0005,0178,Ganesh");
         return;
     }
+
+    if (isTyping) {
         console.warn('❌ Cannot send: Already typing');
         showToast('Please wait for the current response', 'warning');
         return;
