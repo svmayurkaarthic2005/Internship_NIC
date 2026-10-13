@@ -499,6 +499,20 @@ async def csv_data(db: AsyncSession, doc: ChatAttachment
     return headers, [dict(r) for r in rows]
 
 
+async def preview_text(db: AsyncSession, doc: ChatAttachment) -> str:
+    """The document's stored chunks, in file order, joined back into one
+    readable block -- the same text an answer would be grounded in, not a
+    re-extraction. A chunk boundary (UPLOAD_CHUNK_CHARS) can fall mid-word,
+    so this is "what the assistant can see", not a byte-exact copy of the
+    original file."""
+    chunks = (await db.execute(
+        select(AttachmentChunk.content)
+        .where(AttachmentChunk.document_id == doc.id)
+        .order_by(AttachmentChunk.chunk_index)
+    )).scalars().all()
+    return "\n\n".join(chunks)
+
+
 async def delete_document(db: AsyncSession, officer_id: Any, session_id: Any,
                           document_id: Any) -> bool:
     doc = await get_document(db, officer_id, session_id, document_id)
@@ -1034,6 +1048,7 @@ _HEADING_RES = (
     re.compile(r"^\s*#{1,4}\s+(.+?)\s*$"),
     re.compile(r"^\s*(?:\d{1,2}[.)]|[A-Z][.)])\s+([A-Z][^.]{3,80})\s*$"),
     re.compile(r"^([A-Z][A-Z0-9 &/,'()\-]{6,80})\s*$"),
+    re.compile(r"^\s*([A-Z][a-zA-Z0-9 &/,'()\-]{2,80}[a-zA-Z0-9)])\s*$"),
 )
 
 

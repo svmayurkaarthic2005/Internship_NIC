@@ -364,6 +364,513 @@ async def _last_focused_document(db: AsyncSession, session_id: str) -> Optional[
     return ids[0] if len(ids) == 1 else None
 
 
+async def _get_last_assistant_attachment_context(
+    db: AsyncSession, session_id: str
+) -> Optional[Dict[str, Any]]:
+    """Retrieve structured data from the immediately previous assistant turn if it was an attachment turn."""
+    from sqlalchemy import and_
+    from backend.models import ChatMessage, messages_since_session_start
+    try:
+        row = (await db.execute(
+            select(ChatMessage.structured_data)
+            .where(and_(ChatMessage.session_id == session_id,
+                        ChatMessage.role == "assistant",
+                        messages_since_session_start(session_id)))
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+    except Exception:
+        return None
+    if not row or row.get("entity") != "attachment":
+        return None
+    return row
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grounded Project-Relevance Assessment & Negative Follow-up Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RELEVANCE_CUE_RE = re.compile(
+    r"\b(?:"
+    r"relevant|relevance|useful|use|usable|suit|suits|suitable|suitability|"
+    r"related|relate|match|matches|matching|fit|fits|fitting|include|including|"
+    r"applicable|apply|good\s+for|needed\s+for|"
+    r"set\s+aaguma|useful\s*[-]?\s*ah|use\s+aaguma|use\s+pannalama|seri\s+aaguma|"
+    r"porundhuma|sambandhapatadha|related\s*[-]?\s*ah|match\s+aaguma|poda\s+mudiyuma"
+    r")\b|"
+    r"பொருந்துமா|பயனுள்ளதா|பயன்படுமா|பயன்படுத்தலாமா|தொடர்புடையதா|ஏற்குமா",
+    re.IGNORECASE,
+)
+
+_PROJECT_TARGET_RE = re.compile(
+    r"\b(?:"
+    r"our\s+project|the\s+project|this\s+project|my\s+project|project\b|"
+    r"presentation|presenting|pitch|pitching|deck|hackathon|competition|event|"
+    r"sis\s+chatbot|sis\s+assistant|sis\s+ai\s+assistant|chatbot|ai\s+assistant|"
+    r"our\s+work|our\s+requirements|requirements|"
+    r"namma\s+project|namadhu\s+project|namma\s+presentation|presentation[-]?la|"
+    r"presentationla|namma\s+work"
+    r")\b|"
+    r"நமது\s*திட்டம்|எங்கள்\s*திட்டம்|திட்டத்திற்கு|விளக்கக்காட்சி|விளக்கக்காட்சியில்|திட்ட",
+    re.IGNORECASE,
+)
+
+
+def is_project_relevance_request(message: str) -> bool:
+    """Whether the question asks to assess document relevance, fit, or usefulness for a project/presentation."""
+    text = (message or "").strip().lower()
+    if not text or _APPLICATION_NO_RE.search(text):
+        return False
+    return bool(_RELEVANCE_CUE_RE.search(text) and _PROJECT_TARGET_RE.search(text))
+
+
+_KNOWN_PROJECT_TOKENS = frozenset({
+    "sis", "internship", "survey", "tn", "tamil", "assistant", "chatbot", "ai",
+    "cadastral", "nic", "our", "the", "this", "my", "namma", "namadhu", "presentation",
+})
+
+_STOP_WORDS_BEFORE_PROJECT = frozenset({
+    "to", "for", "in", "our", "the", "this", "my", "a", "an", "that", "of", "and", "on", "at", "by", "with", "from",
+    "is", "it", "namma", "namadhu", "andha", "indha", "oru",
+})
+
+_NAMED_PROJECT_RE = re.compile(
+    r"\bproject\s+([a-zA-Z0-9_\-]+)\b",
+    re.IGNORECASE,
+)
+
+_SUFFIX_PROJECT_RE = re.compile(
+    r"\b([a-zA-Z0-9_\-]+)\s+project\b",
+    re.IGNORECASE,
+)
+
+_UNRELATED_DOMAINS_RE = re.compile(
+    r"\b(healthcare|hospital|agriculture|farming|banking|ecommerce|crypto|gaming)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_project_target(message: str) -> Dict[str, Any]:
+    """Identify whether the query targets the verified SIS AI Assistant or an unknown project."""
+    text = (message or "").strip().lower()
+    unrelated_m = _UNRELATED_DOMAINS_RE.search(text)
+    if unrelated_m:
+        return {"is_known": False, "project_name": unrelated_m.group(1).title()}
+
+    m = _NAMED_PROJECT_RE.search(text)
+    if m:
+        pname = m.group(1).lower()
+        if pname not in _KNOWN_PROJECT_TOKENS and pname not in _STOP_WORDS_BEFORE_PROJECT:
+            return {"is_known": False, "project_name": f"Project {pname.title()}"}
+
+    m_suf = _SUFFIX_PROJECT_RE.search(text)
+    if m_suf:
+        pname = m_suf.group(1).lower()
+        if pname not in _KNOWN_PROJECT_TOKENS and pname not in _STOP_WORDS_BEFORE_PROJECT:
+            return {"is_known": False, "project_name": f"Project {pname.title()}"}
+
+    return {"is_known": True, "project_name": "SIS AI Assistant"}
+
+
+_NEGATIVE_CORRECTION_RE = re.compile(
+    r"^\s*(?:no|nope|nah|illa|illai|இல்லை|இல்ல)\s*(?:[.,!?;:]\s*.*)?$"
+    r"|^\s*(?:not\s+that|wrong(?:\s+answer)?)\s*(?:[.,!?;:]\s*.*)?$"
+    r"|\b(?:that'?s\s+not\s+(?:what\s+i\s+meant|it|correct|right))\b"
+    r"|\b(?:not\s+what\s+i\s+meant)\b"
+    r"|\bi\s+meant\s+something\s+else\b"
+    r"|\b(?:apdi|appadi)\s+illa\b"
+    r"|\b(?:adhu|athuvum|athu|idhu)\s+illa\b"
+    r"|\bnaan\s+(?:adha|atha|adhai)\s+kekkala\b"
+    r"|\bvera\s+meaning\b"
+    r"|அப்படி\s*இல்லை|அது\s*இல்லை|இது\s*இல்லை|நான்\s*அதை(?:க்)?\s*கேட்கவில்லை",
+    re.IGNORECASE,
+)
+
+
+def is_negative_correction(message: str) -> bool:
+    """Whether message is a rejection or correction of the immediately prior assistant response."""
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    if _APPLICATION_NO_RE.search(text) or _is_register_shaped(text):
+        return False
+    if any(m in text for m in ("field visit", "pending", "status", "application number", "survey number")):
+        return False
+    return bool(_NEGATIVE_CORRECTION_RE.search(text))
+
+
+def _build_project_relevance_assessment(
+    doc: ChatAttachment,
+    headings: List[str],
+    leading_chunks: List[Evidence],
+    csv_data: Optional[Tuple[List[str], List[Any]]],
+    language: str,
+    project_name: str = "SIS AI Assistant",
+) -> Tuple[str, List[str]]:
+    ta = language in ("ta", "tanglish")
+    citations: List[str] = []
+
+    fname_low = (doc.filename or "").lower()
+    is_template = any(
+        w in fname_low for w in ("template", "pitch", "deck", "presentation", "hackathon", "ppt", "slide")
+    ) or any(
+        any(k in h.lower() for k in ("pitch", "problem statement", "solution", "team", "plan of action", "slide", "affordability"))
+        for h in headings
+    )
+    is_cadastral = any(
+        w in fname_low for w in ("survey", "patta", "field", "deed", "fmb", "chitta", "order", "sketch")
+    ) or any(
+        any(k in h.lower() for k in ("survey", "patta", "subdivision", "field inspection", "deed", "boundary", "land"))
+        for h in headings
+    )
+
+    if headings:
+        citations.append(f"[{doc.filename}, outline]")
+    elif leading_chunks and leading_chunks[0].citation:
+        citations.append(leading_chunks[0].citation)
+
+    if ta:
+        lines = []
+        if is_template:
+            lines.append(f"ஆவணம்: '{doc.filename}' — இது திட்ட முன்மொழிவு அல்லது விளக்கக்காட்சிக்கான மாதிரிப் படிவமாகும் (Presentation/Pitch Template).")
+            lines.append(f"\n{project_name} திட்டத்திற்கு இதன் பொருத்தம் மற்றும் பயன்பாடு:")
+            if headings:
+                for h in headings:
+                    h_low = h.lower()
+                    if "problem statement" in h_low:
+                        lines.append(f"• {h}: நில அளவைத் துறையில் உள்ள சவால்கள், பட்டா மாறுதல் தாமதங்கள் மற்றும் கள ஆய்வு நிலுவைகளை விளக்குவதற்குப் பயன்படுகிறது.")
+                    elif "existing solutions" in h_low:
+                        lines.append(f"• {h}: தற்போதைய கையேடு நடைமுறைகளின் குறைபாடுகளை ஒப்பிட்டு நமது தீர்வின் அவசியத்தை விளக்கப் பயன்படுகிறது.")
+                    elif "solution" in h_low or "affordability" in h_low:
+                        lines.append(f"• {h}: திறந்த மூல FastAPI + PostgreSQL + உள்ளூர் Ollama LLM அமைப்பின் செலவு சிக்கனம் மற்றும் செயல்திறனை முன்வைக்க மிகவும் பொருத்தமானது.")
+                    elif "plan of action" in h_low:
+                        lines.append(f"• {h}: வட்ட மற்றும் வார்டு அளவிலான களப்பணியாளர்கள் பயன்பாட்டுக்கான செயல் திட்ட மைல்கற்களை (rollout milestones) வரிசைப்படுத்த உதவுகிறது.")
+                    elif "pitch" in h_low or "elevator" in h_low or "team" in h_low:
+                        lines.append(f"• {h}: திட்டத்தின் சுருக்கமான அறிமுகம் மற்றும் குழுவினரின் விவரங்களை வழங்க உதவுகிறது.")
+                    else:
+                        lines.append(f"• {h}: திட்ட விளக்கக்காட்சியின் தொடர்புடைய பிரிவாகப் பயன்படுத்தலாம்.")
+            else:
+                lines.append("• இந்த மாதிரிப் படிவம் திட்டத்தை அழகாக வடிவமைத்து விளக்குவதற்கு (presentation structure) உதவும்.")
+
+            lines.append("\nதொழில்நுட்ப வேறுபாடு:")
+            lines.append("• விளக்கக்காட்சி மற்றும் திட்ட முன்மொழிவை ஒழுங்கமைக்க இது பயனுள்ளதாக இருந்தாலும், இது தமிழ்நாடு நில அளவைத் துறையின் உத்தியோகபூர்வ விதிகள் (ISD/NISD), பட்டா மாறுதல் செயல்முறைகள் அல்லது தொழில்நுட்ப பணிப்பாய்வு ஆவணம் அல்ல.")
+
+            lines.append("\nவரம்புகள்:")
+            lines.append("• இந்த மதிப்பீடு பிரித்தெடுக்கப்பட்ட தலைப்புகளின் (outline) அடிப்படையில் மட்டுமே வழங்கப்பட்டுள்ளது; முழு ஸ்லைடு விவரங்களும் சரிபார்க்கப்படவில்லை.")
+            lines.append("• குறிப்பிட்ட நிகழ்வின் சமர்ப்பிப்பு விதிமுறைகள் அல்லது பக்க வரம்புகள் இந்த தலைப்புகளிலிருந்து சரிபார்க்கப்படவில்லை.")
+
+        elif is_cadastral:
+            lines.append(f"ஆவணம்: '{doc.filename}' — இது நில அளவை மற்றும் பட்டா தொடர்பான தொழில்நுட்ப ஆவணம்.")
+            lines.append(f"\n{project_name} திட்டத்திற்கு இதன் நேரடி பொருத்தம்:")
+            lines.append("• நில அளவை ஆய்வு, எல்லை சரிபார்ப்பு மற்றும் பட்டா மாறுதல் பணிப்பாய்வுகளுக்கு இது நேரடியாகப் பொருந்தும்.")
+            if headings:
+                lines.append(f"• பிரித்தெடுக்கப்பட்ட பிரிவுகள்: {', '.join(headings)}.")
+
+        elif csv_data:
+            headers, rows = csv_data
+            lines.append(f"ஆவணம்: '{doc.filename}' — {len(rows)} வரிசைகள் மற்றும் நெடுவரிசைகள் கொண்ட தரவுப் பட்டியல்.")
+            lines.append(f"\n{project_name} திட்டத்தில் தரவு சரிபார்ப்பு மற்றும் பணிச்சுமை பகுப்பாய்விற்கு இது பயன்படும்.")
+
+        else:
+            lines.append(f"ஆவணம்: '{doc.filename}' — பொதுவான தகவல் ஆவணம்.")
+            if headings:
+                lines.append(f"• இதில் உள்ள பிரிவுகள் ({', '.join(headings)}) திட்ட விளக்கக்காட்சியில் குறிப்புகளாகப் பயன்படலாம்.")
+            lines.append("• ஆனால் இது நேரடி SIS நில அளவை பணிப்பாய்வு ஆவணம் அல்ல.")
+
+        return "\n".join(lines), citations
+
+    else:
+        lines = []
+        if is_template:
+            lines.append(f"Document: '{doc.filename}' — Presentation / Hackathon Pitch Template.")
+            lines.append(f"\nRelevance to {project_name}:")
+            if headings:
+                for h in headings:
+                    h_low = h.lower()
+                    if "problem statement" in h_low:
+                        lines.append(f"• {h}: Useful for articulating the land survey challenges faced by SIS officers (e.g. pending patta transfer backlogs and field inspection delays).")
+                    elif "existing solutions" in h_low:
+                        lines.append(f"• {h}: Useful for comparing manual register verification against automated chatbot-assisted workflows.")
+                    elif "solution" in h_low or "affordability" in h_low:
+                        lines.append(f"• {h}: Highly relevant for demonstrating the cost-effectiveness, open-source stack (FastAPI, PostgreSQL, local Ollama LLM), and productivity benefits of the SIS AI Assistant.")
+                    elif "plan of action" in h_low:
+                        lines.append(f"• {h}: Useful for outlining project milestones, development phases, and field surveyor rollout schedules.")
+                    elif "pitch" in h_low or "elevator" in h_low or "team" in h_low:
+                        lines.append(f"• {h}: Useful for structuring introductory slides and team credentials for the project presentation.")
+                    else:
+                        lines.append(f"• {h}: Can be utilized as a structural slide section in the presentation.")
+            else:
+                lines.append("• This template provides a structured format suitable for organising a project presentation or proposal.")
+
+            lines.append("\nTechnical Domain Distinction:")
+            lines.append("• While effective for presentation structure and hackathon pitching, this document is a presentation template — it is NOT an authoritative guide to Tamil Nadu Survey Department procedures, ISD/NISD cadastral rules, or technical SIS backend workflows.")
+
+            lines.append("\nBasis & Limitations:")
+            lines.append("• This assessment is based on the extracted section headings and outline structure rather than a full semantic review of individual slide bodies.")
+            lines.append("• Event-specific submission guidelines, slide formatting constraints, or hackathon rules cannot be verified from the template headings alone.")
+
+        elif is_cadastral:
+            lines.append(f"Document: '{doc.filename}' — Technical Cadastral & Land Record Document.")
+            lines.append(f"\nRelevance to {project_name}:")
+            lines.append("• Directly relevant to the SIS domain: contains operational land-survey procedures, patta verification details, or field inspection rules.")
+            if headings:
+                lines.append(f"• Extracted sections: {', '.join(headings)}.")
+
+        elif csv_data:
+            headers, rows = csv_data
+            lines.append(f"Document: '{doc.filename}' — Tabular Dataset ({len(rows)} rows, {len(headers)} columns).")
+            lines.append(f"\nRelevance to {project_name}:")
+            lines.append("• Useful for register cross-checks, workload analytics, and tabular query processing.")
+            lines.append("• Note: Tabular datasets provide data for verification, but do not define system architecture or policy rules.")
+
+        else:
+            lines.append(f"Document: '{doc.filename}' — General informational document.")
+            if headings:
+                lines.append(f"• Sections present: {', '.join(headings)}.")
+            lines.append("• May provide contextual background, but does not contain authoritative SIS survey workflow procedures.")
+
+        return "\n".join(lines), citations
+
+
+async def _answer_project_relevance(
+    db: AsyncSession,
+    officer: Any,
+    session_id: str,
+    message: str,
+    language: str,
+    selected: List[ChatAttachment],
+) -> AttachmentPlan:
+    """Compare what the document contains with what the project is intended to accomplish."""
+    officer_id = getattr(officer, "officer_id", None)
+    target = extract_project_target(message)
+    ta = language in ("ta", "tanglish")
+
+    if not target["is_known"]:
+        pname = target["project_name"]
+        clarify_text = (
+            f"{pname}-க்கு இந்த ஆவணம் பொருந்துமா என்பதை மதிப்பிட, அந்த திட்டத்தின் நோக்கம் "
+            f"மற்றும் தேவைகளைக் குறிப்பிடுங்கள்."
+            if ta else
+            f"To assess whether this document is relevant to {pname}, please specify that "
+            f"project's purpose, scope, and technical requirements."
+        )
+        return AttachmentPlan(
+            kind=KIND_CLARIFY,
+            text=clarify_text,
+            sources=[d.filename for d in selected],
+            document_ids=[str(d.id) for d in selected],
+            extra={
+                "response_topic": "unknown_project_clarify",
+                "project_target": target,
+                "is_project_relevance": True,
+                "is_refusal": False,
+                "prior_question": message,
+            }
+        )
+
+    doc = selected[0]
+    outline = await attachment_store.document_outline(
+        db, officer_id, session_id, [doc.id]
+    )
+    headings = outline.get(str(doc.id)) or []
+
+    leading = await attachment_store.leading_chunks(
+        db, officer_id, session_id, [doc.id], per_document=3
+    )
+
+    csv_data = None
+    if doc.file_ext == ".csv":
+        csv_headers, csv_rows = await attachment_store.csv_data(db, doc)
+        if csv_headers:
+            csv_data = (csv_headers, csv_rows)
+
+    if not headings and not leading and not csv_data:
+        evidences = await attachment_store.retrieve_evidence(
+            db, officer_id, session_id, [doc.id], message
+        )
+        if not evidences:
+            return AttachmentPlan(
+                kind=KIND_REFUSAL,
+                text=(REFUSAL_TA if ta else REFUSAL_EN),
+                sources=[d.filename for d in selected],
+                document_ids=[str(d.id) for d in selected],
+                extra={
+                    "response_topic": "project_relevance_refusal",
+                    "is_project_relevance": True,
+                    "is_refusal": True,
+                    "prior_question": message,
+                }
+            )
+
+    assessment_text, citations = _build_project_relevance_assessment(
+        doc=doc,
+        headings=headings,
+        leading_chunks=leading,
+        csv_data=csv_data,
+        language=language,
+        project_name=target["project_name"],
+    )
+
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC,
+        text=assessment_text,
+        sources=[d.filename for d in selected],
+        document_ids=[str(d.id) for d in selected],
+        citations=citations,
+        extra={
+            "response_topic": "project_relevance",
+            "is_project_relevance": True,
+            "project_target": target,
+            "is_refusal": False,
+            "prior_question": message,
+        }
+    )
+
+
+async def _handle_negative_correction(
+    db: AsyncSession,
+    officer: Any,
+    session_id: str,
+    message: str,
+    language: str,
+    docs: Sequence[ChatAttachment],
+) -> AttachmentPlan:
+    """Handle short negative responses/corrections following an attachment answer."""
+    ta = language in ("ta", "tanglish")
+
+    if len(docs) > 1:
+        focus_id = await _last_focused_document(db, session_id)
+        focused = [d for d in docs if str(d.id) == focus_id] if focus_id else []
+        if not focused:
+            return AttachmentPlan(
+                kind=KIND_CLARIFY,
+                text=_clarify_files(docs, language),
+                sources=[d.filename for d in docs],
+                document_ids=[str(d.id) for d in docs],
+                extra={"response_topic": "clarify_files", "prior_question": message}
+            )
+        target_docs = focused
+    else:
+        target_docs = list(docs)
+
+    doc = target_docs[0]
+    last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
+    is_refusal = last_ctx.get("is_refusal", False)
+    response_topic = last_ctx.get("response_topic")
+    prior_q = last_ctx.get("prior_question") or ""
+
+    user_clarified_project = bool(re.search(
+        r"\b(?:project|namma project|sis|chatbot|presentation)\b|திட்டம்|விளக்கக்காட்சி",
+        message or "", re.IGNORECASE
+    ))
+    user_wants_proper_explanation = bool(re.search(
+        r"\b(?:explain\s+properly|explain|properly|detail)\b",
+        message or "", re.IGNORECASE
+    ))
+
+    if user_clarified_project or (user_wants_proper_explanation and (is_project_relevance_request(prior_q) or is_refusal)):
+        return await _answer_project_relevance(
+            db, officer, session_id, "is it relevant to our project", language, target_docs
+        )
+
+    if is_refusal or is_project_relevance_request(prior_q):
+        if ta:
+            clarify_text = (
+                "புரிந்தது — உங்கள் கேள்வியை நான் தவறாகப் புரிந்து கொண்டிருக்கலாம். "
+                "இந்த மாதிரிப் படிவம் நமது SIS AI Assistant திட்ட விளக்கக்காட்சிக்கு (presentation) பயனுள்ளதா "
+                "என்பதைப் பற்றியா, அல்லது இதன் தொழில்நுட்ப உள்ளடக்கம் SIS பணிப்பாய்வுடன் பொருந்துகிறதா "
+                "என்பதைப் பற்றியா நீங்கள் கேட்கிறீர்கள்?"
+            )
+        else:
+            clarify_text = (
+                "Understood — I may have misunderstood your question. "
+                "Do you mean whether this template is useful for presenting our SIS AI Assistant project, "
+                "or whether its technical content matches the SIS workflow?"
+            )
+        return AttachmentPlan(
+            kind=KIND_CLARIFY,
+            text=clarify_text,
+            sources=[doc.filename],
+            document_ids=[str(doc.id)],
+            extra={
+                "response_topic": "project_relevance_clarify",
+                "is_project_relevance": True,
+                "is_refusal": False,
+                "prior_question": message,
+            }
+        )
+
+    if response_topic == "project_relevance" or last_ctx.get("is_project_relevance"):
+        if ta:
+            clarify_text = (
+                "புரிந்தது. விளக்கக்காட்சி கட்டமைப்பு அல்லது குறிப்பிட்ட தொழில்நுட்ப/நிகழ்வு தேவைகள் "
+                "குறித்து என்ன விவரம் தேவை என்பதைத் தெளிவுபடுத்தினால் உதவுகிறேன்."
+            )
+        else:
+            clarify_text = (
+                "Understood. Could you clarify which specific aspect you are looking for — "
+                "for example, its suitability for a presentation structure, or alignment with specific "
+                "technical or event requirements?"
+            )
+        return AttachmentPlan(
+            kind=KIND_CLARIFY,
+            text=clarify_text,
+            sources=[doc.filename],
+            document_ids=[str(doc.id)],
+            extra={
+                "response_topic": "project_relevance_clarify",
+                "is_project_relevance": True,
+                "is_refusal": False,
+                "prior_question": message,
+            }
+        )
+
+    if response_topic == "overview":
+        if ta:
+            clarify_text = (
+                "புரிந்தது. ஆவணத்தின் ஏதேனும் ஒரு குறிப்பிட்ட பகுதி அல்லது விவரம் தேவைப்பட்டால் "
+                "குறிப்பிடுங்கள்; உதவுகிறேன்."
+            )
+        else:
+            clarify_text = (
+                "Understood. Would you like me to focus on a particular section from the document outline, "
+                "or are you looking for a specific detail?"
+            )
+        return AttachmentPlan(
+            kind=KIND_CLARIFY,
+            text=clarify_text,
+            sources=[doc.filename],
+            document_ids=[str(doc.id)],
+            extra={
+                "response_topic": "overview_clarify",
+                "is_refusal": False,
+                "prior_question": message,
+            }
+        )
+
+    if ta:
+        reply_text = (
+            "மன்னிக்கவும். நான் தவறாகப் புரிந்து கொண்டிருந்தால், பதிவேற்றிய ஆவணத்தில் நீங்கள் என்ன "
+            "விவரத்தைத் தெரிந்துகொள்ள விரும்புகிறீர்கள் என்று தெளிவாகக் குறிப்பிடுங்கள்; உதவுகிறேன்."
+        )
+    else:
+        reply_text = (
+            "I apologize if I misunderstood. Please clarify what specific detail you are looking for "
+            "in the uploaded document, and I will be happy to help."
+        )
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC,
+        text=reply_text,
+        sources=[doc.filename],
+        document_ids=[str(doc.id)],
+        extra={
+            "response_topic": "general_correction",
+            "is_refusal": False,
+            "prior_question": message,
+        }
+    )
+
+
 def mentions_filename(message: str, docs: Sequence[ChatAttachment]) -> List[ChatAttachment]:
     """Attachments the message names outright — by full name or by stem."""
     low = (message or "").lower()
@@ -592,6 +1099,10 @@ def targets_attachment(message: str, intent: str,
     # about the file whatever intent the words happened to parse as.
     if is_overview_request(message):
         return True
+    if is_project_relevance_request(message):
+        return True
+    if is_negative_correction(message):
+        return True
     # Nothing else claimed it: `general_query` is where the pipeline would
     # otherwise hand llama3.1:8b an ungrounded prompt, which is exactly the
     # turn an attachment should take.
@@ -671,8 +1182,8 @@ def distinct_entities(entity: str, evidences: Sequence[Evidence]) -> List[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LANG_LINE = {
-    "ta": "Reply in Tamil.",
-    "tanglish": "Reply in Tamil.",
+    "ta": "Reply in natural Tamil written in Tamil script. Keep application numbers, survey numbers, and technical terms in Latin script.",
+    "tanglish": "Reply in natural Tamil written in Tamil script (do not reply in Roman script or English). Keep application numbers, survey numbers, and technical terms in Latin script.",
 }
 
 # Uploaded text is evidence, not instruction. This line is not decoration: a
@@ -1005,12 +1516,24 @@ def render_csv_result(filename: str, result: csv_ops.CsvResult,
         return (f"{body} [{citation}]", cites)
 
     if result.op == csv_ops.OP_FILTER:
-        pairs = result.value if isinstance(result.value, list) else []
-        lines = [f"row {n}: {v}" for n, v in pairs[:20]]
-        head = (f"{len(pairs)} பொருத்தம்{cond}:" if is_ta
-                else f"{len(pairs)} match(es){cond}:")
-        return (head + "\n" + "\n".join(lines) + (f"\n[{citation}]" if citation else ""),
-                cites)
+        if isinstance(result.value, list):
+            # A column was projected: cell-by-cell, with its row.
+            pairs = result.value
+            lines = [f"row {n}: {v}" for n, v in pairs[:20]]
+            head = (f"{len(pairs)} பொருத்தம்{cond}:" if is_ta
+                    else f"{len(pairs)} match(es){cond}:")
+            return (head + "\n" + "\n".join(lines) + (f"\n[{citation}]" if citation else ""),
+                    cites)
+        # No column asked for -- just which rows matched ("show all records
+        # except rejected"). `execute()` leaves `result.value` as the bare
+        # match count here (same shape OP_COUNT uses), not a list -- treating
+        # it as always-a-list (the `isinstance` check above never held) made
+        # every row-less OP_FILTER answer read "0 match(es)" regardless of
+        # how many rows the citation beside it actually named.
+        n = result.value if isinstance(result.value, int) else len(result.rows)
+        body = (f"{n} வரிசைகள் பொருந்துகின்றன{cond}." if is_ta
+                else f"{n} row(s) match{cond}.")
+        return ((f"{body} [{citation}]" if citation else body), cites)
 
     if result.op in (csv_ops.OP_SUM, csv_ops.OP_AVG):
         word_en = "Total" if result.op == csv_ops.OP_SUM else "Average"
@@ -1063,6 +1586,65 @@ def render_csv_result(filename: str, result: csv_ops.CsvResult,
         return (f"{head}\n{shown}\n[{citation}]", cites)
 
     return (REFUSAL_TA if is_ta else REFUSAL_EN, [])
+
+
+def render_multi_csv_result(
+    per_doc_results: List[Tuple[ChatAttachment, "csv_ops.CsvResult"]],
+    language: str,
+) -> Tuple[str, List[str]]:
+    """The same computation run independently against 2+ attached CSVs,
+    never merged: each value keeps the filename it came from, and a value
+    that disagrees between files is stated as a conflict rather than one
+    being silently picked. `_answer_from_selected` only calls this with
+    results that already came from `csv_ops.execute()` against each file's
+    OWN rows in turn -- rows from different files are never combined before
+    this point, so there is nothing here that could merge them either.
+    """
+    is_ta = language in ("ta", "tanglish")
+    # The common, single-value shape -- "what is the status of survey 805" --
+    # one column projected, exactly one row matched, in every file that
+    # found anything at all. Stated as agreement or as the conflict itself,
+    # each value next to the file it came from.
+    single_values: List[Tuple[str, str]] = []
+    all_single = True
+    for doc, result in per_doc_results:
+        if (result.op == csv_ops.OP_FILTER and result.columns
+                and isinstance(result.value, list) and len(result.value) == 1):
+            single_values.append((doc.filename, result.value[0][1]))
+        else:
+            all_single = False
+            break
+    if all_single and single_values:
+        values = {v for _, v in single_values}
+        rows_by_file = {doc.filename: result.rows for doc, result in per_doc_results}
+        cites = [c for f, _ in single_values
+                for c in [csv_ops.row_citation(f, rows_by_file.get(f) or [])] if c]
+        if len(single_values) == 1:
+            # Only one of the selected files actually answered this
+            # question (the others named no matching row) -- stated
+            # plainly, with no implied comparison there was nothing to make.
+            f, val = single_values[0]
+            text = f"{val} ({f})"
+        elif len(values) == 1:
+            val = next(iter(values))
+            sources = " and ".join(f for f, _ in single_values)
+            text = (f"ஆம், {val} -- {sources} இரண்டிலும் ஒரே மதிப்பு." if is_ta
+                    else f"Yes -- {val}, the same in {sources}.")
+        else:
+            lines = [f"{f}: {v}" for f, v in single_values]
+            text = ("இல்லை, கோப்புகளுக்கு இடையே மதிப்புகள் வேறுபடுகின்றன:\n" + "\n".join(lines)
+                    if is_ta else
+                    "No -- the values differ between the files:\n" + "\n".join(lines))
+        return text, cites
+    # Any other shape (a count, several rows, a sum, ...): each file's own
+    # rendering, clearly attributed, never blended into one figure.
+    parts = []
+    cites = []
+    for doc, result in per_doc_results:
+        t, c = render_csv_result(doc.filename, result, language)
+        parts.append(f"{doc.filename}:\n{t}")
+        cites.extend(c)
+    return "\n\n".join(parts), cites
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1171,16 +1753,23 @@ async def plan_answer(
         explicit_notice = _maybe_expired_notice(message, language)
         if explicit_notice:
             return explicit_notice
-        # A bare pronoun ("what about its status?") right after a turn that
+        # A bare pronoun ("what about its status?") or negative correction right after a turn that
         # was itself about an attachment is still a continuation of that same
         # conversation -- without this, `active_documents()` already came
         # back empty (expired/deleted) and nothing told the officer why; the
         # turn fell through to the ordinary pipeline, which could resolve
         # "its" against something else entirely (an unrelated application
         # number, or nothing) instead of the honest "please re-upload".
-        if (_is_bare_doc_backref(message)
+        if ((_is_bare_doc_backref(message) or is_negative_correction(message))
                 and await attachment_topic_active(db, session_id)):
             return AttachmentPlan(kind=KIND_DETERMINISTIC, text=_expired_notice_text(language))
+        return None
+
+    if is_negative_correction(message):
+        if await attachment_topic_active(db, session_id):
+            return await _handle_negative_correction(
+                db, officer, session_id, message, language, docs
+            )
         return None
 
     # "Validate these application numbers against our database" as the very
@@ -1352,6 +1941,39 @@ async def _answer_from_selected(
                     kind=KIND_DETERMINISTIC, text=text,
                     sources=[doc.filename], document_ids=[str(doc.id)],
                     citations=cites)
+    elif len(csv_docs) >= 2:
+        # "is the status of survey 805 consistent between the two files?" --
+        # confirmed live (QA audit 2026-10-13, upload pass, failure id
+        # MULTIDOC-CONFLICT-001): with more than one CSV selected, the
+        # single-document branch above never even ran (its `len(csv_docs)
+        # == 1` guard), so a directly answerable cross-document question
+        # fell straight through to the ungrounded retrieval+LLM path, which
+        # answered "I could not find this in the uploaded document." even
+        # though both files plainly carried the value. The SAME computation
+        # (`csv_ops.parse_csv_question` / `execute`, "computed, never
+        # narrated") now runs independently against EACH file's own rows in
+        # turn -- never merged into one table -- and `render_multi_csv_result`
+        # states agreement or the conflict, each value kept next to the file
+        # it came from. A file whose rows don't answer the question (headers
+        # missing, or no matching row) is simply left out, never guessed at.
+        all_filenames = [d.filename for d in csv_docs]
+        csv_question = attachment_store.strip_filenames(message, all_filenames)
+        per_doc_results = []
+        for doc in csv_docs:
+            headers, rows = await attachment_store.csv_data(db, doc)
+            if not headers:
+                continue
+            operation = csv_ops.parse_csv_question(csv_question, headers, rows)
+            if operation is None:
+                continue
+            per_doc_results.append((doc, csv_ops.execute(operation, headers, rows)))
+        if per_doc_results:
+            text, cites = render_multi_csv_result(per_doc_results, language)
+            return AttachmentPlan(
+                kind=KIND_DETERMINISTIC, text=text,
+                sources=[d.filename for d, _ in per_doc_results],
+                document_ids=[str(d.id) for d, _ in per_doc_results],
+                citations=cites)
 
     # ── "what does it contain / summarise / tell short" ─────────────────────
     # Answered from the file's own section headings: no search terms exist to
@@ -1373,14 +1995,16 @@ async def _answer_from_selected(
                         if ta else
                         f"{doc.filename} has {len(rows)} rows and {len(headers)} columns: {cols}.")
                 return AttachmentPlan(kind=KIND_DETERMINISTIC, text=text,
-                                      sources=[doc.filename], document_ids=[str(doc.id)])
+                                      sources=[doc.filename], document_ids=[str(doc.id)],
+                                      extra={"response_topic": "overview", "prior_question": message})
         outline = await attachment_store.document_outline(
             db, officer_id, session_id, [doc.id])
         heads = outline.get(str(doc.id)) or []
         if len(heads) >= 2:
             return AttachmentPlan(
                 kind=KIND_DETERMINISTIC, text=_outline_text(doc, heads, language),
-                sources=[doc.filename], document_ids=[str(doc.id)])
+                sources=[doc.filename], document_ids=[str(doc.id)],
+                extra={"response_topic": "overview", "prior_question": message})
         # No headings for the outline to list (a plain memo, a letter) -- a
         # genuine "summarise this" still goes to the model below for a real
         # summary, but a bare "About X.pdf" asked nothing to summarise, so the
@@ -1393,7 +2017,14 @@ async def _answer_from_selected(
                 body = "\n\n".join(p.content for p in preview)
                 return AttachmentPlan(
                     kind=KIND_DETERMINISTIC, text=_preview_text(doc, body, language),
-                    sources=[doc.filename], document_ids=[str(doc.id)])
+                    sources=[doc.filename], document_ids=[str(doc.id)],
+                    extra={"response_topic": "overview", "prior_question": message})
+
+    # ── Project relevance / suitability assessment ────────────────────────
+    if is_project_relevance_request(message):
+        return await _answer_project_relevance(
+            db, officer, session_id, message, language, selected
+        )
 
     # ── A named page / line / paragraph / table: fetch it by position ────
     evidences: List[Evidence] = []
@@ -1413,7 +2044,8 @@ async def _answer_from_selected(
                     kind=KIND_REFUSAL,
                     text=_location_not_found(_loc_kind, _loc_number, extents, language),
                     sources=[d.filename for d in selected],
-                    document_ids=[str(d.id) for d in selected])
+                    document_ids=[str(d.id) for d in selected],
+                    extra={"response_topic": "location_not_found", "is_refusal": True, "prior_question": message})
             # This document type has no such location kind at all (e.g. "page"
             # asked of a CSV) -- fall through to the ordinary evidence search.
 
@@ -1423,7 +2055,8 @@ async def _answer_from_selected(
             kind=KIND_DETERMINISTIC, text=body,
             sources=sorted({e.filename for e in evidences}),
             document_ids=sorted({e.document_id for e in evidences}),
-            citations=[e.citation for e in evidences if e.citation])
+            citations=[e.citation for e in evidences if e.citation],
+            extra={"response_topic": "positional_evidence", "prior_question": message})
 
     if not evidences:
         evidences = await attachment_store.retrieve_evidence(
@@ -1459,7 +2092,12 @@ async def _answer_from_selected(
             kind=KIND_REFUSAL,
             text=(REFUSAL_TA if language in ("ta", "tanglish") else REFUSAL_EN),
             sources=[d.filename for d in selected],
-            document_ids=[str(d.id) for d in selected])
+            document_ids=[str(d.id) for d in selected],
+            extra={
+                "response_topic": "evidence_refusal",
+                "is_refusal": True,
+                "prior_question": message,
+            })
 
     # ── One entity, or ask which ─────────────────────────────────────────
     entity = _asked_entity(message)
@@ -1470,7 +2108,8 @@ async def _answer_from_selected(
                 kind=KIND_CLARIFY,
                 text=_clarify_entities(entity, values, evidences[0].filename, language),
                 sources=[d.filename for d in selected],
-                document_ids=[str(d.id) for d in selected])
+                document_ids=[str(d.id) for d in selected],
+                extra={"response_topic": "clarify_entity", "prior_question": message})
 
     strong = max(e.score for e in evidences) >= RETRY_MIN_SCORE
     return AttachmentPlan(
@@ -1479,7 +2118,12 @@ async def _answer_from_selected(
         retry_prompt=build_prompt(message, language, evidences, recovery=True) if strong else "",
         sources=sorted({e.filename for e in evidences}),
         document_ids=sorted({e.document_id for e in evidences}),
-        citations=[e.citation for e in evidences if e.citation])
+        citations=[e.citation for e in evidences if e.citation],
+        extra={
+            "response_topic": "document_qa",
+            "is_refusal": False,
+            "prior_question": message,
+        })
 
 
 def _expired_notice_text(language: str) -> str:
@@ -1529,6 +2173,13 @@ def _maybe_expired_notice(message: str, language: str) -> Optional[AttachmentPla
 # `followup_context.py`'s own back-reference patterns already use.
 _BARE_DOC_BACKREF_RE = re.compile(
     r"\b(?:it|its|that|adhu|adhoda|athu|andha)\b|அது|இது", re.IGNORECASE)
+
+_ATTACHMENT_PUSHBACK_RE = re.compile(
+    r"^\s*(?:illa(?:me)?[\s,]+)?(?:apdi|appadi)\s+illa\b"
+    r"|\b(?:illa|illai)[\s,]+(?:apdi|appadi)\s+illa\b"
+    r"|\b(?:not\s+like\s+that|that'?s\s+not\s+(?:what\s+i\s+meant|it))\b"
+    r"|அப்படி\s*இல்லை|இல்லை,?\s*அப்படி\s*இல்லை",
+    re.IGNORECASE)
 
 
 def _is_bare_doc_backref(message: str) -> bool:

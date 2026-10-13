@@ -24,10 +24,10 @@
     <link rel="stylesheet" href="css/global.css?v=20260920_001">
     <link rel="stylesheet" href="css/animations.css?v=20260920_001">
     <link rel="stylesheet" href="css/components.css?v=20260920_001">
-    <link rel="stylesheet" href="css/chatbot.css?v=20261003_001">
+    <link rel="stylesheet" href="css/chatbot.css?v=20261013_001">
     <link rel="stylesheet" href="css/responsive.css?v=20261003_001">
     <link rel="stylesheet" href="css/table_styles.css?v=20261003_001">
-    <link rel="stylesheet" href="css/attachments_panel.css?v=20261012_002">
+    <link rel="stylesheet" href="css/attachments_panel.css?v=20261013_003">
 </head>
 <body class="chatbot-page">
     <div class="chat-main-container-new">
@@ -103,15 +103,15 @@
                         aria-label="Message input"
                     ></textarea>
                     <div class="input-actions-new">
+                        <button class="btn-icon-action-new" aria-label="Attach file" title="Attach file">
+                            <i data-lucide="paperclip" class="attach-icon-new"></i>
+                        </button>
                         <button class="btn-send-new" id="sendBtn" disabled aria-label="Send message" title="Send message">
                             <i data-lucide="send" class="send-icon-new"></i>
                             <!-- Drawn in CSS rather than with an icon font: the stop
                                  square must never render alongside the send arrow,
                                  and it stays crisp if the icon library is slow. -->
                             <span class="stop-icon-new" aria-hidden="true"></span>
-                        </button>
-                        <button class="btn-icon-action-new" aria-label="Attach file" title="Attach file">
-                            <i data-lucide="paperclip" class="attach-icon-new"></i>
                         </button>
                     </div>
                 </div>
@@ -135,6 +135,21 @@
             </div>
         </aside>
         <div class="attachments-panel-backdrop" id="attachmentsPanelBackdrop" hidden></div>
+
+        <!-- Attachment preview: the extracted text the assistant actually
+             answers from (not a rendering of the original PDF/DOCX/etc --
+             this app has no file viewer, by design). Fetched fresh from
+             GET .../attachments/{id}/preview each time it opens. -->
+        <div class="attachment-preview-modal" id="attachmentPreviewModal" hidden>
+            <div class="attachment-preview-header">
+                <h2 id="attachmentPreviewTitle">Preview</h2>
+                <button class="icon-btn-new" id="attachmentPreviewCloseBtn" aria-label="Close">
+                    <i data-lucide="x" class="icon-new"></i>
+                </button>
+            </div>
+            <div class="attachment-preview-body" id="attachmentPreviewBody"></div>
+        </div>
+        <div class="attachment-preview-backdrop" id="attachmentPreviewBackdrop" hidden></div>
     </div>
 
     <!-- Toast Container -->
@@ -143,7 +158,7 @@
     <!-- JavaScript -->
     <script src="js/chatStorage.js?v=20260909_001"></script>
     <script src="js/table_renderer.js?v=20261006_004"></script>
-    <script src="js/chat.js?v=20261012_002"></script>
+    <script src="js/chat.js?v=20261013_004"></script>
     <script>
         lucide.createIcons();
 

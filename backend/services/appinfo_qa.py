@@ -28,9 +28,9 @@ _TAMIL = [
     ("இணைக்கப்பட்ட", " merged "), ("விண்ணப்ப", " application "), ("எண்", " number "), ("இணைப்பு", " enclosures "), ("தற்போதைய", " current "), ("கைபேசி", " mobile "), ("மொபைல்", " mobile "), ("தொழில்", " occupation "), ("வங்கி", " bank "),
 ]
 _TANGLISH = [
-    (r"thaai|thayar|amma", "mother"), (r"thandhai|thanthai|appa", "father"), (r"pirandha\s*thethi", "dob"),
-    (r"thogai", "amount"), (r"mugavari", "address"), (r"niranthara|nirandhara", "permanent"),
-    (r"aavanam|aavanangal", "documents"), (r"enna|enn|evlo|irukka|irukkaa|yaaru|yar\b", ""),
+    (r"\b(?:thaai|thayar|amma)\b", "mother"), (r"\b(?:thandhai|thanthai|appa)\b", "father"), (r"\b(?:pirandha\s*thethi)\b", "dob"),
+    (r"\b(?:thogai)\b", "amount"), (r"\b(?:mugavari)\b", "address"), (r"\b(?:niranthara|nirandhara)\b", "permanent"),
+    (r"\b(?:aavanam|aavanangal)\b", "documents"), (r"\b(?:enna|enn|evlo|irukka|irukkaa|yaaru|yar)\b", ""),
 ]
 _EXACT = {
     "applcant": "applicant", "aplicant": "applicant", "applicnt": "applicant", "applcation": "application",

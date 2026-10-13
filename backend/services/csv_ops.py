@@ -167,13 +167,26 @@ _OP_WORDS: List[Tuple[str, Tuple[str, ...]]] = [
                  "find", "filter", "எந்த")),
 ]
 
+# The symbolic comparators (">=", "!=", ...) are matched against the RAW
+# question text via `_SYMBOL_COMPARATOR_RE` and rewritten to these plain
+# words before anything is normalised -- `_norm()` reduces any run of
+# non-alphanumeric characters to a single space, which silently erased every
+# symbol here (">=" and "!=" both just vanished) before this fix, so the
+# default "eq" operator was used no matter what symbol was actually typed.
+_SYMBOL_TO_WORD = {
+    ">=": "symbolgte", "<=": "symbollte", "!=": "symbolne",
+    "=": "symboleq", ">": "symbolgt", "<": "symbollt",
+}
+_SYMBOL_COMPARATOR_RE = re.compile("|".join(re.escape(s) for s in
+    sorted(_SYMBOL_TO_WORD, key=len, reverse=True)))  # longest symbol first
+
 _COMPARATORS: List[Tuple[str, Tuple[str, ...]]] = [
-    ("gte", ("at least", "no less than", ">=", "greater than or equal")),
-    ("lte", ("at most", "no more than", "<=", "less than or equal")),
-    ("gt", ("greater than", "more than", "larger than", "above", "over", ">")),
-    ("lt", ("less than", "smaller than", "below", "under", "fewer than", "<")),
-    ("ne", ("not equal", "is not", "isn't", "!=", "other than")),
-    ("eq", ("equals", "equal to", "is exactly", " is ", " = ", "=")),
+    ("gte", ("at least", "no less than", "symbolgte", "greater than or equal")),
+    ("lte", ("at most", "no more than", "symbollte", "less than or equal")),
+    ("gt", ("greater than", "more than", "larger than", "above", "over", "symbolgt")),
+    ("lt", ("less than", "smaller than", "below", "under", "fewer than", "symbollt")),
+    ("ne", ("not equal", "is not", "isn't", "symbolne", "other than", "not")),
+    ("eq", ("equals", "equal to", "is exactly", "is", "symboleq")),
 ]
 
 
@@ -186,7 +199,9 @@ def _find_conditions(question: str, headers: Sequence[str],
     less certain than that is left out — a filter nobody asked for silently
     changes the count.
     """
-    q = question.lower()
+    # Symbols rewritten to plain words BEFORE `_norm()` ever sees them -- see
+    # `_SYMBOL_TO_WORD`'s comment.
+    q = _SYMBOL_COMPARATOR_RE.sub(lambda m: f" {_SYMBOL_TO_WORD[m.group(0)]} ", question.lower())
     conds: List[Condition] = []
     used_spans: List[Tuple[int, int]] = []
 
@@ -200,7 +215,14 @@ def _find_conditions(question: str, headers: Sequence[str],
         # "observations" carries "observation" as a bare substring. The tail
         # captured after that phantom match ("s csv how many rows are
         # there") then let a single stray letter become a filter value.
-        pattern = rf"(?<![a-z0-9]){re.escape(hn)}(?![a-z0-9])\s*(?:is|=|:|was|of)?\s*"
+        # The old `(?:is|...)?` here had no boundary of its own, so it
+        # consumed "is" as a bare PREFIX of "isn't" (normalised "isn t"),
+        # leaving a mangled "n t rejected" tail the comparator loop below
+        # could never recognise as a negation -- `(?=\s|$)` requires "is" be
+        # a whole word, so "isn t" survives intact for the "ne" match
+        # instead. `(?!\s+not)` keeps the two-word negator "is not" intact
+        # the same way, so the comparator loop sees "is not", not "not".
+        pattern = rf"(?<![a-z0-9]){re.escape(hn)}(?![a-z0-9])\s*(?:is(?=\s|$)(?!\s+not)|=|:|was|of)?\s*"
         m = re.search(pattern + r"(.{0,40})", _norm(q))
         if not m:
             continue
@@ -250,7 +272,10 @@ def _find_conditions(question: str, headers: Sequence[str],
     if conds:
         return conds
 
-    # Bare value: "how many approved applications" over a status column.
+    # Bare value: "how many approved applications" over a status column, or
+    # "show all records except rejected" -- a negator governs the bare value
+    # here just as it governs an explicit column reference above, within the
+    # same bounded word-gap (never across an unrelated clause).
     categorical = {}
     for h in headers:
         distinct = {(r.get(h) or "").strip() for r in rows if (r.get(h) or "").strip()}
@@ -263,8 +288,12 @@ def _find_conditions(question: str, headers: Sequence[str],
             dn = _norm(d)
             if len(dn) < 3:
                 continue
-            if re.search(rf"(?<![a-z0-9]){re.escape(dn)}(?![a-z0-9])", qn):
-                hits.append(Condition(column=h, operator="eq", value=d))
+            if not re.search(rf"(?<![a-z0-9]){re.escape(dn)}(?![a-z0-9])", qn):
+                continue
+            negated = bool(re.search(
+                rf"\b(?:except|excluding|other than|not|dont|isnt|exclude)\b"
+                rf"(?:\s+\w+){{0,4}}?\s+{re.escape(dn)}\b", qn))
+            hits.append(Condition(column=h, operator=("ne" if negated else "eq"), value=d))
     # Only when the value is unambiguous — one column, one value.
     if len(hits) == 1:
         return hits
@@ -310,6 +339,18 @@ def parse_csv_question(question: str, headers: Sequence[str],
         # names a condition and a column: that is a projection, not prose.
         if conds and column and not any(c.column == column for c in conds):
             return CsvOperation(op=OP_FILTER, column=column, conditions=conds)
+        # "show all records except rejected" -- a negated bare-value
+        # condition (caught by `_find_conditions`'s fallback path) but no
+        # explicit column word in the question, so `column` above never
+        # resolved and this fell all the way to `return None`, past the
+        # deterministic "computed, never narrated" CSV engine entirely and
+        # into the ungrounded retrieval+LLM path, which then silently
+        # dropped rows it should have kept. Scoped to a NEGATED condition
+        # only: a bare positive match with no trigger verb ("rejected
+        # records") still declines below exactly as before this fix, rather
+        # than guessing a filter was meant where none was asked for.
+        if conds and not column and any(c.operator == "ne" for c in conds):
+            return CsvOperation(op=OP_FILTER, column=None, conditions=conds)
         # No filter at all -- "what is the survey number" on a file where
         # every row carries the same one. Answerable without picking a row
         # only when the column is genuinely constant; a column with several

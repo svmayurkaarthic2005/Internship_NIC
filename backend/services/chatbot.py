@@ -76,6 +76,8 @@ from backend.services import natham_qa as _natham_qa
 from backend.services import othercode_detail as _othercode_detail
 from backend.services.rag import (
     detect_language,
+    is_short_reply,
+    get_prior_turn_language,
     detect_jurisdiction_focus,
     wants_details_of_listed,
     requested_listing_count,
@@ -256,7 +258,7 @@ _ACKNOWLEDGEMENT_WORDS = frozenset({
     "hmmm", "sure", "right", "noted", "understood",
     "yes", "yeah", "yep", "yup", "ya", "yaa", "no", "nope", "nah", "correct",
     "exactly", "true", "aama", "ama", "aamam", "illa", "illai", "ஆம்", "இல்லை",
-    "ஆமா", "சரிதான்",
+    "ஆமா", "சரிதான்", "apdi illa", "appadi illa", "illa apdi illa", "அப்படி இல்லை",
     "lol", "lmao", "loll", "lols", "haha", "hahaha", "hehe", "rofl", "xd",
     "yo", "sup", "bruh", "meh", "eh", "huh", "wat", "nvm", "never mind",
     # Tanglish casual opener -- "enapa" ("what's up, da?") carries no content
@@ -1617,12 +1619,15 @@ def _contentless_message(message: str) -> Optional[str]:
     """
     if not message:
         return "ack"
+    if not any(ch.isalpha() or ch.isdigit() for ch in (message or "")):
+        if "?" in message:
+            return "qmark_clarify"
+        return "punct_clarify"
     text = message.strip().strip(_TRIM_CHARS).strip().lower()
     if not text:
-        # Punctuation, whitespace or emoji only. Nothing was asked.
-        return "ack"
-    if not any(ch.isalpha() or ch.isdigit() for ch in text):
-        return "ack"
+        if "?" in message:
+            return "qmark_clarify"
+        return "punct_clarify"
     if _clear_info_topic(text):
         return None  # "what happens if I clear the conversation?" is a question, answered elsewhere
     if text in _CLEAR_COMMAND_WORDS or _is_clear_command(text):
@@ -1787,17 +1792,81 @@ def _no_evidence_for_llm(original: str, intent, structured_data, resolved: str =
 
 
 def _clarification_reply(language: str) -> str:
-    # Tanglish is Tamil written in Latin script. Keep it distinct from a Tamil-
-    # script response; otherwise a correctly detected Tanglish query still gets
-    # a reply in a different writing system.
-    if language == "tanglish":
-        return ("Enna kekkireenga-nu puriyala. Application, survey number, service code, "
-                "field visit illa workflow pathi kelunga.")
-    if language == "ta":
+    # Under the mandatory Tanglish-to-Tamil policy, both Tamil script and Tanglish
+    # inputs receive answers in natural Tamil written in Tamil script.
+    if language in ("ta", "tanglish"):
         return ("நீங்கள் என்ன கேட்கிறீர்கள் என்று புரியவில்லை. விண்ணப்பம், நில அளவை எண், சேவை, "
                 "கள ஆய்வு அல்லது பணிப்பாய்வு பற்றி கேளுங்கள்.")
     return ("I'm not sure what you mean. Please ask about an application, survey number, "
             "service, field visit, or workflow.")
+
+
+def _is_unresolved_survey_question(intent: str, message: str, followup_ctx) -> bool:
+    """True when `intent` is survey_detail/survey_owners but nothing in
+    `message` or `followup_ctx` actually names a survey or application --
+    the exact shape "List every survey number mentioned." / "What
+    subdivision number belongs to the first record?" matches (confirmed
+    live, QA audit 2026-10-13, upload pass): the catch-all keyword rule in
+    rag.py's parse_intent() assumes a number will be resolved downstream
+    (via `_survey_ref` or an application already in view), so with neither,
+    the deterministic DB handler always answered "No records found" -- even
+    with an uploaded document in the same session that plainly contained
+    the value being asked about.
+
+    This is the pure half of the check only: the caller still has to decide
+    whether redirecting the turn (to general_query, so the attachment layer
+    or the LLM fallback gets a chance) is actually useful, which depends on
+    whether anything is attached -- not testable here without a database.
+    Narrow on purpose: any digit in the message, or an application/survey
+    already in view, returns False, so a real numbered question or a
+    resolvable follow-up is never touched.
+    """
+    if intent not in ("survey_detail", "survey_owners"):
+        return False
+    if re.search(r"\d", message or ""):
+        return False
+    if followup_ctx and (
+            followup_ctx.single_application
+            or followup_ctx.survey_numbers
+            or (followup_ctx.entity == fctx.ENTITY_APPLICATION_LIST
+                and len(followup_ctx.application_numbers) == 1)):
+        return False
+    return True
+
+
+# A standalone message that states a language preference and nothing else
+# ("No Tamil, English only", "Don't explain in Tamil", "Please respond in
+# Tamil") carries no question of its own. Reaching the open-ended LLM prompt
+# with nothing to answer is exactly what let the model, given rich chat
+# history (a previous Tamil-script answer) but no data of its own for this
+# turn, copy a stray example line out of that history instead of
+# acknowledging the instruction -- in the wrong language, no less. Caught
+# here, before any LLM call, in both the "tamil" and the "english" spelling,
+# so neither the request nor its negation ever gets that chance.
+_BARE_LANG_PREF_MENTION_RE = re.compile(r"\btamil\b|\benglish\b", re.IGNORECASE)
+_BARE_LANG_PREF_FILLER_RE = re.compile(
+    r"\b(?:please|kindly|just|only|now|instead|rather|ok|okay|i|want|wanted|need|"
+    r"it|me|the|this|that|from|on|onwards?|don'?t|do|does|not|dont|never|no|"
+    r"english|tamil|explain|answer|respond|reply|speak|say|translate|write|give|in|into|language)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_bare_language_instruction(message: str) -> bool:
+    m = (message or "").strip()
+    if not m or not _BARE_LANG_PREF_MENTION_RE.search(m):
+        return False
+    if _ANY_APP_NUMBER_RE.search(m) or re.search(
+            r"\bsurvey\s*(?:no\.?|number)?\s*\d|\bsy\.?\s*\d", m, re.IGNORECASE):
+        return False  # names a real subject -- a genuine question, not a bare instruction
+    leftover = re.sub(r"[^\w\s]", " ", _BARE_LANG_PREF_FILLER_RE.sub(" ", m))
+    return not leftover.strip()
+
+
+def _language_preference_reply(language: str) -> str:
+    if language in ("ta", "tanglish"):
+        return "சரி, இனி தமிழில் பதிலளிக்கிறேன். எதைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?"
+    return "Understood — I'll reply in English from here. What would you like to know?"
 
 
 
@@ -2758,12 +2827,12 @@ def _fv_cols_message(state: dict) -> str:
 
 
 _NO_WORDS = frozenset({"no", "nope", "nah", "illa", "illai", "இல்லை", "nvm", "never mind",
-                       "இல்ல பரவாயில்ல"})
+                       "இல்ல பரவாயில்ல", "apdi illa", "appadi illa", "illa apdi illa", "அப்படி இல்லை"})
 _YES_WORDS = frozenset({"yes", "yeah", "yep", "yup", "ya", "yaa", "correct", "exactly",
                         "true", "aama", "ama", "aamam", "ஆம்", "ஆமா", "சரிதான்"})
 
 
-def _contentless_reply(kind: str, language: str, message: str = "") -> str:
+def _contentless_reply(kind: str, language: str, message: str = "", chat_history: list = None) -> str:
     """What to say to a message that asked nothing.
 
     A clear is carried out rather than described, so its text is only the
@@ -2771,6 +2840,18 @@ def _contentless_reply(kind: str, language: str, message: str = "") -> str:
     replaced by a fresh welcome.
     """
     is_tamil = language in ("ta", "tanglish")
+    if kind in ("qmark_clarify", "punct_clarify"):
+        has_assistant_context = bool(chat_history and any(
+            isinstance(m, dict) and str(m.get("role", "")).lower() in ("assistant", "ai", "bot")
+            for m in chat_history
+        ))
+        if has_assistant_context:
+            return ("முந்தைய பதிலில் எந்தப் பகுதியை விளக்க வேண்டும்? நீங்கள் எதை அறிய விரும்புகிறீர்கள் என்று சொல்லுங்கள்."
+                    if is_tamil
+                    else "Which part would you like clarification on? Tell me what you'd like me to explain or check.")
+        return ("நீங்கள் எதை அறிய விரும்புகிறீர்கள்? ஒரு விண்ணப்ப எண், நில அளவை எண் அல்லது உங்கள் கள ஆய்வுகள் பற்றிக் கேளுங்கள்."
+                if is_tamil
+                else "What would you like to know? Give me an application number, a survey number, or ask about your field visits.")
     if kind == "clear":
         return ("உரையாடல் அழிக்கப்பட்டது." if is_tamil
                 else "Conversation cleared.")
@@ -4047,18 +4128,8 @@ def _is_capability_question(message: str) -> bool:
 
 
 def _scope_reply(language: str, capability: bool = False) -> str:
-    """One line naming what the SIS assistant is for, in the user's writing style."""
-    if language == "tanglish":
-        body = (
-            "Naan Tamil Nadu Survey Department-oda SIS assistant. Application status, ella service codes, "
-            "workflow, field visits, owner/patta details, subdivision, unga jurisdiction pathi help panna mudiyum.")
-        if capability:
-            return (body + " Try: 'my pending applications', 'F-Line applications', "
-                    "'which service code has the most', 'my field visits this week', "
-                    "'what is service code 0154'. Application details venumna, unga kitta irukkura "
-                    "application number-ai share pannunga. Enna check pannanum?")
-        return body + " General topics-ku help panna mudiyadhu."
-    if language == "ta":
+    """One line naming what the SIS assistant is for, adhering to the mandatory Tanglish-to-Tamil policy."""
+    if language in ("ta", "tanglish"):
         body = (
             "நான் தமிழ்நாடு நில அளவைத் துறையின் SIS உதவியாளர். விண்ணப்ப நிலை, "
             "பணிப்பாய்வு, கள ஆய்வுகள், உரிமையாளர் / பட்டா விவரங்கள், உட்பிரிவுகள், "
@@ -4868,7 +4939,7 @@ def _is_count_only_query(message: str) -> bool:
 ASK_FOR_APP_NUMBER = {
     "en": "Please specify the application number you are asking about — for example 2026/0154/28/NNNNNN.",
     "ta": "எந்த விண்ணப்பம் என்பதைக் குறிப்பிடவும் — எடுத்துக்காட்டாக 2026/0154/28/NNNNNN.",
-    "tanglish": "Endha application-nu solunga — example: 2026/0154/28/NNNNNN.",
+    "tanglish": "எந்த விண்ணப்பம் என்பதைக் குறிப்பிடவும் — எடுத்துக்காட்டாக 2026/0154/28/NNNNNN.",
 }
 
 
@@ -4877,7 +4948,7 @@ ASK_FOR_APP_NUMBER = {
 ASK_FOR_SURVEY_NUMBER = {
     "en": "Which survey number or application should I look up the ownership for?",
     "ta": "எந்த கணக்கெண் அல்லது விண்ணப்பத்திற்கான உரிமை விவரங்கள் வேண்டும்?",
-    "tanglish": "Endha survey number illana application-oda ownership venum?",
+    "tanglish": "எந்த கணக்கெண் அல்லது விண்ணப்பத்திற்கான உரிமை விவரங்கள் வேண்டும்?",
 }
 
 
@@ -6184,19 +6255,12 @@ def detect_invalid_app_number(message: str) -> Optional[str]:
 
 def build_invalid_app_number_message(token: str, language: str) -> str:
     """Localised 'that application number is not valid' message."""
-    if language == "ta":
+    if language in ("ta", "tanglish"):
         return (
             f"நீங்கள் கொடுத்த விண்ணப்ப எண் **{token}** சரியான வடிவத்தில் இல்லை.\n\n"
             "சரியான வடிவம்:\n"
             "  • YYYY/சேவைக்குறியீடு/மாவட்டக்குறியீடு/வரிசை எண் — எ.கா. 2026/0154/28/NNNNNN\n\n"
             "சரியான விண்ணப்ப எண்ணுடன் மீண்டும் கேட்கவும்."
-        )
-    if language == "tanglish":
-        return (
-            f"Neenga kudutha application number **{token}** correct format-la illa.\n\n"
-            "Valid format:\n"
-            "  • YYYY/SERVICE/DISTRICT/SEQUENCE — e.g. 2026/0154/28/NNNNNN\n\n"
-            "Correct application number kuduthu marubadiyum kelunga."
         )
     return (
         f"The application number you entered — **{token}** — is not in a valid format.\n\n"
@@ -6227,7 +6291,7 @@ def build_app_not_found_message(structured_data: Dict[str, Any], language: str) 
     searched = structured_data.get("searched_number") or structured_data.get("application_number") or ""
     suggestions = structured_data.get("suggestions") or []
 
-    if language == "ta":
+    if language in ("ta", "tanglish"):
         head = (
             f"விண்ணப்ப எண் **{searched}** தரவுத்தளத்தில் இல்லை. "
             "விண்ணப்ப எண்ணைச் சரிபார்த்து மீண்டும் உள்ளிடவும்."
@@ -6235,14 +6299,6 @@ def build_app_not_found_message(structured_data: Dict[str, Any], language: str) 
             "நீங்கள் கேட்ட விண்ணப்பம் கிடைக்கவில்லை."
         )
         lead = "\n\nஉங்கள் அதிகார எல்லையில் உள்ள சமீபத்திய விண்ணப்பங்கள்:"
-    elif language == "tanglish":
-        head = (
-            f"Application number **{searched}** database-la illa. "
-            "Number-a check panni marubadiyum type pannunga."
-            if searched else
-            "Neenga ketta application kidaikala."
-        )
-        lead = "\n\nUnga jurisdiction-la irukkura recent applications:"
     else:
         head = (
             f"Application **{searched}** does not exist in the database. "
@@ -6271,15 +6327,10 @@ def build_app_forbidden_message(app_number: str, officer, language: str) -> str:
     """
     level = getattr(officer, "jurisdiction_type", "") or "assigned"
     name = getattr(officer, "jurisdiction_name", "") or "your jurisdiction"
-    if language == "ta":
+    if language in ("ta", "tanglish"):
         return (
             f"விண்ணப்ப எண் **{app_number}** உங்கள் அதிகார எல்லைக்கு ({name}) வெளியே உள்ளது.\n\n"
             "அதன் விவரங்களைப் பார்க்க உங்களுக்கு அனுமதி இல்லை."
-        )
-    if language == "tanglish":
-        return (
-            f"Application **{app_number}** unga jurisdiction-ku ({name}) veliya irukku.\n\n"
-            "Adhoda details paakka unga-kku access illa."
         )
     return (
         f"Application **{app_number}** is outside your assigned {level} jurisdiction ({name}).\n\n"
@@ -6294,15 +6345,12 @@ def build_app_confirm_message(app_number: str, suggestions: list, language: str)
         f"{(c.get('status') or 'N/A').capitalize()}, {c.get('applicant_name') or 'N/A'}"
         for c in suggestions[:6]
     ]
-    if language == "ta":
+    if language in ("ta", "tanglish"):
         head = (
             f"**{app_number}** என்ற எண்ணில் சரியான விண்ணப்பம் எதுவும் இல்லை. "
             "ஒத்த விண்ணப்பங்கள்:"
         )
         tail = "\n\nஇவற்றில் எந்த விண்ணப்ப எண் என்பதை முழுமையாக உள்ளிடவும்."
-    elif language == "tanglish":
-        head = f"**{app_number}** exact-a match aagala. Similar applications:"
-        tail = "\n\nEndha application number-nu full-a type pannunga."
     else:
         head = f"No application exactly matches **{app_number}**. Similar applications:"
         tail = "\n\nPlease reply with the full application number you want."
@@ -6356,17 +6404,11 @@ def build_ambiguous_reference_message(candidates: list, language: str) -> str:
     than picking one, list them and ask which is meant.
     """
     listed = "\n".join(f"  • {c}" for c in candidates[:6])
-    if language == "ta":
+    if language in ("ta", "tanglish"):
         return (
             "நீங்கள் குறிப்பிடுவது எந்த விண்ணப்பம் என்பது தெளிவாக இல்லை. "
             "முந்தைய செய்தியில் இவை இடம்பெற்றுள்ளன:\n" + listed +
             "\n\nஎந்த விண்ணப்ப எண் என்பதைக் குறிப்பிடவும்."
-        )
-    if language == "tanglish":
-        return (
-            "Neenga endha application-a solreenga-nu clear-a illa. "
-            "Previous message-la ivai irundhadhu:\n" + listed +
-            "\n\nEndha application number-nu solunga."
         )
     return (
         "Your previous message mentioned more than one application, so I am not "
@@ -10540,7 +10582,7 @@ def _is_owner_photo_request(message: str) -> bool:
 
 
 def _owner_photo_reply(language: str, message: str) -> str:
-    is_ta = language == "ta" or any(w in (message or "") for w in ["புகைப்படம்", "படம்", "உரிமையாளர்"])
+    is_ta = language in ("ta", "tanglish") or any(w in (message or "") for w in ["புகைப்படம்", "படம்", "உரிமையாளர்"])
     if is_ta:
         return (
             "உரிமையாளரின் புகைப்படத்தை (PNG அல்லது வேறு எந்த வடிவத்திலும்) இந்த உதவியாளரால் "
@@ -10670,7 +10712,7 @@ def _conversation_recall_reply(message: str, chat_history: list, language: str) 
     turn.
     """
     m = (message or "").lower()
-    is_ta = language == "ta" or any(w in (message or "") for w in ["செய்தி", "கேள்வி", "சொன்ன"])
+    is_ta = language in ("ta", "tanglish") or any(w in (message or "") for w in ["செய்தி", "கேள்வி", "சொன்ன"])
     about_assistant = any(w in m for w in ["you say", "you said", "your last", "your previous",
                                            "your reply", "your response", "you tell", "you told"])
     want_role = "assistant" if about_assistant else "user"
@@ -10766,29 +10808,173 @@ def _is_sensitive_query(message: str) -> bool:
 # application happened to be in view, dated in the past, and presented as if
 # it were today. An officer asking the day of the week got back the
 # submission date of a file they had looked at minutes earlier. Answered here,
-# from the server's own clock, before any application-field lookup runs.
-_TODAY_DATE_RE = re.compile(
-    r"\btoday'?s?\s+date\b|\bcurrent\s+date\b|\bdate\s+today\b"
-    r"|\bwhat(?:'s| is)\s+(?:the\s+)?date\s+today\b"
-    r"|\bwhat\s+date\s+is\s+(?:it|today)\b"
-    r"|இன்றைய\s*தேதி|இன்று\s*என்ன\s*தேதி|இன்று\s*தேதி\s*என்ன",
+# from the server's own clock in Asia/Kolkata (IST), before any application-field lookup runs.
+
+# Tamil lookaround boundaries: combining vowel signs and viramas fail with standard ASCII \b.
+_TA_CHARS = r"\u0B80-\u0BFF"
+_TA_LB = rf"(?<![\w{_TA_CHARS}])"
+_TA_RB = rf"(?![\w{_TA_CHARS}])"
+
+# Latin-script English and Tanglish components
+_TODAY_PREFIX_PAT = r"(?:in+k+i|in+ik+[iu]|in+aik+[iu]|inr[ae]ik+[iu]|inru|indraikku|today)"
+_QUESTION_WORD_PAT = r"(?:en(?:dh?|n)a|yen(?:dh?|n)a)"
+_DATE_NOUN_PAT = r"(?:na+l[u]?|thethi|thathi|tethi|date|kizh?amai|kilamai|day)"
+
+_TODAY_DATE_LATIN_RE = re.compile(
+    r"\b(?:"
+    # 1. English variations with apostrophes
+    r"what(?:[\u0027\u2019]s|\s+is)?\s+today(?:[\u0027\u2019]s|s)?\s+(?:correct\s+)?(?:date|day)|"
+    r"what\s+(?:date|day)\s+is\s+(?:it\s+)?today|"
+    r"what\s+is\s+(?:the\s+)?(?:correct\s+)?(?:date|day)\s+today|"
+    r"what\s+day\s+is\s+today|"
+    r"today(?:[\u0027\u2019]s|s)?\s+(?:correct\s+)?(?:date|day)|"
+    r"(?:correct\s+)?(?:date|day)\s+today|"
+    r"current\s+date|"
+    # 2. Tanglish: cue + question word + noun (e.g. inki enda nal, innaiku enna date, innaiki enna thethi)
+    rf"{_TODAY_PREFIX_PAT}\s+{_QUESTION_WORD_PAT}\s+{_DATE_NOUN_PAT}|"
+    # 3. Tanglish: cue + noun (+ optional question word) (e.g. today date enna, inniki thethi)
+    rf"{_TODAY_PREFIX_PAT}\s+{_DATE_NOUN_PAT}(?:\s+{_QUESTION_WORD_PAT})?|"
+    # 4. Tanglish: question word + noun + MANDATORY cue (e.g. enna date today, enda nal inki)
+    rf"{_QUESTION_WORD_PAT}\s+{_DATE_NOUN_PAT}\s+{_TODAY_PREFIX_PAT}"
+    r")\b",
     re.IGNORECASE,
 )
 
+_TODAY_DATE_TAMIL_RE = re.compile(
+    rf"{_TA_LB}(?:"
+    r"இன்றைய\s+(?:தேதி|நாள்|கிழமை)(?:\s+என்ன)?|"
+    r"இன்று\s+என்ன\s+(?:தேதி|நாள்|கிழமை)|"
+    r"இன்று\s+(?:தேதி|நாள்|கிழமை)\s+என்ன|"
+    r"இன்றைய\s*தேதி|இன்று\s*என்ன\s*தேதி|இன்று\s*தேதி\s*என்ன"
+    rf"){_TA_RB}",
+    re.IGNORECASE,
+)
+
+_DATE_DOMAIN_BLOCK_RE = re.compile(
+    r"\b(?:"
+    r"applications?|appl|field\s*visits?|inspections?|"
+    r"submissions?|submitted|registered|registrations?|deeds?|"
+    r"pattas?|surveys?|sub-?divisions?|orders?|hearings?|ec|"
+    r"for\s+(?:this|that|the)\s+application|"
+    r"this\s+application|that\s+application"
+    r")\b|"
+    rf"{_TA_LB}(?:விண்ணப்ப\w*|களப்பணி\w*|பார்வை\w*|பதிவு\w*){_TA_RB}",
+    re.IGNORECASE,
+)
+
+_ENGLISH_WEEKDAYS = {
+    0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday",
+    4: "Friday", 5: "Saturday", 6: "Sunday",
+}
+
+_ENGLISH_MONTHS = {
+    1: "January", 2: "February", 3: "March", 4: "April",
+    5: "May", 6: "June", 7: "July", 8: "August",
+    9: "September", 10: "October", 11: "November", 12: "December",
+}
+
+_TAMIL_WEEKDAYS = {
+    0: "திங்கட்கிழமை", 1: "செவ்வாய்க்கிழமை", 2: "புதன்கிழமை", 3: "வியாழக்கிழமை",
+    4: "வெள்ளிக்கிழமை", 5: "சனிக்கிழமை", 6: "ஞாயிற்றுக்கிழமை",
+}
+
+_TAMIL_MONTHS = {
+    1: "ஜனவரி", 2: "பிப்ரவரி", 3: "மார்ச்", 4: "ஏப்ரல்",
+    5: "மே", 6: "ஜூன்", 7: "ஜூலை", 8: "ஆகஸ்ட்",
+    9: "செப்டம்பர்", 10: "அக்டோபர்", 11: "நவம்பர்", 12: "டிசம்பர்",
+}
+
+_TANGLISH_WEEKDAYS = {
+    0: "Thingatkilamai", 1: "Sevvaikkilamai", 2: "Budhankilamai", 3: "Vyazhakkilamai",
+    4: "Vellikkilamai", 5: "Sanikkilamai", 6: "Gnayitrukkilamai",
+}
+
+_CURRENT_CLOCK_OVERRIDE: contextvars.ContextVar[Optional[datetime]] = contextvars.ContextVar(
+    "_CURRENT_CLOCK_OVERRIDE", default=None
+)
+
+
+def _kolkata_timezone() -> timezone:
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        return ZoneInfo("Asia/Kolkata")
+    except (ZoneInfoNotFoundError, FileNotFoundError, KeyError, ImportError):
+        return timezone(timedelta(hours=5, minutes=30))
+
+
+def _get_kolkata_now(clock: Optional[datetime] = None) -> datetime:
+    if clock is not None:
+        return clock
+    override = _CURRENT_CLOCK_OVERRIDE.get()
+    if override is not None:
+        return override
+    return datetime.now(_kolkata_timezone())
+
+
+def _classify_date_facet(query: str) -> str:
+    q = (query or "").lower()
+    has_weekday = bool(re.search(
+        r"\b(?:kizh?amai|kilamai|day)\b|கிழமை",
+        q,
+    ))
+    has_date = bool(re.search(
+        r"\b(?:thethi|thathi|tethi|date)\b|தேதி",
+        q,
+    ))
+    has_naal = bool(re.search(
+        r"\b(?:na+l[u]?)\b|நாள்",
+        q,
+    ))
+    if has_naal or (has_weekday and has_date):
+        return "both"
+    if has_weekday:
+        return "weekday"
+    return "date"
+
 
 def _is_today_date_question(message: str) -> bool:
-    m = (message or "").strip().lower()
+    m = (message or "").strip()
     if not m or len(m.split()) > 10:
         return False
-    return bool(_TODAY_DATE_RE.search(m))
+    if re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", m):
+        return False
+    if re.search(r"\b(?:0153|0154|0156|0157|0178)\b", m):
+        return False
+    if _DATE_DOMAIN_BLOCK_RE.search(m):
+        return False
+    return bool(_TODAY_DATE_LATIN_RE.search(m) or _TODAY_DATE_TAMIL_RE.search(m))
 
 
-def _today_date_answer(language: str) -> str:
-    today = date.today()
-    formatted = today.strftime("%d %B %Y")
+def _today_date_answer(language: str = "en", query_text: str = "", now_dt: Optional[datetime] = None) -> str:
+    now = _get_kolkata_now(now_dt)
+    today = now.date()
+    iso_date = today.isoformat()
+    weekday_idx = today.weekday()
+    month_idx = today.month
+
+    day_en = _ENGLISH_WEEKDAYS[weekday_idx]
+    month_en = _ENGLISH_MONTHS[month_idx]
+    formatted_en = f"{today.day} {month_en} {today.year}"
+
+    facet = _classify_date_facet(query_text)
+
     if language in ("ta", "tanglish"):
-        return f"இன்றைய தேதி: {formatted} ({today.isoformat()})."
-    return f"Today's date is {formatted} ({today.isoformat()})."
+        day_ta = _TAMIL_WEEKDAYS[weekday_idx]
+        month_ta = _TAMIL_MONTHS[month_idx]
+        formatted_ta = f"{today.day} {month_ta} {today.year}"
+        if facet == "weekday":
+            return f"இன்று {day_ta}."
+        elif facet == "date":
+            return f"இன்றைய தேதி: {formatted_ta} ({iso_date})."
+        else:
+            return f"இன்று {day_ta}, {formatted_ta} ({iso_date})."
+
+    if facet == "weekday":
+        return f"Today is {day_en}."
+    elif facet == "date":
+        return f"Today's date is {formatted_en} ({iso_date})."
+    else:
+        return f"Today is {day_en}, {formatted_en} ({iso_date})."
 
 
 def _is_officer_identity_question(message: str) -> bool:
@@ -14608,21 +14794,70 @@ def _render_stage_ever_answer(hops: Optional[list], app_no: str, asked_stage: st
     return f"No — {app_no} has not been referred to {asked_label}; it is currently with {cur_label}."
 
 
+_STAGE_DISPLAY_NAMES = {
+    "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
+    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+    "COMPLETED": "completed", "REJECTED": "rejected",
+}
+
+
 def _render_stage_yes_no_answer(structured_data: dict, asked_stage: str, language: str) -> str:
     app_no = structured_data.get("application_number", "N/A")
     actual = (structured_data.get("stage") or "").upper()
     match = bool(actual) and asked_stage == actual
-    stage_names = {
-        "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
-        "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
-        "COMPLETED": "completed", "REJECTED": "rejected",
-    }
-    actual_label = stage_names.get(actual, actual or "not recorded")
+    actual_label = _STAGE_DISPLAY_NAMES.get(actual, actual or "not recorded")
     if language in ("ta", "tanglish"):
         lead = "ஆம்" if match else "இல்லை"
         return f"{lead} — {app_no} தற்போது {actual_label} நிலையில் உள்ளது."
     lead = "Yes" if match else "No"
     return f"{lead} — {app_no} is currently with {actual_label}."
+
+
+# "has this case been REFERRED/FORWARDED/SENT to the Tahsildar?" asks about the
+# file's HISTORY -- did it ever reach that desk -- not where it sits right now.
+# Distinct from the plain "is it CURRENTLY with X" / "is it with X right now"
+# phrasing above, which stays a current-location question on purpose.
+_STAGE_EVER_RE = re.compile(
+    r"\b(?:referred|forwarded|sent|escalated|passed|moved|routed)\b.{0,15}?\b(?:to|through)\b"
+    r"|\bhas\s+it\s+(?:ever\s+)?reached\b|\breached\s+(?:the\s+)?(?:tahsildar|sd|dis|sis|senior\s+draughtsman)\b"
+    r"|\bpassed\s+through\b",
+    re.IGNORECASE,
+)
+_STAGE_CURRENT_RE = re.compile(
+    r"\bcurrently\s+with\b|\bwith\b.{0,15}?\bright\s+now\b|\bat\s+the\s+moment\b", re.IGNORECASE)
+
+
+def _is_stage_ever_question(message: str) -> bool:
+    """True for "has this been referred/sent/forwarded to X", "has it reached X",
+    "was it passed through X" -- a question about the file's HISTORY. False for
+    "is it currently with X" / "is it with X right now", which stay the plain
+    current-location question `_render_stage_yes_no_answer` already answers."""
+    msg = message or ""
+    if _STAGE_CURRENT_RE.search(msg):
+        return False
+    return bool(_STAGE_EVER_RE.search(msg))
+
+
+def _render_stage_ever_answer(hops: list, app_no: str, asked_stage: str,
+                              current_stage: str, language: str) -> str:
+    """"has this case been referred to the Tahsildar?" -- answered from
+    workflow_history (did any hop's to_stage ever equal the asked stage), not
+    from the CURRENT stage alone. A file closed at TAHSILDAR still answers Yes
+    even once its current stage has moved on to the terminal COMPLETED/REJECTED."""
+    reached = any((h.get("to_stage") or "").upper() == asked_stage for h in (hops or []))
+    asked_label = _STAGE_DISPLAY_NAMES.get(asked_stage, asked_stage)
+    current_label = _STAGE_DISPLAY_NAMES.get((current_stage or "").upper(),
+                                             current_stage or "not recorded")
+    is_tamil = language in ("ta", "tanglish")
+    if reached:
+        lead = "ஆம்" if is_tamil else "Yes"
+        tail = (f"{app_no} {asked_label} நிலையை அடைந்தது." if is_tamil
+                else f"{app_no} has been referred to {asked_label}.")
+    else:
+        lead = "இல்லை" if is_tamil else "No"
+        tail = (f"{app_no} {asked_label} நிலையை அடையவில்லை; தற்போது {current_label} நிலையில் உள்ளது." if is_tamil
+                else f"{app_no} has not been referred to {asked_label}; it is currently with {current_label}.")
+    return f"{lead} — {tail}"
 
 
 # "how many approved ISD applications do I have?" -> "how many approved NISD?"
@@ -14796,6 +15031,8 @@ def _attachment_turn_is_not_about_a_file(message: str) -> bool:
     """Commands and messages with no question in them ("clear", "ok", "help", a
     keyboard mash, a request to change data, "who are you", "weather") are never
     about an uploaded file, so the attachment planner is not even asked."""
+    if attachment_qa.is_negative_correction(message) or attachment_qa.is_project_relevance_request(message):
+        return False
     return bool(_contentless_message(message) or _unknown_message_kind(message)
                 or _is_mutation_request(message) or _is_capability_question(message)
                 or _is_out_of_scope(message))
@@ -15408,6 +15645,8 @@ def _followup_is_self_contained(message: str) -> bool:
     # "weather in Chennai" after an application answer is a fresh (off-topic)
     # question; carrying the application onto it hid it from the scope guard.
     if _is_out_of_scope(message) or _is_capability_question(message) or bool(_special_scope_kind(message)):
+        return True
+    if _is_today_date_question(message):
         return True
     pi = parse_intent(message)
     if pi not in fctx.SELF_CONTAINED_INTENTS:
@@ -16701,8 +16940,6 @@ def _plan_requests(message: str):
     """None (answer the message as it is), ("focus", clause) or ("multi", [clauses])."""
     text = (message or "").strip()
     words = text.split()
-    if _howto_qa.match(text):
-        return None
     if _cm_strong(text) or _oldowner_qa.attributes(text) == [_oldowner_qa.COMPARE]:  # one comparison, not several questions
         return None
     if len(words) < 6 or re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+.*\band\b.*\d{4}/\d{3,4}/", text):
@@ -16737,7 +16974,7 @@ def _plan_requests(message: str):
     merged = []
     for c in clauses:
         led = _REQ_LEAD.sub("", c).strip()
-        is_cue = bool(_REQ_CUE_EN.match(led)) or bool(_REQ_CUE_TA.search(c))
+        is_cue = bool(_REQ_CUE_EN.match(led)) or bool(_REQ_CUE_TA.search(c)) or bool(_howto_qa.match(c))
         if (not is_cue and len(c.split()) >= 2 and parse_intent(c) not in _NOT_A_REQUEST
                 and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", text)
                 and not re.search(r"\b(?:for|of|to|in|with|about|from|on)\b", c, re.IGNORECASE)
@@ -16759,11 +16996,22 @@ def _plan_requests(message: str):
         else:
             merged.append((led if is_cue and _REQ_CUE_EN.match(led) else c, is_cue))
     cued = [c for c, is_cue in merged if is_cue]
-    real = [c for c in cued if parse_intent(c) not in _NOT_A_REQUEST]
+    _NOT_REQUEST_INTENTS = frozenset({"greeting", "small_talk", "unknown_message", "help"})
+    real = []
+    for c in cued:
+        intent = parse_intent(c)
+        if intent in _NOT_REQUEST_INTENTS:
+            continue
+        if intent == "general_query":
+            led_c = _REQ_LEAD.sub("", c).strip()
+            if _REQ_CUE_EN.match(led_c) or _REQ_CUE_TA.search(c) or _howto_qa.match(c) or "?" in c:
+                real.append(c)
+        else:
+            real.append(c)
     if len(real) >= 2 and not any(
             re.search(r"\b(?:it|its|this|that|them|their|those|these|above)\b", c, re.IGNORECASE)
             or (parse_intent(c) == "application_status" and not re.search(r"\d{4}/\d", c)) for c in real):
-        return ("multi", real[:3])
+        return ("multi", real[:5])
     if len(real) >= 2:
         real = real[-1:]
     if len(words) > 25:
@@ -18204,6 +18452,9 @@ async def process_chat(
         _bp = _big_plan(message)
         if _bp:
             return await _answer_big(_bp, message, session_id, officer, db, chat_history)
+        plan = _plan_requests(message)
+        if plan and plan[0] == "multi" and len(plan[1]) >= 2:
+            return await _answer_multi(plan, message, session_id, officer, db, chat_history)
         _rc = await _merge_turn(message, session_id, officer, db, chat_history)
         if _rc is None:
             _rc = await _old_codes_turn(message, session_id, officer, db, chat_history)
@@ -18269,6 +18520,10 @@ async def _process_chat_impl(
         # Step 1: Detect language (on the corrected text, so a slipped Tanglish word
         # does not flip the reply to English)
         language = detect_language(_fragment_typo_fix(message))
+        if is_short_reply(message) and chat_history:
+            prior_lang = get_prior_turn_language(chat_history)
+            if prior_lang in ("ta", "tanglish"):
+                language = prior_lang
         logger.info(f"Detected language: {language}")
 
         # Step 1b: A bare period ("last month") re-scopes the previous question.
@@ -18433,6 +18688,29 @@ async def _process_chat_impl(
                 "context_used": True,
                 "response_time_ms": int((time.time() - start_time) * 1000),
                 "table_data": None,
+            }
+
+        # Direct Handler for "what is today's date / day?" — the server's own
+        # clock in Asia/Kolkata (IST), checked ahead of follow-up context resolution so
+        # an officer asking the current date/day right after an application is
+        # never told that application's submission or inspection date.
+        if _is_today_date_question(message):
+            res_txt = _today_date_answer(language, message)
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=res_txt, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": res_txt,
+                "language": language,
+                "intent": "today_date",
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
             }
 
         # Step 1c: Resolve an implicit follow-up against the stored reference
@@ -18823,6 +19101,10 @@ async def _process_chat_impl(
                 "table_data": None, "document_ids": _cc_filtered.document_ids,
             }
         if (not _followup.resolved and not _followup.ambiguous
+                and not _neg_attachment_topic
+                and not attachment_qa.is_negative_correction(_original_message)
+                and not attachment_qa.is_project_relevance_request(_original_message)
+                and not attachment_qa.location_reference(_original_message)
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
                      or _is_bare_fragment_without_context(_original_message, _followup_ctx, chat_history))):
@@ -18981,7 +19263,7 @@ async def _process_chat_impl(
             any(w in _msg_lower_fmt for w in ["application number", "app number", "விண்ணப்ப எண்"])
             and any(w in _msg_lower_fmt for w in ["format", "look like", "structure", "structured", "pattern", "வடிவம்", "அமைப்பு"])
         ):
-            is_ta_fmt = language == "ta"
+            is_ta_fmt = language in ("ta", "tanglish")
             if is_ta_fmt:
                 res_txt = (
                     "விண்ணப்ப எண் இந்த அமைப்பில் இருக்கும்: "
@@ -19033,7 +19315,7 @@ async def _process_chat_impl(
             _dc_sp = await _dc_special(db, officer, message, matched_dist, language)
             if matched_dist or _dc_sp:
                 d_title, d_code = matched_dist or ("", "")
-                is_ta = (language == "ta" or bool(_DC_TANGLISH_RE.search(_msg_lower_dc))
+                is_ta = (language in ("ta", "tanglish") or bool(_DC_TANGLISH_RE.search(_msg_lower_dc))
                          or "குறியீடு" in _msg_lower_dc or bool(_dc_name_match_ta))
                 if _dc_sp:
                     res_txt = _dc_sp
@@ -19090,29 +19372,6 @@ async def _process_chat_impl(
             return {
                 "response": _refusal, "language": language,
                 "intent": "sensitive_refused", "sources": [],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "context_used": False,
-                "response_time_ms": int((time.time() - start_time) * 1000),
-                "table_data": None
-            }
-
-        # Direct Handler for "what is today's date?" — the server's own
-        # clock, checked ahead of the application-field lookup that "date"
-        # would otherwise fall into (and ahead of "who am I" too, since both
-        # are the officer asking about something other than a carried row).
-        if _is_today_date_question(message):
-            res_txt = _today_date_answer(language)
-            await save_chat_messages(
-                db=db, session_id=session_id, user_message=_original_message,
-                assistant_message=res_txt, language=language,
-                response_time_ms=int((time.time() - start_time) * 1000),
-                officer_id=officer.officer_id if officer else None
-            )
-            return {
-                "response": res_txt,
-                "language": language,
-                "intent": "today_date",
-                "sources": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context_used": False,
                 "response_time_ms": int((time.time() - start_time) * 1000),
@@ -19237,7 +19496,12 @@ async def _process_chat_impl(
         _cm_strong_hit = _cm_strong(message, chat_history)
         _bare_status_hit = _bare_app_status(message, chat_history)
         _app_evidence = _app_evidence_in_scope(message, chat_history)
-        if (_cm_strong_hit or _bare_status_hit) and _app_evidence:
+        _cm_override_blocked = (
+            attachment_qa.is_negative_correction(message)
+            or attachment_qa.is_project_relevance_request(message)
+            or attachment_qa.location_reference(message)
+        )
+        if (_cm_strong_hit or _bare_status_hit) and _app_evidence and not _cm_override_blocked:
             logger.debug(
                 "ROUTING_DEBUG path=non-stream msg=%r parsed_intent=%r cm_strong=%r "
                 "bare_status=%r app_evidence=%r app=%r -> application_status",
@@ -19258,6 +19522,27 @@ async def _process_chat_impl(
         # above, so this never fires on a genuinely fresh register question.
         if intent == "fee_lookup" and _PAYMENT_COMPOSITE_RE.search(message or "") and _app_evidence_in_scope(message, chat_history):
             intent = "application_status"
+        # "List every survey number mentioned." / "What subdivision number
+        # belongs to the first record?" -- a bare, numberless survey/owner
+        # question with nothing in the officer's register to resolve. The
+        # survey_detail/survey_owners catch-all in rag.py matches on the
+        # words alone (it assumes a number will be resolved downstream, via
+        # _survey_ref or an application already in view), so with neither a
+        # digit in the message nor an application/survey in view, the
+        # deterministic handler always answered "No records found" -- even
+        # when the officer had just uploaded a document that plainly
+        # contains the survey number being asked about. Confirmed live (QA
+        # audit 2026-10-13, upload pass): rephrasing the identical question
+        # as "in the uploaded file, what is the synthetic survey number?"
+        # already worked, proving the attachment layer itself is fine -- only
+        # the intent gate never gave it a chance. Only reached with an active
+        # attachment, so a session with nothing uploaded is unaffected.
+        if (_is_unresolved_survey_question(intent, message, _followup_ctx)
+                and await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
+            logger.info(f"Bare {intent} question with an active attachment; "
+                       "routing to general_query instead of the empty register lookup")
+            intent = "general_query"
         if _force_general_query:
             intent = "general_query"
         # "detailed" / "explain" as a bare follow-up after a service_code_lookup
@@ -19392,7 +19677,12 @@ async def _process_chat_impl(
         # the turn it has already resolved which file, computed any CSV figure
         # from the stored rows, and decided whether there is evidence at all —
         # a plan with no prompt is answered without calling the LLM.
-        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_strong(message, chat_history)) else await attachment_qa.plan_answer(
+        _cm_blocked = _cm_strong(message, chat_history) and not (
+            attachment_qa.is_negative_correction(message)
+            or attachment_qa.is_project_relevance_request(message)
+            or attachment_qa.location_reference(message)
+        )
+        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked) else await attachment_qa.plan_answer(
             db=db, officer=officer, session_id=session_id,
             message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
@@ -19408,9 +19698,15 @@ async def _process_chat_impl(
             # follow-up with several files active reads this back in
             # attachment_qa._last_focused_document instead of re-asking which
             # file every single turn.
-            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids,
-                        **(_att_plan.extra or {})}
-                       if len(_att_plan.document_ids or []) == 1 else None)
+            _att_ctx = {
+                "entity": "attachment",
+                "document_ids": _att_plan.document_ids or [],
+                "sources": _att_plan.sources or [],
+                "attachment_kind": _att_plan.kind,
+                "is_refusal": (_att_plan.kind == attachment_qa.KIND_REFUSAL),
+                "prior_question": message,
+                **(_att_plan.extra or {}),
+            }
             await save_chat_messages(
                 db=db, session_id=session_id, user_message=_original_message,
                 assistant_message=res_txt, language=language,
@@ -19615,7 +19911,7 @@ async def _process_chat_impl(
         if _blank_kind == "clear":
             await _mark_session_cleared(db, session_id, officer)
         if _blank_kind:
-            response_text = _contentless_reply(_blank_kind, language, message)
+            response_text = _contentless_reply(_blank_kind, language, message, chat_history=chat_history)
             # A clear is about to wipe this transcript and open a new session,
             # so writing the turn to it would only leave a "clear" / "cleared"
             # pair in a conversation nobody will read again.
@@ -19630,7 +19926,7 @@ async def _process_chat_impl(
             return {
                 "response": response_text,
                 "language": language,
-                "intent": "clear_chat" if _blank_kind == "clear" else "small_talk",
+                "intent": "clear_chat" if _blank_kind == "clear" else ("clarification" if _blank_kind in ("qmark_clarify", "punct_clarify") else "small_talk"),
                 "action": "clear_chat" if _blank_kind == "clear" else None,
                 "sources": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -19657,6 +19953,33 @@ async def _process_chat_impl(
                 "response": response_text,
                 "language": language,
                 "intent": "read_only_refusal",
+                "action": None,
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+
+        # Step 2b-ter-i: a bare language-preference instruction ("No Tamil,
+        # English only", "Don't explain in Tamil") names no subject of its
+        # own, so it is acknowledged here -- never handed to the open-ended
+        # LLM prompt, which had nothing of its own to answer and would
+        # otherwise reach for whatever was nearby in the chat history.
+        if _is_bare_language_instruction(message):
+            response_text = _language_preference_reply(language)
+            logger.info("Bare language-preference instruction; answered deterministically")
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=response_text,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": response_text,
+                "language": language,
+                "intent": "language_preference",
                 "action": None,
                 "sources": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -21196,7 +21519,7 @@ async def _process_chat_impl(
                     # Return ONLY the CAN number, not the full table
                     _can_val = _can_details.get("can_number", "")
                     _app_no = _can_details.get("application_number", "")
-                    is_ta_can = language == "ta"
+                    is_ta_can = language in ("ta", "tanglish")
                     
                     if _can_val and _can_val != "not recorded":
                         _can_len = len(_can_val)
@@ -21518,7 +21841,7 @@ async def _process_chat_impl(
                 structured_data = {
                     "unassigned_visits_count": len(unassigned_list_ns),
                     "unassigned_applications": unassigned_list_ns,
-                    "query_type": "திட்டமிடல் காத்திருக்கும் கள ஆய்வுகள்" if language == "ta" else "Unassigned Field Visits — Awaiting Scheduling"
+                    "query_type": "திட்டமிடல் காத்திருக்கும் கள ஆய்வுகள்" if language in ("ta", "tanglish") else "Unassigned Field Visits — Awaiting Scheduling"
                 }
                 # response built by fv_unassigned_awaiting handler below
 
@@ -23896,10 +24219,8 @@ async def _process_chat_impl(
                 response_text = f"You have {count} field visits scheduled in {taluk} this week{date_range}: {cases_str}."
             
         elif intent == "fv_change_date":
-            if language == "ta":
+            if language in ("ta", "tanglish"):
                 response_text = "கள ஆய்வு தேதியை மாற்றுவதற்கு தாசில்தாரிடம் (Tahsildar) கேட்க வேண்டும். தாசில்தாரின் அனுமதியுடன் மட்டுமே கள ஆய்வு தேதியை மாற்ற இயலும்."
-            elif language == "tanglish":
-                response_text = "Field visit date change பண்ண நீங்கள் Tahsildar கிட்ட கேட்க வேண்டும் (You should ask the Tahsildar about field visit date change)."
             else:
                 response_text = "To change the field visit date, you should ask the Tahsildar. The Tahsildar has the authority to approve field visit date changes."
 
@@ -23951,7 +24272,7 @@ async def _process_chat_impl(
             # asking a follow-up ("which application number is that?") had
             # nothing to resolve against, since the number was never said.
             _nums = ", ".join(a.get("application_number", "") for a in apps_list)
-            if language == "ta":
+            if language in ("ta", "tanglish"):
                 if count == 0:
                     response_text = "திட்டமிடல் காத்திருக்கும் நிறைவேற்றப்படாத கள ஆய்வுகள் எதுவும் இல்லை."
                 elif count == 1:
@@ -24275,7 +24596,7 @@ async def _process_chat_impl(
         error_messages = {
             "en": "I apologize, but I encountered an error processing your request. Please try again.",
             "ta": "மன்னிக்கவும், உங்கள் கோரிக்கையைச் செயல்படுத்துவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.",
-            "tanglish": "Sorry, error ஏற்பட்டது. Please try again."
+            "tanglish": "மன்னிக்கவும், உங்கள் கோரிக்கையைச் செயல்படுத்துவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்."
         }
         
         language = detect_language(message)
@@ -24312,7 +24633,12 @@ async def process_chat_stream(
         plan = _plan_requests(message)
         import json as _json_plan
         _bp = _big_plan(message)
-        res = await _answer_big(_bp, message, session_id, officer, db, chat_history) if _bp else await _merge_turn(message, session_id, officer, db, chat_history)
+        if _bp:
+            res = await _answer_big(_bp, message, session_id, officer, db, chat_history)
+        elif plan and plan[0] == "multi" and len(plan[1]) >= 2:
+            res = await _answer_multi(plan, message, session_id, officer, db, chat_history)
+        else:
+            res = await _merge_turn(message, session_id, officer, db, chat_history)
         if res is None:
             res = await _old_codes_turn(message, session_id, officer, db, chat_history)
         if res is None:
@@ -24372,6 +24698,10 @@ async def _process_chat_stream_impl(
         # Step 1: Detect language (on the corrected text, so a slipped Tanglish word
         # does not flip the reply to English)
         language = detect_language(_fragment_typo_fix(message))
+        if is_short_reply(message) and chat_history:
+            prior_lang = get_prior_turn_language(chat_history)
+            if prior_lang in ("ta", "tanglish"):
+                language = prior_lang
         logger.info(f"Detected language: {language}")
 
         # Step 1b: A bare period ("last month") re-scopes the previous question.
@@ -24501,6 +24831,21 @@ async def _process_chat_stream_impl(
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None,
                 structured_context=None)
+            yield b"data: [DONE]\n\n"
+            return
+
+        # Direct Handler for "what is today's date / day?" (STREAMING)
+        # Checked ahead of follow-up context resolution to prevent stale app hijacking.
+        if _is_today_date_question(message):
+            import json as _json_td
+            res_txt = _today_date_answer(language, message)
+            yield f"data: {_json_td.dumps({'content': res_txt}, ensure_ascii=False)}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=res_txt, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
             yield b"data: [DONE]\n\n"
             return
 
@@ -24824,6 +25169,10 @@ async def _process_chat_stream_impl(
             yield b"data: [DONE]\n\n"
             return
         if (not _followup.resolved and not _followup.ambiguous
+                and not _neg_attachment_topic
+                and not attachment_qa.is_negative_correction(_original_message)
+                and not attachment_qa.is_project_relevance_request(_original_message)
+                and not attachment_qa.location_reference(_original_message)
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
                      or _is_bare_fragment_without_context(_original_message, _followup_ctx, chat_history))):
@@ -24999,7 +25348,7 @@ async def _process_chat_stream_impl(
             if matched_dist or _dc_sp:
                 import json as _json_dc
                 d_title, d_code = matched_dist or ("", "")
-                is_ta = (language == "ta" or bool(_DC_TANGLISH_RE.search(_msg_lower_dc))
+                is_ta = (language in ("ta", "tanglish") or bool(_DC_TANGLISH_RE.search(_msg_lower_dc))
                          or "குறியீடு" in _msg_lower_dc or bool(_dc_name_match_ta))
                 if _dc_sp:
                     res_txt = _dc_sp
@@ -25031,19 +25380,6 @@ async def _process_chat_stream_impl(
             await save_chat_messages(
                 db=db, session_id=session_id, user_message=_original_message,
                 assistant_message=_refusal, language=language,
-                response_time_ms=int((time.time() - start_time) * 1000),
-                officer_id=officer.officer_id if officer else None
-            )
-            return
-
-        # Direct Handler for "what is today's date?" (STREAMING)
-        if _is_today_date_question(message):
-            import json as _json_td
-            res_txt = _today_date_answer(language)
-            yield f"data: {_json_td.dumps({'content': res_txt})}\n\n".encode('utf-8')
-            await save_chat_messages(
-                db=db, session_id=session_id, user_message=_original_message,
-                assistant_message=res_txt, language=language,
                 response_time_ms=int((time.time() - start_time) * 1000),
                 officer_id=officer.officer_id if officer else None
             )
@@ -25133,7 +25469,12 @@ async def _process_chat_stream_impl(
         _cm_strong_hit = _cm_strong(message, chat_history)
         _bare_status_hit = _bare_app_status(message, chat_history)
         _app_evidence = _app_evidence_in_scope(message, chat_history)
-        if (_cm_strong_hit or _bare_status_hit) and _app_evidence:
+        _cm_override_blocked = (
+            attachment_qa.is_negative_correction(message)
+            or attachment_qa.is_project_relevance_request(message)
+            or attachment_qa.location_reference(message)
+        )
+        if (_cm_strong_hit or _bare_status_hit) and _app_evidence and not _cm_override_blocked:
             logger.debug(
                 "ROUTING_DEBUG path=stream msg=%r parsed_intent=%r cm_strong=%r "
                 "bare_status=%r app_evidence=%r app=%r -> application_status",
@@ -25150,6 +25491,17 @@ async def _process_chat_stream_impl(
         # register-wide fee_lookup intent.
         if intent == "fee_lookup" and _PAYMENT_COMPOSITE_RE.search(message or "") and _app_evidence_in_scope(message, chat_history):
             intent = "application_status"
+        # Same guard as the non-streaming path: a bare, numberless
+        # survey_detail/survey_owners question with an active attachment and
+        # nothing in the register to resolve is routed to general_query
+        # instead of an empty "No records found". See the non-streaming
+        # twin's comment for the full rationale.
+        if (_is_unresolved_survey_question(intent, message, _followup_ctx)
+                and await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
+            logger.info(f"Bare {intent} question with an active attachment; "
+                       "routing to general_query instead of the empty register lookup (stream)")
+            intent = "general_query"
         if _force_general_query:
             intent = "general_query"
         # "detailed" / "explain" as a bare follow-up after a service_code_lookup
@@ -25275,7 +25627,12 @@ async def _process_chat_stream_impl(
         # this session. Same decision as the non-streaming path, taken by the
         # same function — a refusal, a clarification and a computed CSV figure
         # are identical text in both, because only the delivery differs.
-        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_strong(message, chat_history)) else await attachment_qa.plan_answer(
+        _cm_blocked = _cm_strong(message, chat_history) and not (
+            attachment_qa.is_negative_correction(message)
+            or attachment_qa.is_project_relevance_request(message)
+            or attachment_qa.location_reference(message)
+        )
+        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked) else await attachment_qa.plan_answer(
             db=db, officer=officer, session_id=session_id,
             message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
@@ -25300,9 +25657,15 @@ async def _process_chat_stream_impl(
             else:
                 _acc = _att_plan.text
                 yield f"data: {_json_upl.dumps({'content': _acc})}\n\n".encode('utf-8')
-            _att_ctx = ({"entity": "attachment", "document_ids": _att_plan.document_ids,
-                        **(_att_plan.extra or {})}
-                       if len(_att_plan.document_ids or []) == 1 else None)
+            _att_ctx = {
+                "entity": "attachment",
+                "document_ids": _att_plan.document_ids or [],
+                "sources": _att_plan.sources or [],
+                "attachment_kind": _att_plan.kind,
+                "is_refusal": (_att_plan.kind == attachment_qa.KIND_REFUSAL),
+                "prior_question": message,
+                **(_att_plan.extra or {}),
+            }
             await save_chat_messages(
                 db=db, session_id=session_id, user_message=_original_message,
                 assistant_message=_acc, language=language,
@@ -25321,7 +25684,7 @@ async def _process_chat_stream_impl(
             await _mark_session_cleared(db, session_id, officer)
         if _blank_kind:
             import json as _json_blank
-            response_text = _contentless_reply(_blank_kind, language, message)
+            response_text = _contentless_reply(_blank_kind, language, message, chat_history=chat_history)
             _blank_frame = {"content": response_text}
             if _blank_kind == "clear":
                 # The frontend acts on this: transcript wiped, storage cleared,
@@ -25347,6 +25710,23 @@ async def _process_chat_stream_impl(
             response_text = _mutation_refusal(language)
             logger.info("Refused a mutation request; the assistant is read-only")
             yield f"data: {_json_ro.dumps({'content': response_text})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=_original_message, assistant_message=response_text,
+                language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None
+            )
+            return
+
+        # Same guard as the non-streaming path: a bare language-preference
+        # instruction with no subject of its own is acknowledged here,
+        # never handed to the open-ended LLM prompt.
+        if _is_bare_language_instruction(message):
+            import json as _json_lp
+            response_text = _language_preference_reply(language)
+            logger.info("Bare language-preference instruction; answered deterministically (stream)")
+            yield f"data: {_json_lp.dumps({'content': response_text})}\n\n".encode('utf-8')
             await save_chat_messages(
                 db=db, session_id=session_id,
                 user_message=_original_message, assistant_message=response_text,
@@ -29415,10 +29795,8 @@ async def _process_chat_stream_impl(
             yield sse_data.encode('utf-8')
 
         elif intent == "fv_change_date":
-            if language == "ta":
+            if language in ("ta", "tanglish"):
                 chunk = "கள ஆய்வு தேதியை மாற்றுவதற்கு தாசில்தாரிடம் (Tahsildar) கேட்க வேண்டும். தாசில்தாரின் அனுமதியுடன் மட்டுமே கள ஆய்வு தேதியை மாற்ற இயலும்."
-            elif language == "tanglish":
-                chunk = "Field visit date change பண்ண நீங்கள் Tahsildar கிட்ட கேட்க வேண்டும் (You should ask the Tahsildar about field visit date change)."
             else:
                 chunk = "To change the field visit date, you should ask the Tahsildar. The Tahsildar has the authority to approve field visit date changes."
             full_response_text = chunk
@@ -29876,7 +30254,7 @@ async def _process_chat_stream_impl(
         error_messages = {
             "en": "I apologize, but I encountered an error processing your request. Please try again.",
             "ta": "மன்னிக்கவும், உங்கள் கோரிக்கையைச் செயல்படுத்துவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.",
-            "tanglish": "Sorry, error ஏற்பட்டது. Please try again."
+            "tanglish": "மன்னிக்கவும், உங்கள் கோரிக்கையைச் செயல்படுத்துவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்."
         }
         language = detect_language(message)
         error_msg = error_messages.get(language, error_messages["en"])

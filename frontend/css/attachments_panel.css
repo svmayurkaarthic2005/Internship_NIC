@@ -88,6 +88,16 @@
     background: var(--background);
 }
 
+.attachment-card-previewable {
+    cursor: pointer;
+}
+
+.attachment-card-previewable:hover,
+.attachment-card-previewable:focus-visible {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
 .attachment-card-top {
     display: flex;
     align-items: flex-start;
@@ -171,4 +181,68 @@
 
 @media (max-width: 640px) {
     .attachments-panel { width: 100vw; }
+}
+
+/* Attachment preview -- centered dialog over its own backdrop, above the
+   attachments panel's z-index so opening a preview from within the panel
+   still reads correctly. */
+.attachment-preview-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 50;
+}
+
+.attachment-preview-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(640px, 92vw);
+    max-height: 80vh;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+    z-index: 51;
+    display: flex;
+    flex-direction: column;
+}
+
+.attachment-preview-modal[hidden],
+.attachment-preview-backdrop[hidden] {
+    display: none;
+}
+
+.attachment-preview-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--border);
+}
+
+.attachment-preview-header h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    flex: 1;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.attachment-preview-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-lg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.attachment-preview-note {
+    color: var(--text-muted);
+    font-size: 12px;
 }

@@ -1468,8 +1468,8 @@ def names_a_field(message: str) -> bool:
     # here too let this exact sentence back in through the opener clause
     # even after the length check correctly rejected its 4 words.
     _question_openers = _FRAGMENT_OPENERS - {"show", "give", "list", "and", "also"}
-    return (len(words) <= _MAX_FRAGMENT_WORDS or "?" in message
-            or (words and words[0].strip(".,!").lower() in _question_openers))
+    return (len(words) <= _MAX_FRAGMENT_WORDS
+            or (words and words[0].strip(".,!").lower() in _question_openers and len(words) <= 6))
 
 
 def _looks_like_bare_field_followup(message: str) -> bool:
@@ -2616,8 +2616,11 @@ def classify(message: str) -> str:
         # itself a back-reference ("this application").
         if _has_own_subject(lowered) and not _BACKREF_RE.search(lowered):
             return FOLLOWUP_NONE
-        if (len(words) <= _MAX_FRAGMENT_WORDS or "?" in text
-                or words[0].strip(".,!").lower() in _FRAGMENT_OPENERS):
+        if len(words) <= _MAX_FRAGMENT_WORDS:
+            return FOLLOWUP_SINGULAR
+        if _BACKREF_RE.search(lowered):
+            return FOLLOWUP_SINGULAR
+        if words and words[0].strip(".,!").lower() in _FRAGMENT_OPENERS and len(words) <= 6:
             return FOLLOWUP_SINGULAR
         return FOLLOWUP_NONE
     return FOLLOWUP_NONE

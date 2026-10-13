@@ -204,9 +204,8 @@ _NO_TOOL_NUDGE = (
 )
 
 _LANGUAGE_RULES = {
-    "ta": "Reply entirely in Tamil.",
-    "tanglish": "Reply in Tanglish -- Tamil written in Roman script, the way the "
-                "officer wrote. Keep application numbers and codes as they are.",
+    "ta": "Reply entirely in natural Tamil written in Tamil script. Keep application numbers, survey numbers, and technical codes in Latin script.",
+    "tanglish": "Reply entirely in natural Tamil written in Tamil script (do NOT reply in Roman script or English). Keep application numbers, survey numbers, and technical codes in Latin script.",
     "en": "Reply in English.",
 }
 

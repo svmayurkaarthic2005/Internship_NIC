@@ -364,9 +364,11 @@ async def upload_chat_file(
     The text is extracted with its source locations (PDF page, DOCX paragraph
     or table, CSV row, TXT line), chunked and stored in PostgreSQL, so later
     questions are answered from the few chunks that bear on them — with a
-    citation built from that stored location. A scanned / image-only PDF is
-    recorded as `no_extractable_text`: there is no OCR here and never a guess
-    at what the image said. The legacy binary .doc format is not read.
+    citation built from that stored location. A scanned / image-only PDF page
+    is tried through OCR (Tesseract, English + Tamil) before it is given up
+    on; only a page OCR also finds nothing in comes back as part of
+    `no_extractable_text` — see `doc_extract.py` for the OCR pipeline itself.
+    The legacy binary .doc format is not read.
     """
     name = (file.filename or "file").strip()
     ext = doc_extract.normalise_extension(name)
@@ -559,6 +561,36 @@ async def list_session_attachments(
             "count": sum(1 for d in docs if _status(d) == "active"),
             "max_files": settings.UPLOAD_MAX_DOCS_PER_SESSION},
         message="Attachments retrieved successfully")
+
+
+@router.get("/sessions/{session_id}/attachments/{document_id}/preview",
+            response_model=StandardResponse)
+async def preview_session_attachment(
+    session_id: str,
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_officer: OfficerContext = Depends(get_current_officer),
+):
+    """The extracted text of one attachment the officer owns -- what the
+    assistant actually has to answer from, not a rendering of the original
+    file (there is no PDF/DOCX viewer here, by design: see doc_extract.py's
+    own note that a citation is only ever built from stored location data,
+    never from re-opening the file)."""
+    try:
+        await attachment_store.verify_session(db, session_id, current_officer.officer_id)
+    except attachment_store.AttachmentAccessError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    doc = await attachment_store.get_document(
+        db, current_officer.officer_id, session_id, document_id)
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found.")
+    text = await attachment_store.preview_text(db, doc)
+    return StandardResponse.success_response(
+        data={"filename": doc.filename, "type": doc.file_ext,
+              "extraction_status": doc.extraction_status,
+              "status_detail": doc.status_detail, "text": text},
+        message="Preview retrieved successfully")
 
 
 @router.delete("/sessions/{session_id}/attachments/{document_id}",

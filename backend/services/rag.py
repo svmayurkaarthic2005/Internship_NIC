@@ -75,6 +75,8 @@ _TANGLISH_WORDS = frozenset("""
     appuram aparum aprom apram apdi appadi ippadi apdina aachu aaguma
     ellam ellaam ellaa ellathayum mothama muzhu kooda kitta
     panichumai velaichumai kaalathaamadham niluvai niluvaiyil utpirivu kanakku
+    innaiku innaikku inniki inniku innaiki innakki inraiku netru naal nal kizhamai kilamai thethi
+    panradhu pannradhu seiradhu seyyarathu
 """.split())
 
 # Only these distinctive words may trigger typo-based Tanglish recognition.
@@ -119,6 +121,83 @@ _STALLED_TEXT = ("The model stopped responding, so this reply was cut short. "
 #   - Pure-Tamil threshold at 50% so "Survey 145 எங்கே உள்ளது?"
 #     is correctly classified as tanglish, not ta.
 # ─────────────────────────────────────────────────────────────────────────────
+#   detect_language()'s own clause-aware negation check for an explicit
+# Tamil-language REQUEST ("explain in Tamil"), not to be confused with the
+# differently-scoped `_is_format_negation_request()` in chatbot.py (brevity/
+# detail format, a different axis entirely -- "don't explain in sentence" is
+# not a language instruction). `chatbot.py` imports from this module, so this
+# module cannot import back from `chatbot.py` without a circular import; the
+# same clause-split + negator-before-cue shape is reimplemented locally
+# instead, deliberately kept this small rather than factored out, since
+# duplicating ~6 lines of regex is cheaper than a shared-utils module for one
+# caller on each side.
+#
+# "Don't explain in Tamil" / "dont explain in tamil" / "Do not answer in
+# Tamil" / "Never respond in Tamil" / "Please don't translate this into
+# Tamil" all satisfied the OLD bare `_tamil_request` match below via the verb/
+# preposition sitting directly in front of "Tamil" -- structurally identical
+# to the genuine positive phrasing the pattern exists to catch, since that
+# pattern had no negation awareness at all. Confirmed live through the
+# rendered chatbot UI (QA audit, 2026-10-13): the officer explicitly asked
+# NOT to be answered in Tamil and received a full Tamil-script answer anyway.
+#
+# A negator governs a clause's Tamil mention only when it sits in the SAME
+# CLAUSE and BEFORE it -- "Explain in Tamil, but don't give examples" must
+# still select Tamil (the negation is about examples, in a different clause
+# split off by "but"). Clauses are read in order and the LAST one that
+# actually decides anything (positive or negated) wins, so "Explain in Tamil.
+# Actually, don't use Tamil; English only." correctly ends up English -- the
+# newest clear instruction, not just whichever clause happens to come first.
+_LANG_CLAUSE_SPLIT_RE = re.compile(r'[;.!?]|\b(?:but|however|although|though)\b|ஆனால்', re.IGNORECASE)
+_LANG_NEGATOR_RE_PART = r"(?:don'?t|do\s+not|dont|never|not|no)"
+_TAMIL_REQUEST_RE = re.compile(
+    r'\b(?:in|into|reply|answer|respond|speak|say|translate|write)\b'
+    r'[^.?!]{0,15}\btami[lz]h?\b'
+    r'|\btami[lz]h?\s*(?:il|la|le)\b',
+    re.IGNORECASE,
+)
+# A negator followed, within a few words, by the bare word "tamil" --
+# deliberately NOT tied to the verb-shaped cue above, so "don't **use**
+# Tamil" / "No Tamil, English only" (no recognised request verb at all) are
+# still caught, not just the exact verb phrasing `_TAMIL_REQUEST_RE` matches.
+_TAMIL_NEGATED_MENTION_RE = re.compile(
+    rf"\b{_LANG_NEGATOR_RE_PART}\b(?:\s+\w+){{0,6}}?\s+tami[lz]h?\b", re.IGNORECASE)
+# The Tamil-script equivalent: a Tamil negation particle (வேண்டாம் "don't
+# want" / இல்லை "no" / கூடாது "must not") in the same clause as "தமிழில்"/
+# "தமிழ்ல" negates it, symmetric with the English/Tanglish handling above.
+_TAMIL_SCRIPT_NEGATOR = ("வேண்டாம்", "இல்லை", "கூடாது")
+# A shorthand reply -- the whole clause is nothing but the bare word "tamil"
+# (plus throwaway politeness like "please"/"only") -- names no verb for
+# `_TAMIL_REQUEST_RE` to match, e.g. a one-word reply "tamil" typed after a
+# listing to switch the next answer's language. "Tamil Nadu" is already
+# dropped before this runs (see `detect_language`), so this never matches a
+# place-name fragment; any OTHER real word in the clause keeps it out.
+_LANG_SHORTHAND_FILLER = frozenset({"please", "only", "now", "pls", "kindly"})
+
+
+def _explicit_tamil_request(lowered: str, original: str) -> bool:
+    """True when `lowered`/`original` ends on a genuine, UN-negated request
+    for a Tamil-script answer. Clauses are read left to right; each clause
+    that mentions "tamil" at all updates a running verdict (True = positive
+    request, False = negated), and a clause with no mention leaves the
+    running verdict as it was -- so the LAST decisive clause wins, matching
+    how an officer's own corrections ("actually, don't...") are meant to be
+    read, while a clause negating something else entirely never touches it."""
+    verdict = False
+    for clause in _LANG_CLAUSE_SPLIT_RE.split(lowered):
+        bare_tokens = [t for t in re.findall(r"[a-z]+", clause) if t not in _LANG_SHORTHAND_FILLER]
+        if _TAMIL_NEGATED_MENTION_RE.search(clause):
+            verdict = False
+        elif bare_tokens in (["tamil"], ["tamizh"]) or _TAMIL_REQUEST_RE.search(clause):
+            verdict = True
+    for clause in _LANG_CLAUSE_SPLIT_RE.split(original):
+        has_mention = 'தமிழில்' in clause or 'தமிழ்ல' in clause
+        if not has_mention:
+            continue
+        verdict = not any(neg in clause for neg in _TAMIL_SCRIPT_NEGATOR)
+    return verdict
+
+
 def detect_language(text: str) -> str:
     """
     Detect language of input text using heuristics.
@@ -136,14 +215,10 @@ def detect_language(text: str) -> str:
     # English queries (district/taluk names) and must not flip the whole
     # response to Tamil. Require a request verb/preposition around it.
     # Drop the place name first so "applications in Tamil Nadu" stays English.
+    # A NEGATED request ("don't explain in Tamil") must not flip it either --
+    # see `_explicit_tamil_request()` above.
     lowered = re.sub(r'\btamil\s*nadu\b|\btn\s+state\b', ' ', text.lower())
-    _tamil_request = (
-        re.search(r'\b(in|into|reply|answer|respond|speak|say|translate|write)\b'
-                  r'[^.?!]{0,15}\btami[lz]h?\b', lowered)
-        or re.search(r'\btami[lz]h?\s*(il|la|le)\b', lowered)
-        or 'தமிழில்' in text or 'தமிழ்ல' in text
-    )
-    if _tamil_request:
+    if _explicit_tamil_request(lowered, text):
         return "ta"
 
     # The percentage is of SCRIPT characters only -- digits, "/" and
@@ -184,6 +259,52 @@ def detect_language(text: str) -> str:
             return "tanglish"
 
     return "en"
+
+
+_SHORT_REPLY_WORDS = frozenset({
+    "no", "nope", "nah", "never", "not", "nvm", "never mind",
+    "illa", "illai", "illana", "illaye", "apdi illa", "appadi illa", "athuvum illa", "adhu illa",
+    "இல்லை", "இல்ல", "அப்படி இல்லை", "இல்ல பரவாயில்ல",
+    "yes", "yeah", "yep", "yup", "ya", "yaa", "ok", "okay", "sure", "fine",
+    "correct", "exactly", "true", "right",
+    "aama", "ama", "aamam", "seri", "sari", "apdi dhaan", "appadi dhaan",
+    "ஆம்", "ஆமா", "சரி", "சரிதான்",
+})
+
+
+def is_short_reply(message: str) -> bool:
+    """True if message is a short confirmation, denial, or filler reply."""
+    cleaned = re.sub(r"[^\w\s]", "", (message or "").strip().lower())
+    words = cleaned.split()
+    if not words or len(words) > 5:
+        return False
+    if cleaned in _SHORT_REPLY_WORDS:
+        return True
+    return all(w in _SHORT_REPLY_WORDS or w in {"da", "pa", "bro", "sir", "please", "la", "ah"} for w in words)
+
+
+def get_prior_turn_language(chat_history: Optional[list]) -> Optional[str]:
+    """Inspect previous turns in chat_history to find the active language."""
+    if not chat_history:
+        return None
+    for turn in reversed(chat_history):
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        if turn.get("role") == "user":
+            lang = detect_language(content)
+            if lang in ("ta", "tanglish"):
+                return lang
+            elif lang == "en":
+                return "en"
+    for turn in reversed(chat_history):
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        if re.search(r"[\u0B80-\u0BFF]", content):
+            return "ta"
+    return None
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2711,8 +2832,8 @@ def build_prompt(
     """
     language_instruction = {
         "en": "CRITICAL: You MUST respond in English language only.",
-        "ta": "CRITICAL: You MUST respond in Tamil language only.",
-        "tanglish": "CRITICAL: You MUST respond in the same mixed Tamil-English style (Tanglish) that the user used."
+        "ta": "CRITICAL: You MUST respond in natural Tamil language written in Tamil script only. Retain necessary English technical terms, acronyms, and official identifiers in English/Latin script when translating them would be confusing.",
+        "tanglish": "CRITICAL: You MUST respond in natural Tamil language written in Tamil script only. Do not reply in Romanized Tamil (Tanglish) or English. Retain necessary English technical terms, acronyms, and official identifiers (such as application numbers, survey numbers, or service codes) in English/Latin script when translating them would be confusing."
     }.get(language, "CRITICAL: You MUST respond in English language only.")
     
     # Auto-detect if this is a specific field query that needs direct answer
@@ -2887,8 +3008,8 @@ async def paraphrase_facts_naturally(fact_text: str, language: str = "en", timeo
     """
     if not fact_text or not fact_text.strip():
         return fact_text
-    lang_note = ("Reply in Tamil." if language == "ta" else
-                 "Reply in Tanglish (Tamil words in English script)." if language == "tanglish" else
+    lang_note = ("Reply in natural Tamil written in Tamil script. Do not reply in Roman script or English."
+                 if language in ("ta", "tanglish") else
                  "Reply in English.")
     prompt = (
         "Rewrite the following facts as a short, natural, conversational answer for a "
@@ -4632,7 +4753,13 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     # word (that is what makes it "bare"), but it does need to actually read
     # as a question or a request -- the same short/question-mark/interrogative
     # shape test used elsewhere in this file for exactly this failure mode.
-    _fee_bare_words = ("fee" in msg or "fees" in msg)
+    _fee_non_domain = bool(re.search(
+        r"\b(?:conference|event|seminar|workshop|college|school|tuition|admission|hotel|flight|visa|parking|membership|"
+        r"reimburse\w*|reimbursed|paragraph|essay|book|movie|ticket)\b"
+        r"|\bwhat\s+(?:does|is|do)\b.{0,30}\bmean(?:s|ing)?\b|\bmeaning\s+of\b",
+        msg, re.IGNORECASE
+    ))
+    _fee_bare_words = ("fee" in msg or "fees" in msg) and not _fee_non_domain
     if _fee_bare_words:
         # A greeting / address in front ("hello what is the fee for ISD") is not
         # part of the question's shape.
@@ -4642,10 +4769,14 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         while _fee_msg_words and _fee_msg_words[0].strip(".,!") in _fee_lead:
             _fee_msg_words = _fee_msg_words[1:]
         _fee_word_strict = _fee_word_strict or (
-            len(_fee_msg_words) <= 6 or "?" in message
+            len(_fee_msg_words) <= 6
             or (_fee_msg_words and _fee_msg_words[0].strip(".,!") in (
                 "what", "how", "is", "was", "are", "does", "do", "did",
-                "show", "list", "give", "tell", "can", "could")))
+                "show", "list", "give", "tell", "can", "could")
+                and any(w in msg for w in ["application", "patta", "survey", "isd", "nisd", "0153", "0154",
+                                           "0156", "0158", "0178", "tslr", "subdivision", "sub-division", "mutation",
+                                           "transfer", "kattanam", "service", "government", "govt", "rate", "charge",
+                                           "schedule", "official", "extract", "f-line", "fline"])))
     # Generic money words ("cost", "price", "payment", "money", "rupees")
     # are also ordinary trivia ("flight ticket price to delhi", "how do I
     # lose weight" has none of these, but "what is the cost of a flight"
@@ -4682,7 +4813,7 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         bool(re.search(r"\b(?:isd|nisd|015[34])\b", msg))
         and bool(re.search(r"\b(?:rate|rates|amount|how\s+much|pay|paid|to\s+pay)\b", msg))
         and not re.search(r"\bhow\s+many\b", msg))
-    _fee_word = _fee_word_strict or _fee_word_generic
+    _fee_word = (_fee_word_strict or _fee_word_generic) and not _fee_non_domain
     if _fee_word and not _app_ref_early and not parse_last_application_query(message) and not any(
         p_ in msg for p_ in ["this application", "that application", "the application",
                              "this app", "that app", "same application",
@@ -4807,7 +4938,7 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     )
     # Anything that makes it a question about the officer's own records, or a
     # listing, is not a definition question.
-    _own_data = bool(re.search(r'\bmy\b|\bmine\b|\bme\b|\bi\b', msg)) or any(
+    _own_data = bool(re.search(r'\bmy\b|\bmine\b|\bme\b|\bi\b|\bnext\b', msg)) or any(
         w in msg for w in [
             "show", "list", "how many", "display", "pending", "overdue",
             "scheduled", "upcoming", "today", "tomorrow", "yesterday",
@@ -5201,21 +5332,28 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     # imperative -- an ordinary declarative sentence is none of those, the
     # same shape test `followup_context.classify` uses for its own field-cue
     # words.
+    _fv_non_domain = bool(re.search(
+        r"\b(?:magnetic|electrical|electric|electromagnetic|gravitational|gravity|quantum|physics|grounded|force\s+field|text\s+field|input\s+field|data\s+field)\b"
+        r"|\bwhat\s+(?:does|is|do)\b.{0,30}\bmean(?:s|ing)?\b|\bmeaning\s+of\b|\bconcept\s+of\b|\bdefine\b",
+        msg, re.IGNORECASE
+    ))
     _fv_words = msg.split()
     _looks_like_fv_question = (
-        len(_fv_words) <= 5 or "?" in message
-        or (_fv_words and _fv_words[0].strip(".,!") in (
-            "what", "when", "where", "how", "which", "who", "why", "is",
-            "was", "are", "does", "do", "did", "has", "have", "had", "can",
-            "could", "would", "should", "will", "show", "list", "give",
-            "tell", "any"))
+        (len(_fv_words) <= 5
+         or (_fv_words and _fv_words[0].strip(".,!") in (
+             "what", "when", "where", "how", "which", "who", "why", "is",
+             "was", "are", "does", "do", "did", "has", "have", "had", "can",
+             "could", "would", "should", "will", "show", "list", "give",
+             "tell", "any")))
+        and not _fv_non_domain
     )
-    _has_fv_terms = any(w in msg for w in [
+    _has_fv_terms = ((any(w in msg for w in [
         "field visit", "field visits", "inspection", "inspections", "fv", "visit date",
         "site visit", "site visits",
         "கள ஆய்வு", "களஆய்வு", "வருகை", "கள பார்வை"
     ]) or (("field" in msg or "inspection" in msg) and _looks_like_fv_question
-           and not any(w in msg for w in ["application", "applications", "survey number"])) or (
+           and any(w in msg for w in ["visit", "inspection", "survey", "site", "schedule", "officer", "kalam", "aaivu", "duty", "workload"])
+           and not any(w in msg for w in ["application", "applications", "survey number"]))) and not _fv_non_domain) or (
         # "overdue visits" / "second overdue visit" -- bare "visit(s)" needs
         # "field"/"site" beside it everywhere else in this function (an
         # ordinary sentence like "best places to visit" names neither), but
@@ -6829,7 +6967,7 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     # "show the documents submitted for 2026/..." carries none of the original
     # trigger words, so it fell through to application_status and dropped the
     # document list entirely.
-    if "document" in msg and any(w in msg for w in [
+    if "document" in msg and not re.search(r"\bwhat\s+(?:does|is|do)\b.{0,30}\bmean(?:s|ing)?\b|\bmeaning\s+of\b", msg) and any(w in msg for w in [
         "missing", "required", "all", "have", "submitted", "submit", "uploaded", "show", "list",
         # "check documents for this application" / "verify the documents" carry
         # no other trigger word and fell through to general_query.

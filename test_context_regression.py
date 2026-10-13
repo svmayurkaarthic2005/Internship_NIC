@@ -95,6 +95,46 @@ async def main():
     check("1. 'what is its ward?' -> field answer, no card", not is_card(r2) and "ward" in r2.lower(), r2[:150])
     r3 = await turn(ctx, "what is today's date?", hist, sid)
     check("2. 'what is today's date?' -> date, independent of app", APP_0178 not in r3 and not is_card(r3), r3[:150])
+    r_tg = await turn(ctx, "inki enda nal", hist, sid)
+    check("2a. 'inki enda nal' after app -> Tamil script date, independent of app",
+          APP_0178 not in r_tg and not is_card(r_tg) and ("இன்றைய" in r_tg or "இன்று" in r_tg), r_tg[:150])
+    r_corr = await turn(ctx, "what is the correct date today?", hist, sid)
+    check("2b. 'what is the correct date today?' after app -> date, independent of app",
+          APP_0178 not in r_corr and not is_card(r_corr) and "Today's date is" in r_corr, r_corr[:150])
+    r_ta = await turn(ctx, "இன்று என்ன நாள்", hist, sid)
+    check("2c. 'இன்று என்ன நாள்' after app -> Tamil script date, independent of app",
+          APP_0178 not in r_ta and not is_card(r_ta) and ("இன்றைய" in r_ta or "இன்று" in r_ta), r_ta[:150])
+    r_app_date = await turn(ctx, "application date enna?", hist, sid)
+    check("2d. 'application date enna?' -> not intercepted by today date",
+          "இன்றைய தேதி" not in r_app_date and "Today's date is" not in r_app_date, r_app_date[:150])
+    r_fv_date = await turn(ctx, "field visit date enna?", hist, sid)
+    check("2e. 'field visit date enna?' -> not intercepted by today date",
+          "இன்றைய தேதி" not in r_fv_date and "Today's date is" not in r_fv_date, r_fv_date[:150])
+    r_ambig_date = await turn(ctx, "what is the correct date for this application?", hist, sid)
+    check("2f. 'what is the correct date for this application?' -> not intercepted by today date",
+          "Today's date is" not in r_ambig_date and "இன்றைய" not in r_ambig_date, r_ambig_date[:150])
+
+    # Streaming date responses
+    stream_sid_tg = str(uuid.uuid4())
+    tg_chunks = []
+    async with AsyncSessionLocal() as db:
+        async for chunk in chatbot.process_chat_stream(
+            db=db, message="inki enda nal", officer=ctx, chat_history=[], session_id=stream_sid_tg
+        ):
+            tg_chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+    tg_full = "".join(tg_chunks)
+    check("2g. streaming Tanglish date works", ("இன்றைய" in tg_full or "இன்று" in tg_full or r"\u0b87" in tg_full) and "[DONE]" in tg_full, tg_full[:150])
+
+    stream_sid_en = str(uuid.uuid4())
+    en_chunks = []
+    async with AsyncSessionLocal() as db:
+        async for chunk in chatbot.process_chat_stream(
+            db=db, message="what is today's date?", officer=ctx, chat_history=[], session_id=stream_sid_en
+        ):
+            en_chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+    en_full = "".join(en_chunks)
+    check("2h. streaming English date works", "Today's date is" in en_full and "[DONE]" in en_full, en_full[:150])
+
     r4 = await turn(ctx, "what is TSLR?", hist, sid)
     check("3. 'what is TSLR?' -> no stale app context", APP_0178 not in r4 and not is_card(r4), r4[:150])
 

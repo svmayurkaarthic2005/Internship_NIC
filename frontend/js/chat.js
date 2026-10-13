@@ -109,6 +109,7 @@ async function initChat() {
         console.log('✓ Event listeners setup');
 
         initAttachmentsPanel();
+        initConnectionStatus();
 
         // Initialize Lucide icons
         if (typeof lucide !== 'undefined') {
@@ -1918,6 +1919,39 @@ function _authHeaders() {
         ? { 'Authorization': `Bearer ${officerData.access_token}` } : {};
 }
 
+// The header's "Online" dot used to be static markup -- true regardless of
+// whether the backend was actually reachable. It now reflects a real check
+// against GET /health (no auth needed, so this still works even if the
+// officer's token has expired) on load and every 30s thereafter.
+let _connectionCheckTimer = null;
+
+async function _checkConnection() {
+    const dot = document.querySelector('.status-dot-new');
+    const text = document.querySelector('.status-text-new');
+    if (!dot || !text) return;
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const r = await fetch(`${API_BASE_URL}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (r.ok) {
+            dot.className = 'status-dot-new';
+            text.textContent = 'Online';
+            return;
+        }
+    } catch (e) { /* network error or timeout -- treated as offline below */ }
+    dot.className = 'status-dot-new status-dot-offline';
+    text.textContent = 'Offline';
+}
+
+function initConnectionStatus() {
+    _checkConnection();
+    if (_connectionCheckTimer) clearInterval(_connectionCheckTimer);
+    _connectionCheckTimer = setInterval(_checkConnection, 30000);
+    window.addEventListener('online', _checkConnection);
+    window.addEventListener('offline', _checkConnection);
+}
+
 async function fetchAttachments() {
     if (!currentSessionId) return { attachments: [], count: 0, max_files: 0 };
     const r = await fetch(`${API_BASE_URL}/api/v1/chat/sessions/${currentSessionId}/attachments`,
@@ -1925,6 +1959,16 @@ async function fetchAttachments() {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const body = await r.json();
     return (body && body.data) || { attachments: [], count: 0, max_files: 0 };
+}
+
+async function fetchAttachmentPreview(documentId) {
+    if (!currentSessionId) throw new Error('No active chat session');
+    const r = await fetch(
+        `${API_BASE_URL}/api/v1/chat/sessions/${currentSessionId}/attachments/${documentId}/preview`,
+        { credentials: 'include', headers: _authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const body = await r.json();
+    return (body && body.data) || { text: '' };
 }
 
 function _formatExpiry(iso) {
@@ -1945,8 +1989,12 @@ function _renderAttachmentCard(doc) {
     const expiryLine = doc.lifecycle_status === 'active' ? _formatExpiry(doc.expires_at) : '';
     const createdLine = doc.created_at ? new Date(doc.created_at).toLocaleString() : '';
 
+    const previewable = doc.extraction_status === 'ok';
     return `
-        <div class="attachment-card" data-document-id="${escapeHtml(doc.document_id)}">
+        <div class="attachment-card${previewable ? ' attachment-card-previewable' : ''}"
+             data-document-id="${escapeHtml(doc.document_id)}"
+             data-filename="${escapeHtml(doc.filename)}"
+             ${previewable ? 'tabindex="0" role="button" aria-label="Preview this file"' : ''}>
             <div class="attachment-card-top">
                 <div>
                     <div class="attachment-card-name">${escapeHtml(doc.filename)}</div>
@@ -2002,7 +2050,8 @@ async function refreshAttachmentsPanel() {
     body.innerHTML = docs.map(_renderAttachmentCard).join('');
 
     body.querySelectorAll('.attachment-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();  // the card itself opens the preview on click
             const documentId = btn.getAttribute('data-document-id');
             btn.disabled = true;
             try {
@@ -2016,9 +2065,18 @@ async function refreshAttachmentsPanel() {
         });
     });
     body.querySelectorAll('.attachment-reupload-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
             closeAttachmentsPanel();
             handleFileAttachment();
+        });
+    });
+    body.querySelectorAll('.attachment-card-previewable').forEach(card => {
+        const open = () => openAttachmentPreview(
+            card.getAttribute('data-document-id'), card.getAttribute('data-filename'));
+        card.addEventListener('click', open);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
         });
     });
 }
@@ -2049,15 +2107,58 @@ function closeAttachmentsPanel() {
     if (backdrop) backdrop.hidden = true;
 }
 
+function toggleAttachmentsPanel() {
+    const panel = document.getElementById('attachmentsPanel');
+    if (panel && !panel.hidden) {
+        closeAttachmentsPanel();
+    } else {
+        openAttachmentsPanel();
+    }
+}
+
 function initAttachmentsPanel() {
     const openBtn = document.getElementById('attachmentsPanelBtn');
     const closeBtn = document.getElementById('attachmentsPanelCloseBtn');
     const backdrop = document.getElementById('attachmentsPanelBackdrop');
-    if (openBtn) openBtn.addEventListener('click', openAttachmentsPanel);
+    if (openBtn) openBtn.addEventListener('click', toggleAttachmentsPanel);
     if (closeBtn) closeBtn.addEventListener('click', closeAttachmentsPanel);
     if (backdrop) backdrop.addEventListener('click', closeAttachmentsPanel);
     // The badge count should reflect reality even before the panel is ever
     // opened, and must never be left showing a count from a PRIOR session
     // after a session change / history restore / new chat.
     refreshAttachmentsPanel();
+    initAttachmentPreview();
+}
+
+async function openAttachmentPreview(documentId, filename) {
+    const modal = document.getElementById('attachmentPreviewModal');
+    const backdrop = document.getElementById('attachmentPreviewBackdrop');
+    const title = document.getElementById('attachmentPreviewTitle');
+    const body = document.getElementById('attachmentPreviewBody');
+    if (!modal || !backdrop || !title || !body) return;
+    title.textContent = filename || 'Preview';
+    body.innerHTML = '<p class="attachment-preview-note">Loading…</p>';
+    modal.hidden = false;
+    backdrop.hidden = false;
+    try {
+        const data = await fetchAttachmentPreview(documentId);
+        body.textContent = (data.text || '').trim()
+            || 'No extracted text to show for this file.';
+    } catch (e) {
+        body.innerHTML = '<p class="attachment-preview-note">Could not load the preview right now.</p>';
+    }
+}
+
+function closeAttachmentPreview() {
+    const modal = document.getElementById('attachmentPreviewModal');
+    const backdrop = document.getElementById('attachmentPreviewBackdrop');
+    if (modal) modal.hidden = true;
+    if (backdrop) backdrop.hidden = true;
+}
+
+function initAttachmentPreview() {
+    const closeBtn = document.getElementById('attachmentPreviewCloseBtn');
+    const backdrop = document.getElementById('attachmentPreviewBackdrop');
+    if (closeBtn) closeBtn.addEventListener('click', closeAttachmentPreview);
+    if (backdrop) backdrop.addEventListener('click', closeAttachmentPreview);
 }

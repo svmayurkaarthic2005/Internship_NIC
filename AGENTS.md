@@ -21,8 +21,8 @@
 # Install dependencies
 pip install -r requirements.txt
 
-# First-time DB setup (sis_chatbot_db is already created and seeded)
-# The database sis_chatbot_db should already exist with sample data
+# First-time DB setup (SISChatbot is already created and seeded)
+# The database SISChatbot should already exist with sample data
 # If you need to re-ingest documents:
 python backend/ingest.py       # Ingests documents into pgvector
 
@@ -49,10 +49,10 @@ python backend/test_200_suite.py
 
 **API Docs** (dev only): http://localhost:8000/api/docs
 
-**Test login credentials** (sis_chatbot_db):
-- `csenthil@sis.tn.gov.in` / `Test@1234` — Ward 2 SIS (Thoothukudi) — Employee ID: SIS-001
-- `msivakumar@sis.tn.gov.in` / `Test@1234` — Ward 102 SIS (Thoothukudi) — Employee ID: SIS-002
-- `muthulakshmis@sis.tn.gov.in` / `Test@1234` — Ward 103 SIS (Thoothukudi) — Employee ID: SIS-003
+**Test login credentials** (SISChatbot):
+- `arun_m@sis.tn.gov.in` / `Test@1234` — Ward SIS (Ambattur) — Employee ID: SIS-001
+- `marun_chn@sis.tn.gov.in` / `Test@1234` — Ward SIS (Korattur / Padi) — Employee ID: SIS-002
+- `sperumal_chn@sis.tn.gov.in` / `Test@1234` — Ward SIS (Athipet / Orakadam) — Employee ID: SIS-003
 
 ---
 
