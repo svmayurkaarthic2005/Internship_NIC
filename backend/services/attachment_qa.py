@@ -25,6 +25,7 @@ location is presented without a citation rather than with a guessed one.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -85,6 +86,8 @@ _DOC_WORDS = (
     # determiner. The noun itself still names the file; only the determiner
     # changed scripts.
     "andha file", "andha document", "andha doc", "andha pdf", "andha attachment",
+    "files", "both files", "the files", "two files", "files la", "files-la", "filesla",
+    "கோப்புகள்", "கோப்புகளி", "இரண்டு கோப்பு",
 )
 
 _VAGUE_DOC_WORDS = ("in it", "the report")
@@ -491,13 +494,16 @@ _NEGATIVE_CORRECTION_RE = re.compile(
     # don't think so" the two patterns above already covered. Bounded to a
     # short subject (<= 6 words) before the verb so this does not swallow an
     # ordinary long sentence that happens to start the same way.
-    r"|\bi\s+don'?t\s+think\s+(?:[\w'-]+\s+){0,6}?(?:is|are|was|were|have|has|matches?|match)\b"
+    r"|\bi\s+(?:still\s+)?don'?t\s+think\s+(?:[\w'-]+\s+){0,6}?(?:is|are|was|were|have|has|matches?|match)\b"
     r"|\b(?:no,?\s+that'?s\s+wrong|that'?s\s+wrong|no\s+thats\s+wrong|that'?s\s+incorrect)\b"
     r"|\b(?:not\s+that\s+one)\b"
     r"|\b(?:i\s+meant\s+the\s+other(?:\s+service\s+code)?)\b"
     r"|\b(?:check\s+the\s+database(?:\s+again)?)\b"
     r"|\b(?:check\s+the\s+(?:uploaded\s+)?file(?:\s+again)?)\b"
-    r"|அப்படி\s*இல்லை|அது\s*இல்லை|இது\s*இல்லை|நான்\s*அதை(?:க்)?\s*கேட்கவில்லை|தவறு|சரியில்லை|வேறொன்று|வேறொரு|நான்\s*நினைக்கவில்லை",
+    r"|\b(?:neither|none|check\s+again|recheck(?:\s+again|\s+it|\s+them|\s+both)?|(?:check|recheck)\s+both)\b|^\s*both\s*$"
+    r"|\b(?:files?\s+la\s+same\s+service\s+codes?\s+illa|recheck\s+pannunga)\b"
+    r"|அப்படி\s*இல்லை|அது\s*இல்லை|இது\s*இல்லை|நான்\s*அதை(?:க்)?\s*கேட்கவில்லை|தவறு|சரியில்லை|வேறொன்று|வேறொரு|நான்\s*நினைக்கவில்லை"
+    r"|மீண்டும்\s*சரிபார்க்கவும்|கோப்புகளில்\s*ஒரே\s*சேவை\s*குறியீடு\s*இல்லை|இரண்டிலும்\s*ஒரே\s*சேவை\s*இல்லை|ஒரே\s*சேவை\s*குறியீடு\s*இல்லை",
     re.IGNORECASE,
 )
 
@@ -757,6 +763,184 @@ async def _answer_project_relevance(
     )
 
 
+def find_service_code_column(headers: Sequence[str], rows: Sequence[Dict[str, str]]) -> Optional[str]:
+    """Identify the service code column from headers or sampled row data."""
+    for h in headers:
+        hn = re.sub(r"[^a-z0-9]+", " ", (h or "").lower()).strip()
+        if hn in ("service code", "servicecode", "service cd", "service no", "service id", "code"):
+            return h
+        if "service" in hn and "code" in hn:
+            return h
+    if rows:
+        svc_pattern = re.compile(r"^(?:015[1-9]|0178|0185|\d{4})$")
+        for h in headers:
+            sample_vals = [str(r.get(h) or "").strip() for r in rows[:10] if str(r.get(h) or "").strip()]
+            if sample_vals and all(svc_pattern.match(v) for v in sample_vals):
+                return h
+    return None
+
+
+async def compare_csv_service_codes(
+    db: AsyncSession,
+    docs: Sequence[ChatAttachment],
+    language: str = "en",
+    filter_differences_only: bool = False,
+) -> AttachmentPlan:
+    """Deterministically compare service codes across 2 uploaded CSV files."""
+    is_ta = language in ("ta", "tanglish")
+
+    now = datetime.now(timezone.utc)
+    valid_docs = [d for d in docs if getattr(d, 'is_active', True) and getattr(d, 'expires_at', now) >= now]
+    if len(valid_docs) < 2:
+        err_msg = (
+            "ஒப்பீட்டிற்கு தேவையான ஒன்று அல்லது அதற்கு மேற்பட்ட கோப்புகள் காலாவதியாகிவிட்டன அல்லது கிடைக்கவில்லை."
+            if is_ta else
+            "One or more files required for comparison has expired or is unavailable. Please re-upload the files."
+        )
+        return AttachmentPlan(
+            kind=KIND_DETERMINISTIC,
+            text=err_msg,
+            sources=[d.filename for d in valid_docs],
+            document_ids=[str(d.id) for d in valid_docs],
+            extra={"response_topic": "recheck_comparison", "is_refusal": True}
+        )
+
+    sorted_docs = sorted(valid_docs[:2], key=lambda d: (d.created_at or now, d.filename))
+    doc_a, doc_b = sorted_docs[0], sorted_docs[1]
+
+    headers_a, rows_a = await attachment_store.csv_data(db, doc_a)
+    headers_b, rows_b = await attachment_store.csv_data(db, doc_b)
+
+    col_a = find_service_code_column(headers_a, rows_a)
+    col_b = find_service_code_column(headers_b, rows_b)
+
+    if not col_a or not col_b:
+        err_msg = (
+            f"கோப்புகளில் சேவை குறியீடு பத்தியைக் கண்டறிய முடியவில்லை: {doc_a.filename} ({col_a}), {doc_b.filename} ({col_b})."
+            if is_ta else
+            f"Could not identify a service code column in the uploaded files: {doc_a.filename} ({col_a}), {doc_b.filename} ({col_b})."
+        )
+        return AttachmentPlan(
+            kind=KIND_DETERMINISTIC,
+            text=err_msg,
+            sources=[doc_a.filename, doc_b.filename],
+            document_ids=[str(doc_a.id), str(doc_b.id)],
+            extra={"response_topic": "recheck_comparison", "is_refusal": True}
+        )
+
+    from collections import Counter, defaultdict
+    codes_a = []
+    rows_by_code_a = defaultdict(list)
+    for idx, r in enumerate(rows_a, 1):
+        c = str(r.get(col_a) or "").strip()
+        if c:
+            codes_a.append(c)
+            rows_by_code_a[c].append(idx)
+
+    codes_b = []
+    rows_by_code_b = defaultdict(list)
+    for idx, r in enumerate(rows_b, 1):
+        c = str(r.get(col_b) or "").strip()
+        if c:
+            codes_b.append(c)
+            rows_by_code_b[c].append(idx)
+
+    counts_a = Counter(codes_a)
+    counts_b = Counter(codes_b)
+    unique_a = sorted(list(counts_a.keys()))
+    unique_b = sorted(list(counts_b.keys()))
+    common = sorted(list(set(unique_a) & set(unique_b)))
+    only_a = sorted(list(set(unique_a) - set(unique_b)))
+    only_b = sorted(list(set(unique_b) - set(unique_a)))
+
+    unique_a_str = ", ".join(unique_a) if unique_a else "None"
+    unique_b_str = ", ".join(unique_b) if unique_b else "None"
+    common_str = ", ".join(common) if common else "None"
+    only_a_str = ", ".join(only_a) if only_a else "None"
+    only_b_str = ", ".join(only_b) if only_b else "None"
+
+    total_a_breakdown = f"{len(codes_a)} (" + ", ".join(f"{c}: {counts_a[c]}" for c in unique_a) + ")" if unique_a else "0"
+    total_b_breakdown = f"{len(codes_b)} (" + ", ".join(f"{c}: {counts_b[c]}" for c in unique_b) + ")" if unique_b else "0"
+
+    table_header = (
+        f"| Comparison (ஒப்பீடு) | File A ({doc_a.filename}) | File B ({doc_b.filename}) |\n|---|---|---|"
+        if is_ta else
+        f"| Comparison | File A ({doc_a.filename}) | File B ({doc_b.filename}) |\n|---|---|---|"
+    )
+
+    if filter_differences_only:
+        table = (
+            f"{table_header}\n"
+            f"| Unique service codes | {unique_a_str} | {unique_b_str} |\n"
+            f"| Codes only in this file (Differences) | {only_a_str} | {only_b_str} |\n"
+            f"| Total occurrences | {total_a_breakdown} | {total_b_breakdown} |"
+        )
+    else:
+        table = (
+            f"{table_header}\n"
+            f"| Unique service codes | {unique_a_str} | {unique_b_str} |\n"
+            f"| Codes found in both | {common_str} | {common_str} |\n"
+            f"| Codes only in this file | {only_a_str} | {only_b_str} |\n"
+            f"| Total occurrences | {total_a_breakdown} | {total_b_breakdown} |"
+        )
+
+    lines = [table, ""]
+    citations = []
+
+    if only_a or only_b:
+        lines.append("### Service Code Comparison Summary:")
+        if is_ta:
+            lines.append("- **முரண்பாடு உறுதி செய்யப்பட்டது (Discrepancy Confirmed)**: கோப்புகளில் ஒரே சேவை குறியீடுகள் இல்லை.")
+        else:
+            lines.append("- **Discrepancy Confirmed**: The files do **not** have the same service codes.")
+
+        if not filter_differences_only and common:
+            c_a = "; ".join(f"{c} (row {', '.join(map(str, rows_by_code_a[c]))})" for c in common)
+            c_b = "; ".join(f"{c} (row {', '.join(map(str, rows_by_code_b[c]))})" for c in common)
+            lines.append(f"- **Codes found in both**: {common_str} ({doc_a.filename}: {c_a}; {doc_b.filename}: {c_b}).")
+            for c in common:
+                citations.append(csv_ops.row_citation(doc_a.filename, rows_by_code_a[c]))
+                citations.append(csv_ops.row_citation(doc_b.filename, rows_by_code_b[c]))
+
+        if only_a:
+            c_a = "; ".join(f"{c} (row {', '.join(map(str, rows_by_code_a[c]))})" for c in only_a)
+            lines.append(f"- **Codes only in File A ({doc_a.filename})**: {only_a_str} ({c_a}).")
+            for c in only_a:
+                citations.append(csv_ops.row_citation(doc_a.filename, rows_by_code_a[c]))
+
+        if only_b:
+            c_b = "; ".join(f"{c} (row {', '.join(map(str, rows_by_code_b[c]))})" for c in only_b)
+            lines.append(f"- **Codes only in File B ({doc_b.filename})**: {only_b_str} ({c_b}).")
+            for c in only_b:
+                citations.append(csv_ops.row_citation(doc_b.filename, rows_by_code_b[c]))
+    else:
+        lines.append("### Service Code Comparison Summary:")
+        if is_ta:
+            lines.append(f"- **முழு பொருத்தம் உறுதி செய்யப்பட்டது (Exact Match Confirmed)**: இரண்டு கோப்புகளிலும் ஒரே சேவை குறியீடுகள் உள்ளன (`{common_str}`).")
+        else:
+            lines.append(f"- **Exact Match Confirmed**: Both files contain the exact same set of unique service codes (`{common_str}`).")
+
+    citations = [c for c in citations if c]
+
+    return AttachmentPlan(
+        kind=KIND_DETERMINISTIC,
+        text="\n".join(lines),
+        sources=[doc_a.filename, doc_b.filename],
+        document_ids=[str(doc_a.id), str(doc_b.id)],
+        citations=citations,
+        extra={
+            "response_topic": "recheck_comparison",
+            "is_refusal": False,
+            "filter_differences_only": filter_differences_only,
+            "unique_a": unique_a,
+            "unique_b": unique_b,
+            "common": common,
+            "only_a": only_a,
+            "only_b": only_b,
+        }
+    )
+
+
 async def _handle_negative_correction(
     db: AsyncSession,
     officer: Any,
@@ -772,35 +956,22 @@ async def _handle_negative_correction(
     if len(docs) > 1:
         focus_id = await _last_focused_document(db, session_id)
         focused = [d for d in docs if str(d.id) == focus_id] if focus_id else []
-        # The previous answer itself spanned MULTIPLE documents (a
-        # comparison, e.g. "compare the service codes in both files") -- the
-        # disputed claim is the comparison across both, not one file in
-        # particular, so asking "which file do you mean?" asks the wrong
-        # question. `_last_focused_document` deliberately leaves no single
-        # focus behind for exactly this shape (see its own docstring), so
-        # `focused` is always empty here; re-targeting every document the
-        # LAST answer actually used is the correct read, not the generic
-        # multi-file fallback below. Confirmed live, 2026-10-13: "I don't
-        # think the files have the same service codes." right after a
-        # 2-file comparison answer used to default to "Which one do you
-        # mean?" -- a comparison was never about just one of them.
         prior_doc_ids = set(last_ctx.get("document_ids") or [])
         compared_docs = [d for d in docs if str(d.id) in prior_doc_ids]
-        if not focused and len(compared_docs) > 1:
-            ta_recheck = ("புரிந்தது — மீண்டும் சரிபார்க்கிறேன். எந்த குறிப்பிட்ட சேவை குறியீடு அல்லது "
-                          "வரிசை வேறுபடுகிறது என்று நினைக்கிறீர்கள் எனில் கூறுங்கள், அல்லது முழு ஒப்பீட்டையும் "
-                          "மீண்டும் காட்டுகிறேன்.")
-            en_recheck = ("Understood — let me recheck the comparison between "
-                          f"{' and '.join(d.filename for d in compared_docs)}. "
-                          "Name the specific service code or row you think is wrong, "
-                          "or I'll show the full comparison again.")
-            return AttachmentPlan(
-                kind=KIND_DETERMINISTIC,
-                text=(ta_recheck if ta else en_recheck),
-                sources=[d.filename for d in compared_docs],
-                document_ids=[str(d.id) for d in compared_docs],
-                extra={"response_topic": "recheck_comparison", "is_refusal": False, "prior_question": message}
+        target_recheck = compared_docs if len(compared_docs) > 1 else list(docs)
+
+        msg_low = (message or "").lower()
+        is_comparing = (
+            len(compared_docs) > 1
+            or not focused
+            or any(w in msg_low for w in ("file", "files", "both", "two", "same", "difference", "differences", "recheck", "கோப்பு", "இரண்டு", "lla"))
+        )
+        if is_comparing and len(target_recheck) > 1:
+            filter_diff = bool(last_ctx.get("filter_differences_only")) or any(
+                w in msg_low for w in ("difference", "differences", "don't include matching", "only the difference")
             )
+            return await compare_csv_service_codes(db, target_recheck, language, filter_differences_only=filter_diff)
+
         if not focused:
             return AttachmentPlan(
                 kind=KIND_CLARIFY,
@@ -1219,8 +1390,9 @@ def _location_not_found(kind: str, number: int, extents: Dict[str, int], languag
 def wants_comparison(message: str) -> bool:
     low = (message or "").lower()
     return any(w in low for w in (
-        "compare", "comparison", "difference between", "both files",
-        "both documents", "all the files", "all files", "across the files",
+        "compare", "comparison", "difference between", "differences", "difference",
+        "only the difference", "only the differences", "matching codes", "matching code",
+        "both files", "both documents", "all the files", "all files", "across the files",
         "each file", "ஒப்பிட", "இரண்டு கோப்பு"))
 
 
@@ -2400,6 +2572,12 @@ async def _answer_from_selected(
                     citations=cites,
                     extra={"last_row": res_last_row, "last_rows": result.rows, "filename": doc.filename})
     elif len(csv_docs) >= 2:
+        msg_low = (message or "").lower()
+        if any(w in msg_low for w in ("service code", "service codes", "differences", "matching codes")) or (
+            any(w in msg_low for w in ("compare", "same", "different")) and any(w in msg_low for w in ("code", "codes", "service"))
+        ):
+            filter_diff = any(w in msg_low for w in ("difference", "differences", "don't include matching", "only the difference"))
+            return await compare_csv_service_codes(db, csv_docs, language, filter_differences_only=filter_diff)
         # "is the status of survey 805 consistent between the two files?" --
         # confirmed live (QA audit 2026-10-13, upload pass, failure id
         # MULTIDOC-CONFLICT-001): with more than one CSV selected, the

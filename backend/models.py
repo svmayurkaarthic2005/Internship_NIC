@@ -510,6 +510,25 @@ class ServiceRegisterEntry(Base):
     block = relationship("Block")
 
 
+class ServiceFee(Base):
+    """Statutory and service fees per TAMILNILAM service code.
+    Enables dynamic, real-time fee queries that update when Government
+    Orders (G.O.) or departmental fee schedules change.
+    """
+    __tablename__ = "service_fees"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    service_code = Column(String(10), nullable=False, unique=True)
+    service_name = Column(String(255), nullable=False)
+    govt_fee = Column(Numeric(10, 2), nullable=False)
+    csc_fee = Column(Numeric(10, 2), nullable=False, default=60.00)
+    total_fee = Column(Numeric(10, 2))
+    sla_days = Column(String(50))
+    sla_days_ta = Column(String(50))
+    remarks = Column(Text)
+    updated_at = Column(TIMESTAMP(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
 class ApplicationSubDivision(Base):
     __tablename__ = "application_sub_divisions"
 

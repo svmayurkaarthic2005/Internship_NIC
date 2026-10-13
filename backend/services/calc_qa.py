@@ -401,10 +401,10 @@ def date_extreme(text: str, rows: List[dict], ta: bool = False) -> Optional[str]
 
 _CODES_WITH_APPS_RE = re.compile(
     r"\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\b"
-    r"(?:have|has)\s+(?:any\s+|non[\s-]?zero\s+)?applications?\b"
+    r"(?:have|has)\s+(?:any\s+|non[\s-]?zero\s+)?(?:applications?|records?|files?)\b"
     r"|\bservices?(?:\s*codes?)?\b.{0,20}\bare\s+in\s+use\b"
     r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,20}\bin\s+use\b"
-    r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\bhave\s+no\s+applications?\b"
+    r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\bhave\s+no\s+(?:applications?|records?|files?)\b"
     r"|\b(?:which|what)\s+services?(?:\s*codes?)?\b.{0,25}\b(?:no\s+one|nobody|unused|not\s+used)\b"
     r"|\bservices?(?:\s*codes?)?\b.{0,20}\b(?:non[\s-]?zero|a\s+non[\s-]?zero)\s+counts?\b",
     re.IGNORECASE)
@@ -421,7 +421,7 @@ def codes_with_applications(text: str, rows: List[dict], ta: bool = False) -> Op
     if not _CODES_WITH_APPS_RE.search(t):
         return None
     from backend.utils.helpers import SIS_URBAN_SERVICES
-    wants_zero = bool(re.search(r"\bno\s+applications?\b|\bno\s+one\b|\bnobody\b|\bunused\b|\bnot\s+used\b", t, re.IGNORECASE))
+    wants_zero = bool(re.search(r"\bno\s+(?:applications?|records?|files?)\b|\bno\s+one\b|\bnobody\b|\bunused\b|\bnot\s+used\b", t, re.IGNORECASE))
     present = sorted({str(r.get("service_code")) for r in rows if r.get("service_code")})
     if wants_zero:
         codes = sorted(c for c in SIS_URBAN_SERVICES if c not in present)
@@ -538,24 +538,25 @@ def compare_codes(text: str, rows: List[dict], ta: bool = False,
         return None
     from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
     codes = []
-    if codes_override and len(codes_override) == 2:
-        codes = [c for c in codes_override if c in SIS_URBAN_SERVICES]
-    if len(codes) != 2:
-        for c in find_service_codes(t):
-            if c in SIS_URBAN_SERVICES and c not in codes:
-                codes.append(c)
+    # 1. Explicit codes in query ALWAYS take precedence over historical context
+    for c in find_service_codes(t):
+        if c in SIS_URBAN_SERVICES and c not in codes:
+            codes.append(c)
     if len(codes) != 2:
         for c in re.findall(r"(?<![\d/])(0?1[5-9]\d)(?![\d/])", t):
             c = c.zfill(4)
             if c in SIS_URBAN_SERVICES and c not in codes:
                 codes.append(c)
+    # 2. Only if the query itself did NOT specify 2 codes, use history fallback codes_override
+    if len(codes) != 2 and codes_override and len(codes_override) == 2:
+        codes = [c for c in codes_override if c in SIS_URBAN_SERVICES]
     if len(codes) != 2:
         if re.search(r"f[\s-]?line", t, re.IGNORECASE) and re.search(r"appeal", t, re.IGNORECASE):
             codes = ["0178", "0185"]
         elif re.search(r"\b(?:both\s+service\s*codes?|which\s+(?:one\s+)?has\s+more|what\s+about\s+(?:their\s+)?statuses?|numbers?\s+only|data\s+only|don'?t\s+explain|give\s+(?:the\s+)?numbers?)\b", t, re.IGNORECASE):
             if any(str(r.get("service_code")) == "0178" for r in rows):
                 codes = ["0178", "0185"]
-    if len(codes) != 2 or (set(codes) == {"0153", "0154"} and not re.search(r"\bsame\s+as\b", t, re.IGNORECASE)):
+    if len(codes) != 2 or (set(codes) == {"0153", "0154"} and not re.search(r"\b(?:same\s+as|table|applications?|files?|records?|status|statuses|more|less|counts?|numbers?|விண்ணப்ப|அட்டவணை)\b", t, re.IGNORECASE)):
         return None              # ISD vs NISD keeps its own comparison (counts, durations)
     st = lambda r: str(r.get("status") or "").lower()
     parts = []

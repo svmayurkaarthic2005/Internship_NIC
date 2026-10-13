@@ -87,6 +87,7 @@
             <!-- Input Area -->
             <div class="chat-input-area-new">
                 <div class="quick-chips" id="quickChips" role="group" aria-label="Suggested questions">
+                    <button type="button" class="quick-chip" id="attachTestFilesChip" data-q="Attach test files">Attach test files</button>
                     <button type="button" class="quick-chip" data-q="Show my pending applications">Pending applications</button>
                     <button type="button" class="quick-chip" data-q="Which applications are overdue?">Overdue</button>
                     <button type="button" class="quick-chip" data-q="What is my workload?">My workload</button>
@@ -103,7 +104,8 @@
                         aria-label="Message input"
                     ></textarea>
                     <div class="input-actions-new">
-                        <button class="btn-icon-action-new" aria-label="Attach file" title="Attach file">
+                        <input type="file" id="fileUploadInput" style="display: none;" accept=".txt,.csv,.pdf,.doc,.docx">
+                        <button class="btn-icon-action-new" id="attachFileBtn" aria-label="Attach file" title="Attach file">
                             <i data-lucide="paperclip" class="attach-icon-new"></i>
                         </button>
                         <button class="btn-send-new" id="sendBtn" disabled aria-label="Send message" title="Send message">

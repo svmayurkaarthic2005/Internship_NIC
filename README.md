@@ -245,6 +245,18 @@ Officers can upload PDFs, DOCX, CSVs, and TXT files (`POST /api/v1/chat/upload`)
 
 A survey number pulled from an attachment (free text or CSV) is always paired with its subdivision number(s) when the source carries one — see CLAUDE.md's "A survey number from an attachment carries its subdivision number too" for the mechanism, the multi-subdivision case, and the two known-unfixed gaps (reverse lookup, follow-up continuation).
 
+### 9. All 29 Service Codes — Lookup, Comparison, Catalogue
+
+`SIS_URBAN_SERVICES` in `backend/utils/helpers.py` holds all 29 official TAMILNILAM urban service codes (not just ISD `0154` / NISD `0153`). Only `0153`/`0154` are backed by a full ISD/NISD workflow machine in `applications`; the rest have a name, category and field-visit flag, and most carry no documented fee/SLA/workflow anywhere in the corpus — the chatbot states that explicitly rather than inventing one.
+
+**Pairwise comparison ("difference between A and B", "are A and B the same") now resolves both named codes for all 406 possible pairs**, not just the hardcoded F-Line/F-Line-Appeal (`0178`/`0185`) case. This closed `SVCCOMPARE-ALL-001` through `-005` (see `SIS_All_Service_Code_Comparison_Failures.jsonl` and `SIS_All_Service_Code_Comparison_Report.md`):
+- `find_service_codes()` / `find_service_code_by_name()` in `helpers.py` split a comparison sentence on delimiters (`and`, `vs`, `versus`, `to`, `மற்றும்`) and resolve each clause independently, instead of scoring the whole message for a single winner.
+- `_build_service_code_comparison_response()` in `chatbot.py` is a universal comparison engine (differences / similarities / both / identity-check / ambiguous / table) covering all 406 pairs, replacing logic that used to exist only for `0178` vs `0185`.
+- A dedicated `all_service_code_comparison` intent in `rag.py` catches whole-catalogue questions ("compare all supported service codes", "similarities across all service codes") that used to misroute to application listings.
+- Fee/SLA/workflow for any pair outside `{0153, 0154}` is answered "not documented in departmental guidelines" — never fabricated.
+
+Catalogue + exhaustive sweep artifacts: `SIS_All_Service_Code_Catalogue.csv` (29 rows), `SIS_All_Service_Code_Comparison_Matrix.csv` (406 rows). Regression: `SIS_ServiceCode_FileDB_Regression_Tests/test_all_servicecode_pairwise_resolution.py`, `test_pairwise_comparison_architectural_disparity.py`, `test_all_service_comparison_routing.py`.
+
 ## API Endpoints
 
 **Authentication**

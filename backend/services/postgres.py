@@ -3,10 +3,10 @@ PostgreSQL query service for structured data retrieval
 """
 import re
 
-from sqlalchemy import select, func, and_, or_, desc, TIMESTAMP, false
+from sqlalchemy import select, func, and_, or_, desc, TIMESTAMP, false, case, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from datetime import date, datetime, timedelta, timezone
 
 # India has no DST, so a fixed UTC+5:30 offset is the whole rule, permanently --
@@ -20,7 +20,8 @@ from backend.models import (
     Application, SISOfficer, SurveyNumber, SubDivision,
     Owner, SurveyOwnership, FieldVisit, WorkflowHistory,
     ApplicationSubDivision, Block, Ward, Town, Taluk, District,
-    OfficerJurisdiction, PattaTransfer, Applicant, ServiceRegisterEntry
+    OfficerJurisdiction, PattaTransfer, Applicant, ServiceRegisterEntry,
+    ServiceFee
 )
 from backend.schemas import OfficerContext
 from backend.utils.logger import get_logger
@@ -4967,3 +4968,156 @@ async def get_applications_by_reason(db: AsyncSession, officer: OfficerContext, 
                 Application.id.in_(_application_jurisdiction_subquery(jurisdiction_filters)))
          .order_by(Application.submission_date.desc()))
     return [(n, r, s) for n, r, s in (await db.execute(q)).all()]
+
+
+async def get_service_code_fees(
+    db: AsyncSession,
+    service_codes: Optional[Union[str, List[str]]] = None
+) -> Union[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """Query live statutory and counter service fees from the database (service_fees table).
+    Grounds fee lookups in real-time database state, allowing dynamic updates as G.O.s change.
+    If service_codes is a single string (e.g. '0153'), returns the fee dict for that code.
+    If service_codes is None or a list, returns a mapping of code -> fee dict.
+    """
+    single_code = service_codes if isinstance(service_codes, str) else None
+    codes_filter = [service_codes] if isinstance(service_codes, str) else service_codes
+
+    fees: Dict[str, Dict[str, Any]] = {}
+
+    # 1. Statutory baseline defaults from departmental rules (land_rules.txt)
+    from backend.utils.helpers import SIS_SERVICE_CODE_DETAIL
+    for code, info in SIS_SERVICE_CODE_DETAIL.items():
+        if codes_filter and code not in codes_filter:
+            continue
+        g = info.get("govt_fee")
+        c = info.get("csc_fee")
+        if g or c:
+            combined_parts = []
+            if g:
+                combined_parts.append(f"Govt {g}")
+            if c:
+                combined_parts.append(f"CSC {c}")
+            fees[code] = {
+                "service_code": code,
+                "service_name": info.get("name", ""),
+                "govt_fee": g,
+                "csc_fee": c,
+                "total_fee": None,
+                "fee_display": ", ".join(combined_parts),
+                "fee_summary": ", ".join(combined_parts),
+                "source": "statutory_guideline"
+            }
+
+    # 2. Query live database table (service_fees)
+    try:
+        stmt = select(ServiceFee)
+        if codes_filter:
+            stmt = stmt.where(ServiceFee.service_code.in_(codes_filter))
+        result = await db.execute(stmt)
+        for row in result.scalars().all():
+            g_fee = float(row.govt_fee) if row.govt_fee is not None else 0.0
+            c_fee = float(row.csc_fee) if row.csc_fee is not None else 0.0
+            t_fee = float(row.total_fee) if row.total_fee is not None else (g_fee + c_fee)
+            fee_str_parts = []
+            if row.govt_fee is not None:
+                fee_str_parts.append(f"Govt ₹{g_fee:.2f}")
+            if row.csc_fee is not None:
+                fee_str_parts.append(f"CSC ₹{c_fee:.2f}")
+            disp = ", ".join(fee_str_parts) if fee_str_parts else "Not documented in departmental guidelines"
+
+            fees[row.service_code] = {
+                "service_code": row.service_code,
+                "service_name": row.service_name,
+                "govt_fee": f"₹{g_fee:.2f}" if row.govt_fee is not None else None,
+                "csc_fee": f"₹{c_fee:.2f}" if row.csc_fee is not None else None,
+                "total_fee": f"₹{t_fee:.2f}" if row.total_fee is not None else None,
+                "govt_fee_num": g_fee,
+                "csc_fee_num": c_fee,
+                "total_fee_num": t_fee,
+                "fee_display": disp,
+                "fee_summary": disp,
+                "sla_days": row.sla_days or "Not documented",
+                "sla_days_ta": row.sla_days_ta or "ஆவணப்படுத்தப்படவில்லை",
+                "remarks": row.remarks,
+                "source": "database_service_fees_table"
+            }
+    except Exception as e:
+        logger.error(f"Error fetching service code fees from database: {e}")
+
+    if single_code:
+        return fees.get(single_code, {
+            "service_code": single_code,
+            "govt_fee": None,
+            "csc_fee": None,
+            "fee_display": "Not documented in departmental guidelines",
+            "fee_summary": "Not documented in departmental guidelines",
+            "source": "not_documented"
+        })
+    return fees
+
+
+async def get_all_service_fees(
+    db: AsyncSession
+) -> Dict[str, Dict[str, Any]]:
+    """Dynamically query all service fees from the database service_fees table."""
+    res = await get_service_code_fees(db, service_codes=None)
+    return res if isinstance(res, dict) else {}
+
+
+async def get_service_register_summary_counts(
+    db: AsyncSession
+) -> Dict[str, Any]:
+    """Query live application counts per service code from service_register_entries.
+    Returns per-code breakdown (total, approved, pending, rejected) and catalog summary.
+    """
+    try:
+        stmt = select(
+            ServiceRegisterEntry.service_code,
+            func.count().label("total"),
+            func.count(case((ServiceRegisterEntry.status.in_(["approved", "completed"]), 1))).label("approved"),
+            func.count(case((ServiceRegisterEntry.status.in_(["pending", "open"]), 1))).label("pending"),
+            func.count(case((ServiceRegisterEntry.status == "rejected", 1))).label("rejected")
+        ).group_by(ServiceRegisterEntry.service_code).order_by(ServiceRegisterEntry.service_code)
+        
+        result = await db.execute(stmt)
+        rows = result.all()
+        by_code = {}
+        total_records = 0
+        for r in rows:
+            sc, tot, appr, pend, rej = r[0], r[1], r[2], r[3], r[4]
+            total_records += tot
+            breakdown = []
+            if appr > 0:
+                breakdown.append(f"{appr} appr")
+            if pend > 0:
+                breakdown.append(f"{pend} pend")
+            if rej > 0:
+                breakdown.append(f"{rej} rej")
+            bd_str = f" ({', '.join(breakdown)})" if breakdown else ""
+            by_code[sc] = {
+                "total": tot,
+                "approved": appr,
+                "pending": pend,
+                "rejected": rej,
+                "display": f"{tot} files in Register{bd_str}"
+            }
+        return {
+            "by_code": by_code,
+            "total_records": total_records,
+            "codes_with_records_count": len(by_code),
+            "total_codes_count": 29
+        }
+    except Exception as e:
+        logger.error(f"Error fetching service register counts: {e}")
+        return {"by_code": {}, "total_records": 0, "codes_with_records_count": 0, "total_codes_count": 29}
+
+
+async def get_service_register_counts_by_code(
+    db: AsyncSession
+) -> Dict[str, Dict[str, Any]]:
+    """Return live application counts by service code from service_register_entries.
+    Keys are service codes ('0153', '0154', '0178', etc.).
+    Values contain 'total', 'approved', 'pending', 'rejected', and 'display'.
+    """
+    summary = await get_service_register_summary_counts(db)
+    return summary.get("by_code", {})

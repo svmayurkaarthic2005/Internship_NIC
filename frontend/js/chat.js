@@ -616,10 +616,16 @@ async function sendMessage() {
         showToast('Please enter a message', 'warning');
         return;
     }
-    
 
-    
-    if (isTyping) {
+    if (text.toLowerCase() === 'attach test files' || text.toLowerCase() === 'load test files') {
+        messageInput.value = '';
+        handleInputChange();
+        appendUserMessage(text);
+        showToast('Attaching test files...', 'info');
+        await window.uploadFileFromData("file_a.csv", "application_number,service_code,applicant_name\n2026/0153/01/0001,0153,Ramesh\n2026/0154/01/0002,0154,Suresh\n2026/0153/01/0003,0153,Mahesh");
+        await window.uploadFileFromData("file_b.csv", "application_number,service_code,applicant_name\n2026/0154/01/0004,0154,Dinesh\n2026/0178/01/0005,0178,Ganesh");
+        return;
+    }
         console.warn('❌ Cannot send: Already typing');
         showToast('Please wait for the current response', 'warning');
         return;
@@ -1087,7 +1093,127 @@ function appendMessage(role, content, timestamp, tableData = null) {
  * HTML responses are injected directly via innerHTML (trusted backend source).
  * Plain text responses get light markdown conversion before injection.
  */
+function renderMarkdownTables(text) {
+    if (!text || !text.includes('|')) return text;
+    
+    const lines = text.split(/\r?\n/);
+    const out = [];
+    let tableLines = [];
+    let inTable = false;
+
+    function formatTable(tbl) {
+        if (tbl.length < 2) return tbl.join('\n');
+        const headerLine = tbl[0];
+        const delimLine = tbl[1];
+        if (!delimLine.includes('-')) return tbl.join('\n');
+
+        const parseCells = (line) => {
+            const trimmed = line.trim();
+            const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+            return inner.split('|').map(c => c.trim());
+        };
+
+        const headers = parseCells(headerLine);
+        const dataRows = tbl.slice(2).map(parseCells).filter(r => r.length > 0 && r.some(c => c !== ''));
+
+        let html = '<div class="data-table-container"><table class="data-table"><thead><tr>';
+        headers.forEach(h => {
+            let cell = escapeHtml(h);
+            cell = cell.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html += `<th>${cell}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        dataRows.forEach(row => {
+            html += '<tr>';
+            for (let i = 0; i < headers.length; i++) {
+                let cell = escapeHtml(row[i] !== undefined ? row[i] : '');
+                cell = cell.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                cell = cell.replace(/`([^`]+)`/g, '<code>$1</code>');
+                html += `<td>${cell}</td>`;
+            }
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isTableLine = /^\s*\|.*\|\s*$/.test(line);
+        if (isTableLine) {
+            inTable = true;
+            tableLines.push(line);
+        } else {
+            if (inTable) {
+                out.push(formatTable(tableLines));
+                tableLines = [];
+                inTable = false;
+            }
+            out.push(line);
+        }
+    }
+    if (inTable) {
+        out.push(formatTable(tableLines));
+    }
+    return out.join('\n');
+}
+
+function formatMarkdownText(raw) {
+    if (!raw) return '';
+    const lines = raw.split(/\r?\n/);
+    const processedLines = lines.map(line => {
+        // Markdown headings
+        if (/^###\s+/.test(line)) {
+            return `<h3 style="font-size: 14px; font-weight: 600; margin: 10px 0 4px 0; color: var(--text-primary);">${escapeHtml(line.replace(/^###\s+/, ''))}</h3>`;
+        }
+        if (/^##\s+/.test(line)) {
+            return `<h2 style="font-size: 15px; font-weight: 700; margin: 12px 0 6px 0; color: var(--text-primary);">${escapeHtml(line.replace(/^##\s+/, ''))}</h2>`;
+        }
+        if (/^#\s+/.test(line)) {
+            return `<h1 style="font-size: 17px; font-weight: 700; margin: 14px 0 6px 0; color: var(--text-primary);">${escapeHtml(line.replace(/^#\s+/, ''))}</h1>`;
+        }
+        let esc = escapeHtml(line);
+        esc = esc.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        esc = esc.replace(/`([^`]+)`/g, '<code>$1</code>');
+        return esc;
+    });
+
+    let formatted = processedLines.join('\n');
+    formatted = formatted.replace(/\n{3,}/g, '\n\n');
+    // Bullet lists: lines starting with •, -, or *
+    formatted = formatted.replace(/((?:^[•\-\*]\s+.+(?:\n|$))+)/gm, m => '<ul>' + m.trim().split('\n').map(l => '<li>' + l.replace(/^[•\-\*]\s+/, '') + '</li>').join('') + '</ul>');
+    // Numbered lists: lines starting with "1. "
+    formatted = formatted.replace(/((?:^\d+\.\s+.+(?:\n|$))+)/gm, m => '<ol>' + m.trim().split('\n').map(l => '<li>' + l.replace(/^\d+\.\s+/, '') + '</li>').join('') + '</ol>');
+    
+    // Collapse newlines to <br> for prose, avoiding extraneous breaks around block tags
+    formatted = formatted.replace(/\n{2,}/g, '<br><br>');
+    formatted = formatted.replace(/\n/g, '<br>');
+    formatted = formatted.replace(/<\/h([1-3])><br>/gi, '</h$1>');
+    formatted = formatted.replace(/<\/ul><br>/gi, '</ul>');
+    formatted = formatted.replace(/<\/ol><br>/gi, '</ol>');
+
+    // Application number chips
+    formatted = formatted.replace(
+        /\b((?:ISD|NISD)\/\w+\/\d+\/\d+)\b/gi,
+        '<span class="suggestion-chip" data-app="$1" onclick="handleAppChipClick(this)" ' +
+        'style="cursor:pointer;display:inline-block;margin:2px;">$1</span>'
+    );
+
+    return formatted;
+}
+
+/**
+ * Format bot message for display.
+ *
+ * Backend sends two kinds of responses:
+ *   1. Clean HTML  — built by build_html_response() in rag.py (tables, lists, etc.)
+ *   2. Plain text / Markdown — LLM or deterministic table/prose answers
+ *
+ * HTML responses are injected directly via innerHTML (trusted backend source).
+ * Plain text / Markdown responses get structured markdown table and block conversion before injection.
+ */
 function formatBotMessage(text) {
+    if (!text) return '';
     // Detect HTML: any opening tag at all (e.g. <table, <p, <ul, <strong …)
     const hasHTML = /<[a-zA-Z][^>]*>/i.test(text);
     if (hasHTML) {
@@ -1099,40 +1225,22 @@ function formatBotMessage(text) {
     const card = plainToCard(text);
     if (card) return card;
 
-    // ── Plain text → light markdown conversion ───────────────────────
-    let formatted = escapeHtml(text);
-    
-    // Bold: **text**
-    formatted = formatted.replace(/\*\*(.*?)\*\*/gs, '<strong>$1</strong>');
-    
-    // Inline code: `code`
-    formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-    
-    // Collapse 3+ blank lines → single blank line, then convert newlines → <br>
-    formatted = formatted.replace(/\n{3,}/g, '\n\n');
-    formatted = formatted.replace(/((?:^[•\-]\s+.+(?:\n|$))+)/gm, m => '<ul>' + m.trim().split('\n').map(l => '<li>' + l.replace(/^[•\-]\s+/, '') + '</li>').join('') + '</ul>');
-    formatted = formatted.replace(/\n/g, '<br>');
-    
-    // Bullet lists: lines starting with • or -
-    formatted = formatted.replace(/^[•\-]\s+(.+)$/gm, '<li>$1</li>');
-    if (/<li>/.test(formatted)) {
-        formatted = formatted.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+    // First render Markdown tables if any table syntax exists
+    const formattedText = renderMarkdownTables(text);
+
+    // If formattedText contains rendered table containers, split into segments
+    // so we don't break the generated table HTML
+    if (formattedText.includes('<div class="data-table-container">')) {
+        const parts = formattedText.split(/(<div class="data-table-container">[\s\S]*?<\/div>)/);
+        return parts.map(part => {
+            if (part.startsWith('<div class="data-table-container">')) {
+                return part;
+            }
+            return formatMarkdownText(part);
+        }).join('');
     }
-    
-    // Numbered lists: lines starting with "1. "
-    if (/^\d+\.\s/.test(text)) {
-        formatted = formatted.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
-        formatted = formatted.replace(/(<li>[\s\S]*?<\/li>)/g, '<ol>$1</ol>');
-    }
-    
-    // Application number chips: ISD/…/…/…
-    formatted = formatted.replace(
-        /\b((?:ISD|NISD)\/\w+\/\d+\/\d+)\b/gi,
-        '<span class="suggestion-chip" data-app="$1" onclick="handleAppChipClick(this)" ' +
-        'style="cursor:pointer;display:inline-block;margin:2px;">$1</span>'
-    );
-    
-    return formatted;
+
+    return formatMarkdownText(formattedText);
 }
 
 /**
@@ -1544,82 +1652,92 @@ window.chatModule = {
 /**
  * Handle file attachment button
  */
+async function processAndUploadFile(file) {
+    if (!file) return;
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showToast('File size must be less than 5MB', 'error');
+        return;
+    }
+
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const isReadable  = ['txt', 'csv', 'pdf', 'docx'].includes(ext);
+    const isLegacyDoc = ext === 'doc';
+
+    // Images and everything else are not accepted — the assistant has no
+    // vision and can only work from text.
+    if (!isReadable && !isLegacyDoc) {
+        showToast('Unsupported file type. Upload a .txt, .csv, PDF or .docx file.', 'error');
+        return;
+    }
+
+    const fileAnalysis = await analyzeFile(file);
+    showFilePreview(file, fileAnalysis);
+
+    if (isReadable) {
+        // Send the file to the backend, which extracts the text and keeps it
+        // for this chat session so every later question can use it.
+        showToast('Uploading file…', 'info');
+        try {
+            const result = await uploadFile(file);
+            const data = result && result.data;
+            if (data && data.supported === false) {
+                appendAssistantNotice(`📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'not supported')}`);
+            } else if (data && data.extraction_status === 'no_extractable_text') {
+                // A scan. There is no OCR and no vision here, so the file is
+                // recorded but never answered from — say so instead of
+                // letting the officer ask questions it cannot answer.
+                appendAssistantNotice(
+                    `📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'no readable text found')}`);
+            } else {
+                const msg = (result && result.message) ||
+                    `"${file.name}" attached. Ask your question about it now.`;
+                appendAssistantNotice(`📎 <strong>${escapeHtml(file.name)}</strong> attached.<br>${escapeHtml(msg)}`);
+            }
+            return result;
+        } catch (e) {
+            const why = e && e.detail ? ` ${escapeHtml(e.detail)}` : '';
+            appendAssistantNotice(
+                `⚠️ Could not attach <strong>${escapeHtml(file.name)}</strong>.${why}<br>` +
+                `Please paste the relevant text into the chat instead.`);
+        }
+    } else {
+        // .doc — legacy binary format, no reader available
+        appendAssistantNotice(
+            `📄 <strong>${escapeHtml(file.name)}</strong> — the legacy <strong>.doc</strong> format can't be read. ` +
+            `Save it as <strong>.docx</strong> or PDF, or paste the text into the chat.`);
+    }
+}
+
 function handleFileAttachment() {
-    // Create hidden file input
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.txt,.csv,.pdf,.doc,.docx';
-    fileInput.multiple = false;
-    fileInput.style.display = 'none';
+    let fileInput = document.getElementById('fileUploadInput');
+    if (!fileInput) {
+        fileInput = document.createElement('input');
+        fileInput.id = 'fileUploadInput';
+        fileInput.type = 'file';
+        fileInput.accept = '.txt,.csv,.pdf,.doc,.docx';
+        fileInput.style.display = 'none';
+        document.body.appendChild(fileInput);
+    }
 
     fileInput.onchange = async (event) => {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        // Validate file size (max 5MB)
-        const maxSize = 5 * 1024 * 1024;
-        if (file.size > maxSize) {
-            showToast('File size must be less than 5MB', 'error');
-            return;
+        const file = event.target.files && event.target.files[0];
+        if (file) {
+            await processAndUploadFile(file);
         }
-
-        const ext = (file.name.split('.').pop() || '').toLowerCase();
-        const isReadable  = ['txt', 'csv', 'pdf', 'docx'].includes(ext);
-        const isLegacyDoc = ext === 'doc';
-
-        // Images and everything else are not accepted — the assistant has no
-        // vision and can only work from text.
-        if (!isReadable && !isLegacyDoc) {
-            showToast('Unsupported file type. Upload a .txt, .csv, PDF or .docx file.', 'error');
-            return;
-        }
-
-        const fileAnalysis = await analyzeFile(file);
-        showFilePreview(file, fileAnalysis);
-
-        if (isReadable) {
-            // Send the file to the backend, which extracts the text and keeps it
-            // for this chat session so every later question can use it.
-            showToast('Uploading file…', 'info');
-            try {
-                const result = await uploadFile(file);
-                const data = result && result.data;
-                if (data && data.supported === false) {
-                    appendAssistantNotice(`📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'not supported')}`);
-                } else if (data && data.extraction_status === 'no_extractable_text') {
-                    // A scan. There is no OCR and no vision here, so the file is
-                    // recorded but never answered from — say so instead of
-                    // letting the officer ask questions it cannot answer.
-                    appendAssistantNotice(
-                        `📄 <strong>${escapeHtml(file.name)}</strong> — ${escapeHtml(result.message || 'no readable text found')}`);
-                } else {
-                    const msg = (result && result.message) ||
-                        `"${file.name}" attached. Ask your question about it now.`;
-                    appendAssistantNotice(`📎 <strong>${escapeHtml(file.name)}</strong> attached.<br>${escapeHtml(msg)}`);
-                    setTimeout(() => {
-                        messageInput.value = `About ${file.name}: `;
-                        handleInputChange();
-                        messageInput.focus();
-                    }, 300);
-                }
-            } catch (e) {
-                const why = e && e.detail ? ` ${escapeHtml(e.detail)}` : '';
-                appendAssistantNotice(
-                    `⚠️ Could not attach <strong>${escapeHtml(file.name)}</strong>.${why}<br>` +
-                    `Please paste the relevant text into the chat instead.`);
-            }
-        } else {
-            // .doc — legacy binary format, no reader available
-            appendAssistantNotice(
-                `📄 <strong>${escapeHtml(file.name)}</strong> — the legacy <strong>.doc</strong> format can't be read. ` +
-                `Save it as <strong>.docx</strong> or PDF, or paste the text into the chat.`);
-        }
+        fileInput.value = '';
     };
 
-    document.body.appendChild(fileInput);
     fileInput.click();
-    setTimeout(() => { document.body.removeChild(fileInput); }, 1000);
 }
+
+window.uploadFileFromData = async function(fileName, textContent, mimeType = 'text/csv') {
+    const blob = new Blob([textContent], { type: mimeType });
+    const file = new File([blob], fileName, { type: mimeType });
+    return await processAndUploadFile(file);
+};
 
 // Phrases by which an officer points back at something discussed earlier. Kept
 // in step with _REFERENCE_PATTERNS in backend/services/chatbot.py, plus the

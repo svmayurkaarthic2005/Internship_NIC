@@ -4022,6 +4022,78 @@ def _is_register_wide_listing(message: str, prev_intent: Optional[str]) -> bool:
     return prev_intent == "all_service_code_applications" or bool(_LISTING_NOUN_RE.search(text))
 
 
+def _is_all_service_code_comparison(text: str) -> bool:
+    """True when the user asks a whole-catalog comparison, matrix, grouping, or
+    all-service similarities/differences question across the supported service codes."""
+    if not text:
+        return False
+    from backend.utils.helpers import find_service_codes
+    t = text.lower()
+
+    # If it specifies an application number or survey number, it's not a whole-catalog question
+    if extract_application_number(text) or extract_survey_number(text):
+        return False
+
+    # If two or more specific service codes are explicitly named, it's pairwise comparison, not whole catalog
+    codes = find_service_codes(text)
+    if len(codes) >= 2:
+        return False
+
+    # If it's asking for application counts across all codes (e.g. "how many applications across all service codes")
+    # that should remain an application calculation / listing
+    if re.search(r"\bhow\s+many\b|\bcount\b|\bnumber\s+of\s+applications\b|\bhow\s+much\b", t):
+        if not re.search(r"\b(?:matrix|compare|comparison|similarities|differences)\b", t):
+            return False
+
+    # 1. Direct whole-catalog compare: "compare all [supported] service codes / services"
+    if re.search(r"\bcompare\s+(?:all|every)(?:\s+supported)?\s+(?:service\s*codes?|services?)\b", t):
+        return True
+
+    # 2. Similarities / differences across all service codes
+    if re.search(r"\b(?:similarities|differences|similar|different)\s+(?:across|between|among|in|for|of)\s+(?:all|every)\s+(?:supported\s+)?(?:service\s*codes?|services?)\b", t):
+        return True
+    if re.search(r"\b(?:show|list|display|give|find|what\s+are)\s+(?:the\s+)?(?:similarities|differences)\s+(?:across|between|among|for|of)\s+(?:all|every)\s+(?:supported\s+)?(?:service\s*codes?|services?)\b", t):
+        return True
+
+    # 3. Grouping service codes: "group [the] service codes by common characteristics / ..."
+    if re.search(r"\bgroup\s+(?:the\s+)?(?:supported\s+)?(?:service\s+)?codes?\b", t):
+        return True
+
+    # 4. Codes with same / different requirements, workflows, fields
+    if re.search(r"\bwhich\s+(?:service\s+)?codes?\s+(?:have|share|follow)\s+(?:the\s+)?(?:same|different|common)\b", t):
+        return True
+    if re.search(r"\bwhich\s+(?:service\s+)?codes?\s+have\s+different\s+(?:workflows?|requirements?|processes?|rules?)\b", t):
+        return True
+    if re.search(r"\bwhich\s+(?:service\s+)?codes?\s+share\s+(?:the\s+)?same\s+application\s+fields?\b", t):
+        return True
+
+    # 5. Comparison matrix: "create a comparison matrix for every service code / across all service codes"
+    if re.search(r"\bcomparison\s+matrix\b", t):
+        return True
+    if re.search(r"\b(?:matrix|table)\s+comparing\s+all\s+(?:service\s*codes?|services?)\b", t):
+        return True
+
+    # 6. Attributes across all services / unique attributes
+    if re.search(r"\battributes?\s+(?:that\s+apply\s+to\s+all|common\s+to\s+all|shared\s+by\s+all|across\s+all)\s+services?\b", t):
+        return True
+    if re.search(r"\battributes?\s+unique\s+to\s+(?:individual|each)\s+services?\b", t):
+        return True
+    if re.search(r"\b(?:list|show|what\s+are)\s+(?:the\s+)?attributes\s+(?:that\s+apply\s+to\s+all\s+services|common\s+to\s+all\s+services?)\b", t):
+        return True
+
+    # 7. Missing documentation: "which service codes cannot be compared because documentation is missing"
+    if re.search(r"\b(?:which\s+)?(?:service\s+)?codes?\s+(?:cannot|can't)\s+be\s+compared\b", t):
+        return True
+    if re.search(r"\b(?:service\s+)?codes?\b", t) and re.search(r"\bdocumentation\s+is\s+missing\b", t):
+        return True
+
+    # 8. Tamil phrases
+    if re.search(r"அனைத்து\s+சேவை\s+குறியீடுகளையும்\s+ஒப்பிடு|அனைத்து\s+சேவை\s+குறியீடுகளின்\s+(?:ஒற்றுமை|வேறுபாடு)|ஒப்பீட்டு\s+அட்டவணை", t):
+        return True
+
+    return False
+
+
 def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False) -> str:
     """Route a message to an intent (see `_parse_intent_core`), then widen a
     generic application listing to every service code."""
@@ -4039,6 +4111,8 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     if (re.search(r"\bdifference[s]?\s+between\s+(?:service\s+codes?\s+)?0153\s+(?:and|&|vs\.?)\s+0154\b|\bdifference[s]?\s+between\s+0154\s+(?:and|&|vs\.?)\s+0153\b",
                   message or "", re.IGNORECASE) and not re.search(r"\bhow\s+many\b|\bcount\b|\bnumber\s+of\b|\bmore\b|\bfiles\b", message or "", re.IGNORECASE)):
         return "service_code_guide"      # the codes, spelled as numbers: still the definition, as for ISD / NISD
+    if _is_all_service_code_comparison(message):
+        return "all_service_code_comparison"
     # "what is in ward 081" is elliptical for "applications in ward 081" --
     # the v3 training data uses this exact bare phrasing repeatedly and always
     # expects the ward-scoped register listing (jurisdiction-checked). Rewritten
@@ -4538,7 +4612,9 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             and not re.search(r"\b(?:application\s+counts?|how\s+many\s+applications|more\s+applications)\b", msg)):
         return "service_code_lookup"
 
-    if prev_intent in ("service_code_lookup", "service_code_guide") and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg):
+    if (prev_intent in ("service_code_lookup", "service_code_guide")
+            and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
+            and not re.search(r"\b(?:files?|documents?|csv|uploaded|attachments?)\b|கோப்பு|ஆவணம்", msg, re.IGNORECASE)):
         if re.search(r"\b(?:similar\w*|common\w*|shared|diff\w*|differ\w*|same|identical|alike|resembl\w*|"
                      r"both|these\s+two|two\s+services?|them|properties|features?|workflows?|fields?|"
                      r"table|numbers?\s+only|data\s+only)\b|"

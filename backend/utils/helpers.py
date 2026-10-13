@@ -342,6 +342,76 @@ def _all_alias_codes(text: str) -> List[str]:
     return seen
 
 
+def _build_catalogue_service_phrases() -> Dict[str, List[str]]:
+    phrases_by_code: Dict[str, List[str]] = {}
+    for code, info in SIS_URBAN_SERVICES.items():
+        plist: List[str] = []
+        raw_name = info["name"].lower()
+        plist.append(raw_name)
+        if "/" in raw_name:
+            plist.append(raw_name.replace("/", " "))
+            plist.append(raw_name.replace("/", " / "))
+            for part in raw_name.split("/"):
+                p_clean = part.strip()
+                if len(p_clean) >= 4 and p_clean not in plist:
+                    plist.append(p_clean)
+        if "-" in raw_name:
+            plist.append(raw_name.replace("-", " "))
+            plist.append(raw_name.replace("-", ""))
+        if "(" in raw_name:
+            c_no_paren = re.sub(r"\(.*?\)", "", raw_name).strip()
+            if c_no_paren and c_no_paren not in plist:
+                plist.append(c_no_paren)
+        short = info.get("short", "").lower()
+        if short and len(short) >= 3 and short not in plist:
+            plist.append(short)
+        phrases_by_code[code] = plist
+
+    special_aliases = {
+        "0178": ["f-line", "f line", "fline"],
+        "0185": ["f-line appeal", "f line appeal", "fline appeal"],
+        "0164": ["ulc", "ulc land subdivision", "ulc subdivision"],
+        "0184": ["tsr", "tsr prep", "tsr preparation subdivision"],
+        "0153": ["nisd"],
+        "0154": ["isd"],
+    }
+    for code, aliases in special_aliases.items():
+        if code in phrases_by_code:
+            for a in aliases:
+                if a not in phrases_by_code[code]:
+                    phrases_by_code[code].append(a)
+    return phrases_by_code
+
+
+_CATALOGUE_SERVICE_PHRASES = _build_catalogue_service_phrases()
+
+
+def _all_catalogue_service_codes(text: str) -> List[str]:
+    """Resolves all non-overlapping service codes explicitly named by their
+    catalogue official names, aliases, or short codes."""
+    low = str(text or "").lower()
+    all_spans: List[Tuple[int, int, int, str]] = []  # (start, end, length, code)
+    for code, phrases in _CATALOGUE_SERVICE_PHRASES.items():
+        for phrase in phrases:
+            pattern = r'(?<![a-z0-9])' + re.escape(phrase) + r'(?![a-z0-9])'
+            for m in re.finditer(pattern, low):
+                all_spans.append((m.start(), m.end(), len(phrase), code))
+    all_spans.sort(key=lambda x: (x[0], -x[2]))
+    selected: List[Tuple[int, str]] = []
+    occupied: List[Tuple[int, int]] = []
+    for start, end, l, code in all_spans:
+        if any(not (end <= o_start or start >= o_end) for o_start, o_end in occupied):
+            continue
+        selected.append((start, code))
+        occupied.append((start, end))
+    selected.sort()
+    seen: List[str] = []
+    for _, code in selected:
+        if code not in seen:
+            seen.append(code)
+    return seen
+
+
 _SVC_NAME_INDEX = {
     code: _svc_name_keywords(info["name"])
     for code, info in SIS_URBAN_SERVICES.items()
@@ -418,31 +488,57 @@ def find_service_code_by_name(text: str) -> Optional[str]:
 
 def find_service_codes(text: str) -> List[str]:
     """Every urban service code named in a message, in order, without
-    duplicates. Falls back to a name match ("street master", "natham
-    settlement") when no digit code is present."""
+    duplicates. Resolves numeric codes, catalogue names/aliases, and comparative
+    clauses across all 29 urban services."""
     import re as _re
     found: List[str] = []
     for token in _re.findall(r'\b\d{3,4}\b', str(text or "")):
         code = normalize_service_code(token)
         if code and code not in found:
             found.append(code)
+    if len(found) >= 2:
+        return found
+
+    # Catalogue-aware multi-phrase resolution for all 29 services
+    cat_codes = _all_catalogue_service_codes(text)
+    if len(cat_codes) >= 2:
+        return cat_codes
+
     if not found:
-        alias_codes = _all_alias_codes(text)
-        if len(alias_codes) >= 2:
-            return alias_codes
-        by_name = find_service_code_by_name(text)
-        if by_name:
-            found.append(by_name)
-        elif alias_codes:
-            found.append(alias_codes[0])
-        if found and re.search(
-                r'\bdiffer\w*|\bcompa?r\w*|\bversus\b|\bvs\.?\b|\bboth\b|\btwo\b|\bsame\b|\bor\s+not\b|'
-                r'\bsimilar\w*|\bcommon\w*|\bshar\w*|\balike\b|\bresembl\w*|'
-                r'வேறுபா\w*|ஒப்பீ\w*|ஒற்றுமை\w*|பொதுவான\w*|ஒரே|வித்தியாச\w*',
-                text or "", re.IGNORECASE):
-            for alias_hit in alias_codes:
-                if alias_hit not in found:
-                    found.append(alias_hit)
+        if cat_codes:
+            found.extend(cat_codes)
+        else:
+            by_name = find_service_code_by_name(text)
+            if by_name:
+                found.append(by_name)
+            else:
+                alias_codes = _all_alias_codes(text)
+                if alias_codes:
+                    found.append(alias_codes[0])
+
+    # If comparison language is present and we still have fewer than 2 codes,
+    # evaluate candidate comparative clauses independently (typo/delimiter tolerance)
+    if len(found) < 2 and re.search(
+            r'\bdiffer\w*|\bcompa?r\w*|\bversus\b|\bvs\.?\b|\bboth\b|\btwo\b|\bsame\b|\bor\s+not\b|'
+            r'\bsimilar\w*|\bcommon\w*|\bshar\w*|\balike\b|\bresembl\w*|'
+            r'வேறுபா\w*|ஒப்பீ\w*|ஒற்றுமை\w*|பொதுவான\w*|ஒரே|வித்தியாச\w*',
+            text or "", re.IGNORECASE):
+        clauses = re.split(r'\s+(?:and|&|vs\.?|versus|to|அல்லது|மற்றும்|விட)\s+', text or "", flags=re.IGNORECASE)
+        if len(clauses) >= 2:
+            clause_codes: List[str] = []
+            for c_text in clauses:
+                c_clean = c_text.strip()
+                if not c_clean:
+                    continue
+                c_matches = _all_catalogue_service_codes(c_clean)
+                c_hit = c_matches[0] if c_matches else find_service_code_by_name(c_clean)
+                if c_hit and c_hit not in clause_codes:
+                    clause_codes.append(c_hit)
+            if len(clause_codes) >= 2:
+                return clause_codes
+            for cc in clause_codes:
+                if cc not in found:
+                    found.append(cc)
     return found
 
 
