@@ -854,6 +854,11 @@ _COMMON_SLIPS = {
 _HOW_MAY_RE = re.compile(r"\bhow\s+may\b(?!\s+(?:i|we)\b)", re.IGNORECASE)
 
 
+_FILE_MASK_RE = re.compile(
+    r"(?<![\w.-])[\w][\w.()-]{0,80}\.(?:txt|csv|pdf|docx|doc|xlsx|xls)\b",
+    re.IGNORECASE)
+
+
 @lru_cache(maxsize=2048)
 def _correct_typos(message: str) -> str:
     """The message with near-miss words rewritten to this module's vocabulary.
@@ -863,6 +868,23 @@ def _correct_typos(message: str) -> str:
     """
     if not message:
         return message
+
+    # Literal filenames must never be altered by dictionary spell-correction
+    # (FNAME-001: sis_svccode_fileA.csv was corrupted to sis_svccode_filed.csv).
+    file_matches = list(_FILE_MASK_RE.finditer(message))
+    file_placeholders = {}
+    if file_matches:
+        masked = []
+        last_idx = 0
+        for i, m in enumerate(file_matches):
+            masked.append(message[last_idx:m.start()])
+            ph = f"XFILEMASK_{i}_X"
+            file_placeholders[ph] = m.group(0)
+            masked.append(ph)
+            last_idx = m.end()
+        masked.append(message[last_idx:])
+        message = "".join(masked)
+
     message = _correct_tamil(message)
     # a slip in "field" in front of "visit(s)": "filed"/"fild"/"fied" are also words or ties, so the distance rule leaves them
     message = re.sub(r"\b(?:filed|fild|fied|feld|feild|fiel|fleid|fiedl)(?=\s+(?:visits?|inspections?)\b)", "field", message, flags=re.IGNORECASE)
@@ -875,6 +897,8 @@ def _correct_typos(message: str) -> str:
     def fix(m: "re.Match") -> str:
         token = m.group(0)
         low = token.lower()
+        if "xfilemask" in low:
+            return token
         if re.match(r"'[a-z]", m.string[m.end():m.end() + 2], re.IGNORECASE):
             return token   # "don't" / "isn't": the stem before the apostrophe is not a typo of "dont"
         # Already a cue, a protected common word, or a word the department's own
@@ -918,7 +942,11 @@ def _correct_typos(message: str) -> str:
             return token
         return hits[0][1]
 
-    return _ASCII_WORD_RE.sub(fix, message)
+    res = _ASCII_WORD_RE.sub(fix, message)
+    if file_placeholders:
+        for ph, orig in file_placeholders.items():
+            res = res.replace(ph, orig)
+    return res
 
 
 # Public name. `chatbot.py` keeps its own copy of the follow-up cues for the
@@ -1246,8 +1274,10 @@ _SLICE_COUNTS = {
     "இரண்டு": 2, "மூன்று": 3, "நான்கு": 4, "ஐந்து": 5,
 }
 _HEAD_WORDS = ("first", "top", "initial", "earliest", "mudhal", "முதல்")
+_RELATIVE_NEXT_WORDS = ("next", "following", "subsequent", "adutha", "அடுத்த")
+_TAIL_WORDS = ("last", "final", "bottom", "latest", "kadaisi", "கடைசி")
 _SLICE_RE = re.compile(
-    r"\b(first|top|initial|earliest|last|final|bottom|latest)\s+(?:the\s+)?"
+    r"\b(first|top|initial|earliest|last|final|bottom|latest|next|following|subsequent)\s+(?:the\s+)?"
     r"(\d{1,3}|two|three|four|five|six|seven|eight|nine|ten|couple|few)\b"
     # "last 7 days" / "last two weeks" / "first 3 months" name a period of time.
     r"(?!\s*(?:days?|weeks?|months?|years?|yrs?|hours?|minutes?|quarters?)\b)",
@@ -1256,8 +1286,15 @@ _SLICE_RE = re.compile(
 # Tamil / Tanglish put the count after the head word too, but Tamil is matched
 # as a substring (virama -- see _OWN_SUBJECT_RE).
 _SLICE_TA_RE = re.compile(
-    r"(முதல்|கடைசி)\s*(இரண்டு|மூன்று|நான்கு|ஐந்து|\d{1,3}(?![\d-]))"
-    r"|\b(mudhal|kadaisi)\s+(rendu|moonu|moondru|naalu|anju|\d{1,3})\b",
+    r"(முதல்|கடைசி|அடுத்த)\s*(இரண்டு|மூன்று|நான்கு|ஐந்து|\d{1,3}(?![\d-]))"
+    r"|\b(mudhal|kadaisi|adutha)\s+(rendu|moonu|moondru|naalu|anju|\d{1,3})\b",
+    re.IGNORECASE,
+)
+_REMAINING_ROWS_RE = re.compile(
+    r"\b(?:show\s+|give\s+|display\s+|list\s+)?(?:the\s+)?(?:remaining|rest)\s*(?:of\s+(?:the\s+)?(?:records|rows|applications|apps|them|these))?\b"
+    r"|\bshow\s+the\s+rest\b"
+    r"|\bmeethi\s*(?:rows?|records?|apps?)?\s*(?:kaatu|kudu)?\b"
+    r"|மீதமுள்ள(?:வற்றை|வற்றைக்\s*காட்டு|வை)?|மீதி\s*(?:வரிசைகள்|விவரங்கள்)?",
     re.IGNORECASE,
 )
 _BOTH_RE = re.compile(r"\bboth\b|இரண்டும்|\brendume\b", re.IGNORECASE)
@@ -1342,13 +1379,14 @@ def _alternate_row_pick(lowered: str, numbers: List[str]) -> Optional[List[str]]
     return None
 
 
-def slice_pick(message: str, numbers: List[str]) -> Optional[List[str]]:
+def slice_pick(message: str, numbers: List[str], offset: int = 0) -> Optional[List[str]]:
     """The contiguous run of listed rows the officer named, in the order shown.
 
     "the first two" -> rows 1-2, "last three" -> the final three, "both" -> the
-    whole list when it holds exactly two. Returns None when no run was named, or
-    when the count is 1 -- a single row is `ordinal_pick`'s job, and answering it
-    here would turn "the first one" into a list.
+    whole list when it holds exactly two. "next five" -> rows following current offset.
+    Returns None when no run was named, or when the count is 1 -- a single row is
+    `ordinal_pick`'s job, and answering it here would turn "the first one" into a list.
+    Returns [] when a relative slice advances past the end of the list.
     """
     if not numbers or not message:
         return None
@@ -1370,6 +1408,14 @@ def slice_pick(message: str, numbers: List[str]) -> Optional[List[str]]:
         # the aggregate branch gives -- and truncating to the first ten while
         # the officer asked for ALL would be a silently wrong answer.
         return list(numbers) if len(numbers) <= MAX_PER_ROW_ANSWER else None
+
+    # Remaining rows: "show the rest", "remaining records", "meethi rows kaatu", "show the remaining records"
+    if _REMAINING_ROWS_RE.search(lowered) or _REMAINING_ROWS_RE.search(message):
+        start = offset if offset > 0 else min(5, len(numbers))
+        if start >= len(numbers):
+            return []
+        rem = numbers[start:]
+        return list(rem[:MAX_PER_ROW_ANSWER])
 
     # Alternate rows, by the position each row was shown at.
     _alt = _alternate_row_pick(lowered, numbers)
@@ -1394,12 +1440,24 @@ def slice_pick(message: str, numbers: List[str]) -> Optional[List[str]]:
     count = min(count, len(numbers), MAX_PER_ROW_ANSWER)
     if count < 2:
         return None
-    return (list(numbers[:count]) if head in _HEAD_WORDS
-            else list(numbers[-count:]))
+
+    if head in _HEAD_WORDS:
+        return list(numbers[:count])
+    elif head in _TAIL_WORDS:
+        return list(numbers[-count:])
+    elif head in _RELATIVE_NEXT_WORDS:
+        start = offset
+        if start == 0:
+            start = count
+        if start >= len(numbers):
+            return []
+        end = min(len(numbers), start + count)
+        return list(numbers[start:end])
+    return None
 
 
 def mentions_slice(message: str) -> bool:
-    """True when the message names a RUN of rows ("the first two", "last three").
+    """True when the message names a RUN of rows ("the first two", "last three", "next five").
 
     Needed separately from `slice_pick` because `classify` runs before any list
     is in hand. "first two" already reached `resolve` on the strength of the
@@ -1413,6 +1471,7 @@ def mentions_slice(message: str) -> bool:
     lowered = message.lower()
     return bool(_SLICE_RE.search(lowered)
                 or _SLICE_TA_RE.search(message) or _SLICE_TA_RE.search(lowered)
+                or _REMAINING_ROWS_RE.search(lowered) or _REMAINING_ROWS_RE.search(message)
                 or _ALTERNATE_RE.search(lowered)
                 or _EVEN_ROWS_RE.search(lowered) or _ODD_ROWS_RE.search(lowered)
                 or ((_ALL_ROWS_RE.search(lowered) or _ALL_ROWS_RE.search(message))
@@ -3443,6 +3502,41 @@ def resolve(message: str,
         _dir = nav_direction(message)
         if _dir:
             _cur = (context.filters or {}).get("cursor")
+            # If bare "next" is asked over an application table without an active single-card cursor:
+            # advance the table pagination rather than picking row 1 as a single card!
+            if not _cur and context.entity == ENTITY_APPLICATION_LIST and re.fullmatch(
+                    r"^(?:and\s+|then\s+|now\s+|ok\s+)*(?:next|அடுத்தது)[?.!]*$",
+                    (message or "").strip(), re.IGNORECASE):
+                _offset = int((context.filters or {}).get("last_offset", 0))
+                _pg_size = int((context.filters or {}).get("page_size", 5))
+                _start = _offset if _offset > 0 else _pg_size
+                _end = min(len(numbers), _start + _pg_size)
+                if _start < len(numbers):
+                    _next_slice = numbers[_start:_end]
+                    if context.filters is not None:
+                        context.filters["last_offset"] = _end
+                        context.filters["page_size"] = _pg_size
+                    return Resolution(
+                        kind=FOLLOWUP_LIST_REFINE,
+                        application_numbers=_next_slice,
+                        entity=ENTITY_APPLICATION_LIST,
+                        status=refine["status"],
+                        application_type=refine["application_type"],
+                        submission_channel=refine["submission_channel"],
+                        status_excluded=refine.get("status_excluded"),
+                        type_excluded=refine.get("type_excluded"),
+                        context=context,
+                    )
+                else:
+                    return Resolution(
+                        kind=FOLLOWUP_LIST_REFINE,
+                        ambiguous=False,
+                        application_numbers=[],
+                        context=context,
+                        clarification=_clarify(
+                            f"All {len(numbers)} applications in this list have already been shown. No further records remain.",
+                            f"இந்தப் பட்டியலில் உள்ள அனைத்து {len(numbers)} விண்ணப்பங்களும் ஏற்கனவே காட்டப்பட்டுவிட்டன. கூடுதல் பதிவுகள் எதுவும் இல்லை.",
+                            language))
             if _cur in numbers:
                 _i = numbers.index(_cur) + (1 if _dir == "next" else -1)
             else:
@@ -3557,9 +3651,24 @@ def resolve(message: str,
                 type_excluded=refine.get("type_excluded"),
                 context=context,
             )
-        _run = slice_pick(message, numbers)
-        if _run and len(_run) > 1:
+        _offset = int((context.filters or {}).get("last_offset", 0)) if context else 0
+        _run = slice_pick(message, numbers, offset=_offset)
+        if _run is not None:
+            if len(_run) == 0:
+                return Resolution(
+                    kind=FOLLOWUP_LIST_REFINE,
+                    ambiguous=False,
+                    application_numbers=[],
+                    context=context,
+                    clarification=_clarify(
+                        f"All {len(numbers)} applications in this list have already been shown. No further records remain.",
+                        f"இந்தப் பட்டியலில் உள்ள அனைத்து {len(numbers)} விண்ணப்பங்களும் ஏற்கனவே காட்டப்பட்டுவிட்டன. கூடுதல் பதிவுகள் எதுவும் இல்லை.",
+                        language))
             _run_details = wants_full_details(message)
+            _new_offset = _offset + len(_run)
+            if context and context.filters is not None:
+                context.filters["last_offset"] = _new_offset
+                context.filters["page_size"] = len(_run)
             return Resolution(
                 kind=FOLLOWUP_LIST_FIELD if _run_details else FOLLOWUP_LIST_REFINE,
                 full_details=_run_details,

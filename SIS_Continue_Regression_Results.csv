@@ -1,0 +1,33 @@
+Test_ID,Category,Input_Message,Language,Continuation_Type,Preceding_Context,Expected_Behavior,Before_Fix_Behavior,After_Fix_Behavior,Status
+REG-CONT-001,Recall Interception,continue where we left off,en,Type 1,ISD Service Code Definition,Resume or expand ISD explanation,Verbatim echo of previous prompt ("Your previous message was..."),Contextual continuation unblocked; no echo,PASS
+REG-CONT-002,Recall Interception,let's continue,en,Type 1,ISD Service Code Definition,Resume conversation flow,Verbatim echo of previous prompt,Contextual continuation unblocked; no echo,PASS
+REG-CONT-003,Recall Interception,continue our conversation,en,Type 1,Pending Applications List,Resume application inquiry,Verbatim echo of previous prompt,Contextual continuation unblocked; no echo,PASS
+REG-CONT-004,Recall Interception,resume our conversation,en,Type 1,Field Visit Schedule,Resume visit schedule inquiry,Verbatim echo of previous prompt,Contextual continuation unblocked; no echo,PASS
+REG-CONT-005,Recall Interception,தொடர்ந்து பேசுவோம்,ta,Type 1,ISD Tamil Explanation,Resume Tamil discussion,Verbatim echo of previous prompt,Contextual continuation unblocked; no echo,PASS
+REG-CONT-006,Recall Interception,நிறுத்திய இடத்திலிருந்து,ta,Type 1,Survey Number Details,Resume Tamil survey details,Verbatim echo of previous prompt,Contextual continuation unblocked; no echo,PASS
+REG-CONT-007,Genuine Recall Preservation,what was my last question?,en,None,Any Previous Query,Recall previous question verbatim,Recalls previous question verbatim,Recalls previous question verbatim (preserved),PASS
+REG-CONT-008,Genuine Recall Preservation,நான் கடைசியாக என்ன கேட்டேன்?,ta,None,Any Previous Query,Recall previous Tamil question verbatim,Unrecognized / dropped to LLM fallback,Recalls previous question verbatim (preserved),PASS
+REG-CONT-009,Anti-Hallucination Gate,continue,en,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal ("I'm not sure what you mean..."),Domain tier recognizes context; unblocked,PASS
+REG-CONT-010,Anti-Hallucination Gate,continue?,en,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal,Domain tier recognizes context; unblocked,PASS
+REG-CONT-011,Anti-Hallucination Gate,go on,en,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal,Domain tier recognizes context; unblocked,PASS
+REG-CONT-012,Anti-Hallucination Gate,resume,en,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal,Domain tier recognizes context; unblocked,PASS
+REG-CONT-013,Anti-Hallucination Gate,thodaru,tanglish,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal,Domain tier recognizes context; unblocked,PASS
+REG-CONT-014,Anti-Hallucination Gate,தொடரவும்.,ta,Type 1,Single Application Status Card,Expand application details,Generic clarification refusal,Domain tier recognizes context; unblocked,PASS
+REG-CONT-015,Service Code Disambiguation,more details,en,Type 2,ISD (0154) Definition,Return complete 9-field service card,Prompted for missing application number,Keeps service_code_lookup and returns card,PASS
+REG-CONT-016,Service Code Disambiguation,innum vilakku,tanglish,Type 2,NISD (0153) Definition,Return complete service card in Tamil,Prompted for missing application number,Keeps service_code_lookup and returns card,PASS
+REG-CONT-017,Database List Pagination,next,en,Type 3,Application List (44 items),Advance to next page chunk of 5 records,Collapsed to single card or refused,Advances pagination window by 5 records,PASS
+REG-CONT-018,Relative Slice Resolution,next five,en,Type 3,Application List (items 1-5 on screen),Return items 6 through 10,Unrecognized slice; generic refusal,Calculates relative offset and returns items 6-10,PASS
+REG-CONT-019,Relative Slice Resolution,next 3,en,Type 3,Application List (items 1-10 on screen),Return items 11 through 13,Unrecognized slice; generic refusal,Calculates relative offset and returns items 11-13,PASS
+REG-CONT-020,Relative Slice Resolution,show the rest,en,Type 3,Application List (items 1-10 on screen),Return remaining items 11 through 25,Unrecognized slice; generic refusal,Resolves all remaining items up to list end,PASS
+REG-CONT-021,Relative Slice Resolution,show the remaining records,en,Type 3,Application List (items 1-15 on screen),Return remaining items 16 through 25,Unrecognized slice; generic refusal,Resolves all remaining 10 items,PASS
+REG-CONT-022,Pagination Termination,next,en,Type 3,Application List (all items shown),Graceful message that list is complete,Repeats row 1 or refuses ambiguously,Reports all items shown; no records remain,PASS
+REG-CONT-023,Workflow Progression,What comes next?,en,Type 4,SIS Field Inspection Stage,Explain Senior Draughtsman (SD) sketch,Hallucinated Tahsildar field visit,Maps to AFTER:sis -> SD workflow stage,PASS
+REG-CONT-024,Workflow Progression,what is the next step?,en,Type 4,Senior Draughtsman (SD) Stage,Explain Deputy Inspector (DIS) scrutiny,Hallucinated unrelated procedure,Maps to AFTER:sd -> DIS workflow stage,PASS
+REG-CONT-025,Workflow Progression,What comes next?,en,Type 4,Deputy Inspector (DIS) Stage,Explain Tahsildar approval,Hallucinated unrelated procedure,Maps to AFTER:dis -> Tahsildar stage,PASS
+REG-CONT-026,Workflow Clarification,What comes next?,en,Type 4,No Prior Workflow in Context,Ask whether ISD or NISD workflow is meant,Invented generic procedure,Returns CLARIFY_WORKFLOW prompt,PASS
+REG-CONT-027,Attachment Cursor Navigation,next row,en,Type 5,CSV Row 1 on Screen,Display Row 2 of uploaded CSV,Failed to find text in document,Relative cursor yields row 2 cleanly,PASS
+REG-CONT-028,Attachment Multi-row Slice,next 2 rows,en,Type 5,CSV Row 1 on Screen,Display Rows 2 and 3 of uploaded CSV,Failed to find text in document,Relative slice yields rows [2, 3],PASS
+REG-CONT-029,Attachment Continuation,continue,en,Type 5,CSV Row 3 on Screen,Display Row 4 of uploaded CSV,Failed to find text in document,Relative cursor yields row 4,PASS
+REG-CONT-030,Attachment Remainder,show the rest,en,Type 5,CSV Rows 1-2 on Screen (5 total),Display Rows 3, 4, 5 of uploaded CSV,Failed to find text in document,Relative slice yields rows [3, 4, 5],PASS
+REG-CONT-031,Attachment Positional Pre-emption,Show row 1,en,Type 5,Freshly Uploaded CSV,Display Row 1 of CSV,Pre-empted by orphan list follow-up guard,Bypasses orphan guard; renders CSV row 1,PASS
+REG-CONT-032,Empty Context Clarification,continue,en,Type 1,No Prior Session History,Clean clarification requesting topic,Fabricated previous discussion or error,Returns clean clarification requesting topic,PASS

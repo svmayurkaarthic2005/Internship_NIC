@@ -1,0 +1,36 @@
+suite,test_count,passed,failed,result,notes
+SIS_ServiceCode_FileDB_Regression_Tests/test_servicecode_alias_collision.py,3,3,0,PASS,"no DB/LLM; find_service_code_by_name() reordered to score before alias fallback"
+SIS_ServiceCode_FileDB_Regression_Tests/test_csv_plural_column_resolution.py,3,3,0,PASS,"no DB/LLM; resolve_column() allows a trailing 's' on the header match"
+SIS_ServiceCode_FileDB_Regression_Tests/test_fline_appeal_multicode_comparison.py,6,6,0,PASS,"new this pass; find_service_codes() detects both codes only under comparison language"
+test_servicecode_detail_followup.py,79,79,0,PASS,pre-existing suite; no regression
+test_servicecode_equal_treatment.py,45,45,0,PASS,pre-existing suite; no regression
+test_servicecode_explain_followup.py,19,19,0,PASS,pre-existing suite; no regression
+test_attachment_routing.py,6,6,0,PASS,pre-existing suite; no regression
+test_attachment_storage_safety.py,14,14,0,PASS,pre-existing suite; no regression
+SIS_Upload_Regression_Tests/test_csv_negation_gap.py,18,18,0,PASS,prior pass; no regression from the resolve_column() plural fix
+SIS_Upload_Regression_Tests/test_attachment_intent_routing_gap.py,12,12,0,PASS,prior pass; no regression
+SIS_Upload_Regression_Tests/test_attachment_enumeration_consistency.py,26,26,0,PASS,prior pass; no regression
+SIS_Upload_Regression_Tests/test_attachment_single_entity_completion.py,17,17,0,PASS,prior pass; no regression
+SIS_Upload_Regression_Tests/test_multidoc_conflict_gap.py,23,23,0,PASS,prior pass; no regression
+SIS_Upload_Regression_Tests/test_survey_subdivision_pairing.py,22,22,0,PASS,prior pass; no regression
+
+requirement_list_item,requirement,status,notes
+1,the exact 3-turn screenshot sequence reproduces as reported BEFORE any fix,PASS,"live UI, fresh conversation, sis_svccode_fileA.csv attached, 2026-10-13 ~16:09 -- all 3 turns failed exactly as described"
+2,F-Line Appeal (0185) is never silently treated as F-Line (0178),PASS,"live UI re-test after fix, both with and without an attachment active; 2 of 2 confirmations"
+3,a comparison follow-up explains BOTH terms rather than repeating one definition,PASS,"live UI: 'difference between...' and 'are they the same?' both name 0178 and 0185"
+4,uploaded-file service-code enumeration ('list all the service codes in this file') works after a prior service-code question,PASS,"live UI, exact ground-truth match (0154/0178/0158/0153/0154), with citation"
+5,the multi-file comparison symptom (CSVCOL-001b from the prior pass) is also fixed,PASS,"confirmed as a side effect of fix #4's root cause -- no separate code change needed, verified live"
+6,root cause is confirmed with traces/reproducible tests, not guessed,PASS,"all 3 confirmed defects (FLINEAPPEAL-001, ATTACH-INTERCEPT-001, CSVCOL-FLINE-001) traced to an exact function and line, each with a standalone no-DB/no-LLM regression test that fails on the pre-fix code and passes after"
+7,negation / 'I don't think so' handling around this flow,PARTIAL,"'Are they the same?' (a direct yes/no about the two codes) answered correctly with a clear verdict. A later 'I don't think they are the same.' sent after an UNRELATED intervening turn mis-resolved its antecedent (FLINE-NEGATION-001) -- observed, not fixed, out of this pass's 3-defect scope"
+8,session isolation and attachment-access restrictions unchanged,PASS,"no change made to attachment_store.py's ownership/session scoping; pre-existing test_attachment_storage_safety.py re-run clean (14/14)"
+9,no hardcoded service-code answers or fixture values introduced,PASS,"all 3 fixes are general-purpose function changes (alias ordering, column-boundary regex, comparison-language detection) with no fixture-specific or code-specific special-casing beyond the pre-existing, already-documented _SVC_NAME_ALIASES table"
+10,existing test suites continue to pass,PASS,"full sweep above, 223/223 across 10 pre-existing + 3 new suites, no regressions"
+
+live_ui_case,question,attachment_state,before_fix,after_fix,result
+Turn 1 (screenshot),What is F-Line Appeal?,sis_svccode_fileA.csv attached,"'I could not find this in the uploaded document.' [root cause: ATTACH-INTERCEPT-001, the question never reached service_code_lookup at all]","Service code 0185 = F-Line Appeal (F_LINE_APPEAL) -- TAMILNILAM urban service, field visit required. Files under it are held in your register.",PASS (live UI verified)
+Turn 1 (no attachment variant),What is F-Line Appeal?,none,"Service code 0178 = F-Line (Urban Demarcation)... [wrong code, root cause: FLINEAPPEAL-001]",Service code 0185 = F-Line Appeal (F_LINE_APPEAL)...,PASS (live UI verified)
+Turn 2 (screenshot),What is the difference between F-Line and F-Line Appeal?,sis_svccode_fileA.csv attached,'I could not find this in the uploaded document.',"Both codes' full descriptions, plus a verdict sentence naming the real distinction",PASS (live UI verified)
+Turn 3 (screenshot),List all the service codes in this file.,sis_svccode_fileA.csv attached,'I could not find this in the uploaded document.',"row 1: 0154 / row 2: 0178 / row 3: 0158 / row 4: 0153 / row 5: 0154 [sis_svccode_fileA.csv, rows 1-5] -- exact ground-truth match",PASS (live UI verified)
+Extra (Phase 3 shape),Are F-Line and F-Line Appeal the same?,sis_svccode_fileA.csv attached,n/a (untested in the prior pass),"No -- both codes explained, both different services",PASS (live UI verified)
+Extra (multi-file),Compare the service codes in both files.,"sis_svccode_fileA.csv, sis_svccode_fileB.csv both attached","File A WRONG (0178 dropped, 0154 tripled); File B correct -- ungrounded LLM narration","Deterministic table, both files exactly correct, never merged",PASS (live UI verified, side-effect fix)
+Extra (negation, out of scope),I don't think they are the same.,"2 CSVs attached, F-Line discussion 2 turns earlier","n/a (not tested before this pass, FLINE-NEGATION-001)","Resolved against the wrong antecedent (asked which FILE, not which code pair)",OBSERVED -- not fixed, out of this pass's 3-defect scope

@@ -3,7 +3,7 @@ Helper utilities and official TamilNilam Urban Schema / Service Codes / District
 Streamlined specifically for Sub Inspector Surveyors (SIS) in Urban jurisdictions.
 """
 from datetime import datetime, date
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
 import uuid
 
@@ -290,6 +290,7 @@ def _svc_name_keywords(name: str) -> frozenset:
 # (0156/0157/0165/0167/0170), so a bare "what is TSLR" is genuinely
 # ambiguous -- picking one of the five would be a guess, not a lookup.
 _SVC_NAME_ALIASES = {
+    "0185": ("f-line appeal", "f line appeal", "fline appeal"),
     "0178": ("f-line", "f line", "fline"),
     "0164": ("ulc",),
     "0184": ("tsr",),
@@ -298,11 +299,44 @@ _SVC_NAME_ALIASES = {
 
 def _svc_name_alias_match(text: str) -> Optional[str]:
     low = str(text or "").lower()
+    # Check aliases sorted by length descending so longer, more specific phrases
+    # ("f-line appeal") match before shorter substring aliases ("f-line").
+    all_aliases = []
     for code, aliases in _SVC_NAME_ALIASES.items():
         for alias in aliases:
-            if re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low):
-                return code
+            all_aliases.append((len(alias), alias, code))
+    all_aliases.sort(key=lambda x: x[0], reverse=True)
+    for _, alias, code in all_aliases:
+        if re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low):
+            return code
     return None
+
+
+def _all_alias_codes(text: str) -> List[str]:
+    """Every code with an alias present as a substring, in order of first
+    appearance -- unlike `_svc_name_alias_match()` (which returns only the
+    single longest/most-specific alias, "f-line appeal" over "f-line"), this
+    sees BOTH: "f-line" is still its own literal substring of "f-line
+    appeal" text, bounded on a real word ("f-line[SPACE]appeal"), so a
+    message that genuinely names both terms must not have the shorter one
+    hidden by the longer one winning the other function's single-best pick.
+    Used only by `find_service_codes()`'s comparison-language branch, never
+    as a replacement for `_svc_name_alias_match()`'s own single-best use in
+    `find_service_code_by_name()`."""
+    low = str(text or "").lower()
+    hits: List[Tuple[int, str]] = []  # (position, code)
+    for code, aliases in _SVC_NAME_ALIASES.items():
+        for alias in aliases:
+            m = re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low)
+            if m:
+                hits.append((m.start(), code))
+                break
+    hits.sort()
+    seen: List[str] = []
+    for _, code in hits:
+        if code not in seen:
+            seen.append(code)
+    return seen
 
 
 _SVC_NAME_INDEX = {
@@ -327,9 +361,6 @@ def find_service_code_by_name(text: str) -> Optional[str]:
     guessed, the same rule `followup_context._correct_typos` uses for an
     ambiguous spelling fix.
     """
-    alias_hit = _svc_name_alias_match(text)
-    if alias_hit:
-        return alias_hit
     from backend.utils.fuzzy import is_token_typo_match, is_qwerty_first_letter_typo
     tokens = re.findall(r"[a-z]{2,}", str(text or "").lower())
     if not tokens:
@@ -359,11 +390,27 @@ def find_service_code_by_name(text: str) -> Optional[str]:
         # a plain survey-number question has nothing to do with it.
         if (hits >= 2 and ratio >= 0.5) or (hits == 1 and len(keywords) == 1):
             scores[code] = (hits, ratio)
-    if not scores:
+    if scores:
+        best = max(scores.values())
+        winners = [c for c, s in scores.items() if s == best]
+        if len(winners) == 1:
+            return winners[0]
+        # A genuine tie on the real keyword scoring is refused outright
+        # (never falls through to the alias, which cannot resolve a tie
+        # either) -- same rule `followup_context._correct_typos` uses.
         return None
-    best = max(scores.values())
-    winners = [c for c, s in scores.items() if s == best]
-    return winners[0] if len(winners) == 1 else None
+    # The scoring above found nothing at all: this is the case
+    # `_SVC_NAME_ALIASES` exists for -- a colloquial abbreviation ("f-line",
+    # "ulc", "tsr") that is only ONE of its official name's several
+    # distinctive words, so it can never itself reach the 2-word/whole-name
+    # threshold above. Checked AFTER scoring, not before: "F-Line Appeal"
+    # scores a clean, unique win for 0185 on its own two distinctive words
+    # ("line", "appeal") and must never reach this fallback at all --
+    # checking the alias first unconditionally matched the substring
+    # "f-line" inside "F-Line Appeal" and returned 0178, silently discarding
+    # the real, more specific match. Confirmed live through the chatbot UI,
+    # 2026-10-13 (SIS_FLine_Appeal_Failure_Cases.jsonl).
+    return _svc_name_alias_match(text)
 
 
 def find_service_codes(text: str) -> List[str]:
@@ -380,6 +427,29 @@ def find_service_codes(text: str) -> List[str]:
         by_name = find_service_code_by_name(text)
         if by_name:
             found.append(by_name)
+        # "difference between F-Line and F-Line Appeal" names BOTH a
+        # colloquial abbreviation (0178) and a longer official name that
+        # happens to contain it (0185, the `by_name` winner above) -- a
+        # comparison question naming two real services must not collapse to
+        # one. `_svc_name_alias_match()` alone cannot surface this: it
+        # deliberately returns only the single longest/most-specific alias
+        # ("f-line appeal" over "f-line") for its OWN single-code callers, so
+        # `_all_alias_codes()` is used here instead -- it checks every alias
+        # independently and returns every code whose alias is genuinely
+        # present as its own bounded substring, "f-line" included even when
+        # "f-line appeal" also matches.
+        # Gated on actual comparison/pairing language: "what is F-Line
+        # Appeal?" alone still names only 0185 -- "f-line" there is a
+        # substring of "F-Line Appeal", not a second, separately-asked-about
+        # service, and must not silently grow into a two-code answer nobody
+        # asked for.
+        if found and re.search(
+                r'\bdifference\b|\bdiffer\b|\bcompare\b|\bcomparison\b|\bversus\b|\bvs\.?\b'
+                r'|\bboth\b|\btwo\b|\bsame\b|\bor\s+not\b',
+                text or "", re.IGNORECASE):
+            for alias_hit in _all_alias_codes(text):
+                if alias_hit not in found:
+                    found.append(alias_hit)
     return found
 
 
@@ -474,6 +544,36 @@ def describe_service_code(code: str, is_tamil: bool = False, brief: bool = False
         f"Files under {code} are held in your register with their status, stage, survey and workflow log; "
         f"field-visit scheduling and the overdue flag are tracked only for 0153 (NISD) / 0154 (ISD). "
         f"Ask \"how many {code} files\" or \"show my {code} applications\" to see them."
+    )
+
+
+def is_code_only_request(text: str) -> bool:
+    """True when user asks for code only without explanation (BREVITY-001)."""
+    t = str(text or "").lower()
+    return bool(
+        re.search(r"\b(?:code\s+only|codes\s+only|bare\s+code|just\s+(?:the\s+)?code)\b", t)
+        or re.search(r"\b(?:don'?t|dont|do\s+not)\s+explain\b.*\b(?:give|tell|show|list)\b.*\bcode\b", t)
+        or re.search(r"\b(?:don'?t|dont|do\s+not)\s+explain\s+(?:the\s+)?difference\b.*\blist\b.*\bcode", t)
+        or re.search(r"\bjust\s+give\s+me\s+the\s+.*\bcode\b", t)
+        or re.search(r"குறியீடு\s*மட்டும்|விளக்கம்\s*(?:வேண்டாம்|இன்றி)", t)
+    )
+
+
+def is_code_and_desc_request(text: str) -> bool:
+    """True when user asks for only service code and description (BREVITY-001)."""
+    t = str(text or "").lower()
+    return bool(
+        re.search(r"\b(?:only\s+(?:the\s+)?(?:service\s+)?code\s+and\s+description|code\s+and\s+description\s+only|code\s+and\s+name\s+only)\b", t)
+        or re.search(r"\bgive\s+only\s+(?:the\s+)?(?:service\s+)?code\s+and\s+description\b", t)
+    )
+
+
+def is_table_only_request(text: str) -> bool:
+    """True when user asks for table only without explanation (BREVITY-001)."""
+    t = str(text or "").lower()
+    return bool(
+        re.search(r"\b(?:table\s+only|only\s+(?:the\s+)?table|return\s+only\s+(?:the\s+)?table|as\s+a\s+table\s+only|tabular\s+only)\b", t)
+        or re.search(r"\b(?:no\s+explanation|don'?t\s+explain)\b.*\btable\b", t)
     )
 
 

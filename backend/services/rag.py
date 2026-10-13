@@ -4616,9 +4616,11 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     # the same request as "show details for <number>": route it to
     # application_status, where the gate resolves which application is meant and
     # the detail card is rendered from the database.
-    if _BARE_DETAILS_RE.fullmatch(msg.strip()) and prev_intent not in (
-            "survey_detail", "survey_owners", "ward_surveys", "block_surveys"):
-        return "application_status"
+    if _BARE_DETAILS_RE.fullmatch(msg.strip()):
+        if prev_intent in ("service_code_lookup", "service_code_guide"):
+            return prev_intent
+        if prev_intent not in ("survey_detail", "survey_owners", "ward_surveys", "block_surveys"):
+            return "application_status"
 
     # ── Document / file upload queries — catch before DB intent routing ──
     # Phrases that mean "I uploaded a file, help me with it" should never

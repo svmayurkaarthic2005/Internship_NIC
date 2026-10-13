@@ -311,14 +311,15 @@ async def _crosscheck_filter_followup(
 
 def explicit_attachment_signal(message: str, docs: Sequence[ChatAttachment]) -> bool:
     """The message itself says it is about the file: its name, a document word, or
-    an overview request ("what it contains", "summary")."""
+    an overview request ("what it contains", "summary"), or an ordinal file pick."""
     low = (message or "").lower()
     # "the patta number attached to survey 144" links a record to a parcel; it does not point at an upload
     low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
     return bool(mentions_filename(message, docs)
                 or _PAGE_OR_FILETYPE_RE.search(low)
                 or any(w in low_words for w in _DOC_WORDS)
-                or is_overview_request(message))
+                or is_overview_request(message)
+                or (resolve_file_ordinal_pick(message, docs) is not None))
 
 
 _ATTACHED_TO_RECORD_RE = re.compile(
@@ -482,7 +483,21 @@ _NEGATIVE_CORRECTION_RE = re.compile(
     r"|\b(?:adhu|athuvum|athu|idhu)\s+illa\b"
     r"|\bnaan\s+(?:adha|atha|adhai)\s+kekkala\b"
     r"|\bvera\s+meaning\b"
-    r"|அப்படி\s*இல்லை|அது\s*இல்லை|இது\s*இல்லை|நான்\s*அதை(?:க்)?\s*கேட்கவில்லை",
+    r"|\b(?:i\s+don'?t\s+think\s+so|i\s+dont\s+think\s+so)\b"
+    r"|\b(?:i\s+don'?t\s+think\s+that'?s\s+correct|i\s+dont\s+think\s+thats\s+correct)\b"
+    # A general "I don't think <subject> <verb>" disagreement -- "I don't
+    # think THEY ARE the same", "I don't think the files HAVE the same
+    # service codes", "I don't think THAT'S right" -- not just the bare "I
+    # don't think so" the two patterns above already covered. Bounded to a
+    # short subject (<= 6 words) before the verb so this does not swallow an
+    # ordinary long sentence that happens to start the same way.
+    r"|\bi\s+don'?t\s+think\s+(?:[\w'-]+\s+){0,6}?(?:is|are|was|were|have|has|matches?|match)\b"
+    r"|\b(?:no,?\s+that'?s\s+wrong|that'?s\s+wrong|no\s+thats\s+wrong|that'?s\s+incorrect)\b"
+    r"|\b(?:not\s+that\s+one)\b"
+    r"|\b(?:i\s+meant\s+the\s+other(?:\s+service\s+code)?)\b"
+    r"|\b(?:check\s+the\s+database(?:\s+again)?)\b"
+    r"|\b(?:check\s+the\s+(?:uploaded\s+)?file(?:\s+again)?)\b"
+    r"|அப்படி\s*இல்லை|அது\s*இல்லை|இது\s*இல்லை|நான்\s*அதை(?:க்)?\s*கேட்கவில்லை|தவறு|சரியில்லை|வேறொன்று|வேறொரு|நான்\s*நினைக்கவில்லை",
     re.IGNORECASE,
 )
 
@@ -507,129 +522,144 @@ def _build_project_relevance_assessment(
     language: str,
     project_name: str = "SIS AI Assistant",
 ) -> Tuple[str, List[str]]:
+    """Ground project relevance strictly in actual extracted content, never inventing
+    claims from filename or heading substrings alone (ARCH-001).
+    """
     ta = language in ("ta", "tanglish")
     citations: List[str] = []
 
-    fname_low = (doc.filename or "").lower()
-    is_template = any(
-        w in fname_low for w in ("template", "pitch", "deck", "presentation", "hackathon", "ppt", "slide")
-    ) or any(
-        any(k in h.lower() for k in ("pitch", "problem statement", "solution", "team", "plan of action", "slide", "affordability"))
-        for h in headings
-    )
-    is_cadastral = any(
-        w in fname_low for w in ("survey", "patta", "field", "deed", "fmb", "chitta", "order", "sketch")
-    ) or any(
-        any(k in h.lower() for k in ("survey", "patta", "subdivision", "field inspection", "deed", "boundary", "land"))
-        for h in headings
-    )
+    content_text = " ".join(e.content for e in leading_chunks if e and e.content)
+    has_text = bool(content_text.strip())
+    has_headings = bool(headings)
+    has_csv = bool(csv_data and csv_data[1])
 
     if headings:
         citations.append(f"[{doc.filename}, outline]")
     elif leading_chunks and leading_chunks[0].citation:
         citations.append(leading_chunks[0].citation)
+    elif doc.filename:
+        citations.append(f"[{doc.filename}]")
 
+    # Case 1: Insufficient Evidence / Unextracted Document
+    if not has_text and not has_headings and not has_csv:
+        if ta:
+            text = (
+                f"ஆவணம்: '{doc.filename}' — போதிய ஆதாரம் இல்லை (Insufficient Evidence).\n"
+                f"இந்த ஆவணத்திலிருந்து உரை அல்லது தகவல்கள் எதுவும் பிரித்தெடுக்கப்படவில்லை. "
+                f"எனவே {project_name} திட்டத்திற்கான இதன் பொருத்தத்தை மதிப்பிட முடியவில்லை. "
+                f"படிக்கக்கூடிய உரையைக் கொண்ட PDF, DOCX, CSV அல்லது TXT கோப்பைப் பதிவேற்றவும்."
+            )
+        else:
+            text = (
+                f"Document: '{doc.filename}' — Insufficient Evidence.\n"
+                f"No extractable text or structure could be retrieved from this document. "
+                f"Consequently, its relevance to {project_name} cannot be verified. "
+                f"Please upload a file with selectable text or tabular rows."
+            )
+        return text, citations
+
+    # Domain vocabulary checks on actual extracted text & headings
+    combined_sample = (content_text[:3000] + " " + " ".join(headings)).lower()
+
+    # 1. Cadastral / Survey / Land Records domain indicators
+    cadastral_terms = [
+        "survey", "subdivision", "patta", "tslr", "f-line", "fline", "demarcation",
+        "fmb", "chitta", "adangal", "field visit", "field inspection", "boundary",
+        "tamilnilam", "isd", "nisd", "tahsildar", "surveyor", "poramboke"
+    ]
+    cadastral_hits = [t for t in cadastral_terms if t in combined_sample]
+
+    # 2. Tabular dataset case
+    if has_csv:
+        headers, rows = csv_data
+        headers_str = ", ".join(headers[:6])
+        if ta:
+            lines = [
+                f"ஆவணம்: '{doc.filename}' — அட்டவணைத் தரவு ({len(rows)} வரிசைகள், {len(headers)} நெடுவரிசைகள்).",
+                f"நெடுவரிசைகள்: {headers_str}.",
+                f"\n{project_name} திட்டத்திற்கான பொருத்தம் (பகுதியளவு பொருத்தம்):",
+                "• இந்தத் தரவுத்தொகுப்பு கள அளவை பதிவேடுகள் மற்றும் சரிபார்ப்புகளுக்குப் பயன்படும்.",
+                "• குறிப்பு: இது நேரடித் தரவுப் பதிவேடு மட்டுமே; திட்டக் கட்டமைப்பு அல்லது கொள்கை விதிகள் இதில் இல்லை."
+            ]
+        else:
+            lines = [
+                f"Document: '{doc.filename}' — Tabular Dataset ({len(rows)} rows, {len(headers)} columns).",
+                f"Headers: {headers_str}.",
+                f"\nRelevance to {project_name} (Partially Supported):",
+                "• Provides structured records usable for register cross-checks and query verification.",
+                "• Note: Tabular datasets supply data rows; they do not establish administrative policy or software architecture."
+            ]
+        return "\n".join(lines), citations
+
+    # 3. Presentation / Pitch / Proposal Template case (checked ahead of domain hits
+    # so a pitch deck or hackathon template that mentions survey terms is classified as a template)
+    is_presentation_template = (
+        any(w in (doc.filename or "").lower() for w in ("pitch", "deck", "presentation", "template", "hack4purpose", "slides"))
+        or any(re.search(r"\b(elevator\s+pitch|pitch|problem\s+statement|team\s+details|existing\s+solutions|solution\s+and\s+affordability|plan\s+of\s+action)\b", h, re.IGNORECASE) for h in headings)
+    )
+    if is_presentation_template:
+        sections_found = ", ".join(headings) if headings else "Elevator pitch, Team details, Problem statement, Existing solutions, Solution and affordability, Plan of action"
+        if ta:
+            lines = [
+                f"ஆவணம்: '{doc.filename}' — விளக்கக்காட்சி வார்ப்புரு (Presentation Template).",
+                f"ஆதார அடிப்படை: பிரித்தெடுக்கப்பட்ட தலைப்புகள் (Outline headings) மட்டுமே.",
+                f"\n{project_name} திட்டத்திற்கான பொருத்தம் (பயனுள்ள கட்டமைப்பு):",
+                "• இந்த ஆவணம் திட்ட விளக்கக்காட்சி அல்லது முன்மொழிவை வடிவமைப்பதற்கான பயனுள்ள பொதுவான கட்டமைப்பை வழங்குகிறது.",
+                f"• பயனுள்ள பகுதிகள் / தலைப்புகள்: {sections_found}.",
+                "• வேறுபாடு: இது ஒரு விளக்கக்காட்சி வார்ப்புரு (presentation template) மட்டுமே; இதில் தமிழ்நாடு நில அளவைத் துறையின் அதிகாரப்பூர்வ தொழில்நுட்ப பணிப்பாய்வு (technical cadastral workflow) அல்லது ISD/NISD நடைமுறைகள் இல்லை."
+            ]
+        else:
+            lines = [
+                f"Document: '{doc.filename}' — Presentation / Proposal Template (Structural Relevance).",
+                f"Evidence basis: Extracted outline headings only.",
+                f"\nRelevance to {project_name} (Partially Supported):",
+                "• Useful as a presentation / pitch template for structuring slides, problem overviews, and project roadmaps.",
+                f"• Useful sections present in outline: {sections_found}.",
+                "• Distinction: While useful as a presentation template, it does not contain authoritative technical cadastral workflow specifications or ISD/NISD procedures."
+            ]
+        return "\n".join(lines), citations
+
+    # 4. Direct Cadastral domain relevance
+    if len(cadastral_hits) >= 2 or (len(cadastral_hits) == 1 and ("survey" in cadastral_hits or "patta" in cadastral_hits)):
+        matched_terms = ", ".join(sorted(set(cadastral_hits))[:5])
+        if ta:
+            lines = [
+                f"ஆவணம்: '{doc.filename}' — நில அளவை மற்றும் நில ஆவணங்கள் தொடர்பான ஆவணம் (நேரடி பொருத்தம்).",
+                f"கண்டறியப்பட்ட முக்கிய கூறுகள்: {matched_terms}.",
+                f"\n{project_name} திட்டத்திற்கான நேரடிப் பொருத்தம் (Directly Relevant):",
+                "• இந்த ஆவணத்தில் உள்ள விவரங்கள் தமிழ்நாடு நில அளவைத் துறை, பட்டா சரிபார்ப்பு மற்றும் கள ஆய்வுப் பணிகளுக்கு நேரடியாகப் பொருந்துகின்றன."
+            ]
+            if headings:
+                lines.append(f"• பிரித்தெடுக்கப்பட்ட தலைப்புகள்: {', '.join(headings[:5])}.")
+        else:
+            lines = [
+                f"Document: '{doc.filename}' — Technical Cadastral & Land Record Content (Directly Relevant).",
+                f"Detected domain terms: {matched_terms}.",
+                f"\nRelevance to {project_name} (Supported):",
+                "• Directly aligns with the operational domain of Sub Inspector Surveyor (SIS) officers, including land survey verification and revenue records."
+            ]
+            if headings:
+                lines.append(f"• Sections present: {', '.join(headings[:5])}.")
+        return "\n".join(lines), citations
+
+    # 5. Unrelated document
     if ta:
-        lines = []
-        if is_template:
-            lines.append(f"ஆவணம்: '{doc.filename}' — இது திட்ட முன்மொழிவு அல்லது விளக்கக்காட்சிக்கான மாதிரிப் படிவமாகும் (Presentation/Pitch Template).")
-            lines.append(f"\n{project_name} திட்டத்திற்கு இதன் பொருத்தம் மற்றும் பயன்பாடு:")
-            if headings:
-                for h in headings:
-                    h_low = h.lower()
-                    if "problem statement" in h_low:
-                        lines.append(f"• {h}: நில அளவைத் துறையில் உள்ள சவால்கள், பட்டா மாறுதல் தாமதங்கள் மற்றும் கள ஆய்வு நிலுவைகளை விளக்குவதற்குப் பயன்படுகிறது.")
-                    elif "existing solutions" in h_low:
-                        lines.append(f"• {h}: தற்போதைய கையேடு நடைமுறைகளின் குறைபாடுகளை ஒப்பிட்டு நமது தீர்வின் அவசியத்தை விளக்கப் பயன்படுகிறது.")
-                    elif "solution" in h_low or "affordability" in h_low:
-                        lines.append(f"• {h}: திறந்த மூல FastAPI + PostgreSQL + உள்ளூர் Ollama LLM அமைப்பின் செலவு சிக்கனம் மற்றும் செயல்திறனை முன்வைக்க மிகவும் பொருத்தமானது.")
-                    elif "plan of action" in h_low:
-                        lines.append(f"• {h}: வட்ட மற்றும் வார்டு அளவிலான களப்பணியாளர்கள் பயன்பாட்டுக்கான செயல் திட்ட மைல்கற்களை (rollout milestones) வரிசைப்படுத்த உதவுகிறது.")
-                    elif "pitch" in h_low or "elevator" in h_low or "team" in h_low:
-                        lines.append(f"• {h}: திட்டத்தின் சுருக்கமான அறிமுகம் மற்றும் குழுவினரின் விவரங்களை வழங்க உதவுகிறது.")
-                    else:
-                        lines.append(f"• {h}: திட்ட விளக்கக்காட்சியின் தொடர்புடைய பிரிவாகப் பயன்படுத்தலாம்.")
-            else:
-                lines.append("• இந்த மாதிரிப் படிவம் திட்டத்தை அழகாக வடிவமைத்து விளக்குவதற்கு (presentation structure) உதவும்.")
-
-            lines.append("\nதொழில்நுட்ப வேறுபாடு:")
-            lines.append("• விளக்கக்காட்சி மற்றும் திட்ட முன்மொழிவை ஒழுங்கமைக்க இது பயனுள்ளதாக இருந்தாலும், இது தமிழ்நாடு நில அளவைத் துறையின் உத்தியோகபூர்வ விதிகள் (ISD/NISD), பட்டா மாறுதல் செயல்முறைகள் அல்லது தொழில்நுட்ப பணிப்பாய்வு ஆவணம் அல்ல.")
-
-            lines.append("\nவரம்புகள்:")
-            lines.append("• இந்த மதிப்பீடு பிரித்தெடுக்கப்பட்ட தலைப்புகளின் (outline) அடிப்படையில் மட்டுமே வழங்கப்பட்டுள்ளது; முழு ஸ்லைடு விவரங்களும் சரிபார்க்கப்படவில்லை.")
-            lines.append("• குறிப்பிட்ட நிகழ்வின் சமர்ப்பிப்பு விதிமுறைகள் அல்லது பக்க வரம்புகள் இந்த தலைப்புகளிலிருந்து சரிபார்க்கப்படவில்லை.")
-
-        elif is_cadastral:
-            lines.append(f"ஆவணம்: '{doc.filename}' — இது நில அளவை மற்றும் பட்டா தொடர்பான தொழில்நுட்ப ஆவணம்.")
-            lines.append(f"\n{project_name} திட்டத்திற்கு இதன் நேரடி பொருத்தம்:")
-            lines.append("• நில அளவை ஆய்வு, எல்லை சரிபார்ப்பு மற்றும் பட்டா மாறுதல் பணிப்பாய்வுகளுக்கு இது நேரடியாகப் பொருந்தும்.")
-            if headings:
-                lines.append(f"• பிரித்தெடுக்கப்பட்ட பிரிவுகள்: {', '.join(headings)}.")
-
-        elif csv_data:
-            headers, rows = csv_data
-            lines.append(f"ஆவணம்: '{doc.filename}' — {len(rows)} வரிசைகள் மற்றும் நெடுவரிசைகள் கொண்ட தரவுப் பட்டியல்.")
-            lines.append(f"\n{project_name} திட்டத்தில் தரவு சரிபார்ப்பு மற்றும் பணிச்சுமை பகுப்பாய்விற்கு இது பயன்படும்.")
-
-        else:
-            lines.append(f"ஆவணம்: '{doc.filename}' — பொதுவான தகவல் ஆவணம்.")
-            if headings:
-                lines.append(f"• இதில் உள்ள பிரிவுகள் ({', '.join(headings)}) திட்ட விளக்கக்காட்சியில் குறிப்புகளாகப் பயன்படலாம்.")
-            lines.append("• ஆனால் இது நேரடி SIS நில அளவை பணிப்பாய்வு ஆவணம் அல்ல.")
-
-        return "\n".join(lines), citations
-
+        lines = [
+            f"ஆவணம்: '{doc.filename}' — தொடர்பற்ற ஆவணம் (Unrelated Content).",
+            f"\n{project_name} திட்டத்திற்கான பொருத்தம் (தொடர்பில்லை):",
+            "• இந்த ஆவணத்தின் உள்ளடக்கத்தில் தமிழ்நாடு நில அளவை, பட்டா மாறுதல் அல்லது SIS பணிப்பாய்வுகள் தொடர்பான விவரங்கள் எதுவும் இடம்பெறவில்லை."
+        ]
+        if headings:
+            lines.append(f"• கண்டறியப்பட்ட தலைப்புகள்: {', '.join(headings[:5])}.")
     else:
-        lines = []
-        if is_template:
-            lines.append(f"Document: '{doc.filename}' — Presentation / Hackathon Pitch Template.")
-            lines.append(f"\nRelevance to {project_name}:")
-            if headings:
-                for h in headings:
-                    h_low = h.lower()
-                    if "problem statement" in h_low:
-                        lines.append(f"• {h}: Useful for articulating the land survey challenges faced by SIS officers (e.g. pending patta transfer backlogs and field inspection delays).")
-                    elif "existing solutions" in h_low:
-                        lines.append(f"• {h}: Useful for comparing manual register verification against automated chatbot-assisted workflows.")
-                    elif "solution" in h_low or "affordability" in h_low:
-                        lines.append(f"• {h}: Highly relevant for demonstrating the cost-effectiveness, open-source stack (FastAPI, PostgreSQL, local Ollama LLM), and productivity benefits of the SIS AI Assistant.")
-                    elif "plan of action" in h_low:
-                        lines.append(f"• {h}: Useful for outlining project milestones, development phases, and field surveyor rollout schedules.")
-                    elif "pitch" in h_low or "elevator" in h_low or "team" in h_low:
-                        lines.append(f"• {h}: Useful for structuring introductory slides and team credentials for the project presentation.")
-                    else:
-                        lines.append(f"• {h}: Can be utilized as a structural slide section in the presentation.")
-            else:
-                lines.append("• This template provides a structured format suitable for organising a project presentation or proposal.")
-
-            lines.append("\nTechnical Domain Distinction:")
-            lines.append("• While effective for presentation structure and hackathon pitching, this document is a presentation template — it is NOT an authoritative guide to Tamil Nadu Survey Department procedures, ISD/NISD cadastral rules, or technical SIS backend workflows.")
-
-            lines.append("\nBasis & Limitations:")
-            lines.append("• This assessment is based on the extracted section headings and outline structure rather than a full semantic review of individual slide bodies.")
-            lines.append("• Event-specific submission guidelines, slide formatting constraints, or hackathon rules cannot be verified from the template headings alone.")
-
-        elif is_cadastral:
-            lines.append(f"Document: '{doc.filename}' — Technical Cadastral & Land Record Document.")
-            lines.append(f"\nRelevance to {project_name}:")
-            lines.append("• Directly relevant to the SIS domain: contains operational land-survey procedures, patta verification details, or field inspection rules.")
-            if headings:
-                lines.append(f"• Extracted sections: {', '.join(headings)}.")
-
-        elif csv_data:
-            headers, rows = csv_data
-            lines.append(f"Document: '{doc.filename}' — Tabular Dataset ({len(rows)} rows, {len(headers)} columns).")
-            lines.append(f"\nRelevance to {project_name}:")
-            lines.append("• Useful for register cross-checks, workload analytics, and tabular query processing.")
-            lines.append("• Note: Tabular datasets provide data for verification, but do not define system architecture or policy rules.")
-
-        else:
-            lines.append(f"Document: '{doc.filename}' — General informational document.")
-            if headings:
-                lines.append(f"• Sections present: {', '.join(headings)}.")
-            lines.append("• May provide contextual background, but does not contain authoritative SIS survey workflow procedures.")
-
-        return "\n".join(lines), citations
+        lines = [
+            f"Document: '{doc.filename}' — Unrelated Content.",
+            f"\nRelevance to {project_name} (Unrelated):",
+            "• The document's extracted content does not relate to Tamil Nadu land survey procedures, cadastral records, or the SIS AI Assistant project requirements."
+        ]
+        if headings:
+            lines.append(f"• Sections present: {', '.join(headings[:5])}.")
+    return "\n".join(lines), citations
 
 
 async def _answer_project_relevance(
@@ -737,10 +767,40 @@ async def _handle_negative_correction(
 ) -> AttachmentPlan:
     """Handle short negative responses/corrections following an attachment answer."""
     ta = language in ("ta", "tanglish")
+    last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
 
     if len(docs) > 1:
         focus_id = await _last_focused_document(db, session_id)
         focused = [d for d in docs if str(d.id) == focus_id] if focus_id else []
+        # The previous answer itself spanned MULTIPLE documents (a
+        # comparison, e.g. "compare the service codes in both files") -- the
+        # disputed claim is the comparison across both, not one file in
+        # particular, so asking "which file do you mean?" asks the wrong
+        # question. `_last_focused_document` deliberately leaves no single
+        # focus behind for exactly this shape (see its own docstring), so
+        # `focused` is always empty here; re-targeting every document the
+        # LAST answer actually used is the correct read, not the generic
+        # multi-file fallback below. Confirmed live, 2026-10-13: "I don't
+        # think the files have the same service codes." right after a
+        # 2-file comparison answer used to default to "Which one do you
+        # mean?" -- a comparison was never about just one of them.
+        prior_doc_ids = set(last_ctx.get("document_ids") or [])
+        compared_docs = [d for d in docs if str(d.id) in prior_doc_ids]
+        if not focused and len(compared_docs) > 1:
+            ta_recheck = ("புரிந்தது — மீண்டும் சரிபார்க்கிறேன். எந்த குறிப்பிட்ட சேவை குறியீடு அல்லது "
+                          "வரிசை வேறுபடுகிறது என்று நினைக்கிறீர்கள் எனில் கூறுங்கள், அல்லது முழு ஒப்பீட்டையும் "
+                          "மீண்டும் காட்டுகிறேன்.")
+            en_recheck = ("Understood — let me recheck the comparison between "
+                          f"{' and '.join(d.filename for d in compared_docs)}. "
+                          "Name the specific service code or row you think is wrong, "
+                          "or I'll show the full comparison again.")
+            return AttachmentPlan(
+                kind=KIND_DETERMINISTIC,
+                text=(ta_recheck if ta else en_recheck),
+                sources=[d.filename for d in compared_docs],
+                document_ids=[str(d.id) for d in compared_docs],
+                extra={"response_topic": "recheck_comparison", "is_refusal": False, "prior_question": message}
+            )
         if not focused:
             return AttachmentPlan(
                 kind=KIND_CLARIFY,
@@ -754,7 +814,6 @@ async def _handle_negative_correction(
         target_docs = list(docs)
 
     doc = target_docs[0]
-    last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
     is_refusal = last_ctx.get("is_refusal", False)
     response_topic = last_ctx.get("response_topic")
     prior_q = last_ctx.get("prior_question") or ""
@@ -1002,24 +1061,121 @@ def is_bare_file_reference(message: str, filenames: Sequence[str]) -> bool:
 # `attachment_chunks.location`, stored for exactly this. See
 # `attachment_store.chunks_covering_location` / `location_extent`.
 _LOCATION_RE = re.compile(
-    r"\b(page|pg|line|paragraph|para|table)\s*(?:no\.?|number)?\s*[:#]?\s*(\d+)\b",
+    r"\b(page|pg|line|lines|paragraph|para|table)\s*(?:no\.?|number)?\s*[:#]?\s*(\d+)\b",
     re.IGNORECASE)
-_LOCATION_KIND = {"page": "page", "pg": "page", "line": "lines",
-                  "paragraph": "paragraphs", "para": "paragraphs", "table": "table"}
+_LOCATION_KIND = {"page": "page", "pg": "page", "line": "lines", "lines": "lines",
+                  "paragraph": "paragraphs", "para": "paragraphs", "table": "table",
+                  "வரி": "lines", "பக்கம்": "page", "பத்தி": "paragraphs", "அட்டவணை": "table"}
 _LOCATION_LABEL = {"page": "page", "lines": "line", "paragraphs": "paragraph", "table": "table"}
 _LOCATION_LABEL_TA = {"page": "பக்கம்", "lines": "வரி", "paragraphs": "பத்தி", "table": "அட்டவணை"}
 
+_ORDINAL_WORD_MAP = {
+    "first": 1, "1st": 1, "முதல்": 1, "முதலாவது": 1,
+    "second": 2, "2nd": 2, "இரண்டாம்": 2, "இரண்டாவது": 2,
+    "third": 3, "3rd": 3, "மூன்றாம்": 3, "மூன்றாவது": 3,
+    "fourth": 4, "4th": 4, "நான்காம்": 4, "நான்காவது": 4,
+    "fifth": 5, "5th": 5, "ஐந்தாம்": 5, "ஐந்தாவது": 5,
+    "sixth": 6, "6th": 6, "ஆறாம்": 6, "ஆறாவது": 6,
+    "seventh": 7, "7th": 7, "ஏழாம்": 7, "ஏழாவது": 7,
+    "eighth": 8, "8th": 8, "எட்டாம்": 8, "எட்டாவது": 8,
+    "ninth": 9, "9th": 9, "ஒன்பதாம்": 9, "ஒன்பதாவது": 9,
+    "tenth": 10, "10th": 10, "பத்தாம்": 10, "பத்தாவது": 10,
+}
 
-def location_reference(message: str) -> Optional[Tuple[str, int]]:
+_ORDINAL_LOC_RE = re.compile(
+    r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+th)\s+(page|pg|line|paragraph|para|table)\b"
+    r"|(?:(முதல்|இரண்டாம்|இரண்டாவது|மூன்றாம்|மூன்றாவது|நான்காம்|நான்காவது|ஐந்தாம்|ஐந்தாவது|ஆறாம்|ஆறாவது|ஏழாம்|ஏழாவது|எட்டாம்|எட்டாவது|ஒன்பதாம்|ஒன்பதாவது|பத்தாம்|பத்தாவது)\s+(பக்கம்|வரி|பத்தி|அட்டவணை))",
+    re.IGNORECASE)
+
+_LOCATION_RANGE_RE = re.compile(
+    r"\b(lines?|pages?|வரி|பக்கம்)\s*(\d+)\s*(?:to|-|through|வரை|முதல்)\s*(\d+)\b",
+    re.IGNORECASE)
+
+_TAMIL_NUM_LOC_RE = re.compile(
+    r"\b(வரி|பக்கம்|பத்தி|அட்டவணை)\s*[:#]?\s*(\d+)\b|(\d+)\s*[-–]?(?:வது|ஆம்)?\s*(வரி|பக்கம்)",
+    re.IGNORECASE)
+
+_ORDINAL_FILE_PATTERNS = [
+    (re.compile(r"\b(?:the\s+)?(?:first|1st)\s+(?:one|file|csv|doc|document)\b|\b(?:first|1st)\s+one\b|\bfile\s*a\b|\bமுதல்\s*(?:கோப்பு|ஒன்று|ஆவணம்)?\b|\bமுதலாவது\b", re.IGNORECASE), 0),
+    (re.compile(r"\b(?:the\s+)?(?:second|2nd)\s+(?:one|file|csv|doc|document)\b|\b(?:second|2nd)\s+one\b|\bfile\s*b\b|\bஇரண்டாம்\s*(?:கோப்பு|ஒன்று|ஆவணம்)?\b|\bஇரண்டாவது\b", re.IGNORECASE), 1),
+    (re.compile(r"\b(?:the\s+)?(?:third|3rd)\s+(?:one|file|csv|doc|document)\b|\b(?:third|3rd)\s+one\b|\bfile\s*c\b|\bமூன்றாம்\s*(?:கோப்பு|ஒன்று|ஆவணம்)?\b|\bமூன்றாவது\b", re.IGNORECASE), 2),
+    (re.compile(r"\b(?:the\s+)?last\s+(?:one|file|csv|doc|document)\b|\blast\s+one\b|\bகடைசி\s*(?:கோப்பு|ஒன்று|ஆவணம்)?\b", re.IGNORECASE), -1),
+]
+
+
+def resolve_file_ordinal_pick(message: str, docs: Sequence[ChatAttachment]) -> Optional[ChatAttachment]:
+    """Resolve ordinal expressions like 'the first one', 'first file', 'second one',
+    'the 2nd one', 'File A', 'File B' against a sequence of documents (ORDCLAR-001)."""
+    if not docs:
+        return None
+    msg = (message or "").strip().lower()
+    for pat, idx in _ORDINAL_FILE_PATTERNS:
+        if pat.search(msg):
+            if idx == -1:
+                return docs[-1]
+            if 0 <= idx < len(docs):
+                return docs[idx]
+    return None
+
+
+def location_reference(message: str, prior_line: Optional[int] = None) -> Optional[Tuple[str, int]]:
     """The (kind, number) a message names, e.g. ("page", 3) -- None if it
     names no page/line/paragraph/table number at all."""
-    m = _LOCATION_RE.search(message or "")
+    msg = message or ""
+    m = _LOCATION_RE.search(msg)
+    if m:
+        kind = _LOCATION_KIND.get(m.group(1).lower())
+        if kind:
+            return kind, int(m.group(2))
+
+    m_tm = _TAMIL_NUM_LOC_RE.search(msg)
+    if m_tm:
+        if m_tm.group(1) and m_tm.group(2):
+            kind = _LOCATION_KIND.get(m_tm.group(1).lower())
+            if kind:
+                return kind, int(m_tm.group(2))
+        elif m_tm.group(3) and m_tm.group(4):
+            kind = _LOCATION_KIND.get(m_tm.group(4).lower())
+            if kind:
+                return kind, int(m_tm.group(3))
+
+    m_ord = _ORDINAL_LOC_RE.search(msg)
+    if m_ord:
+        if m_ord.group(1) and m_ord.group(2):
+            w = m_ord.group(1).lower()
+            num = _ORDINAL_WORD_MAP.get(w) or int(re.sub(r"\D", "", w))
+            kind = _LOCATION_KIND.get(m_ord.group(2).lower())
+            if kind and num:
+                return kind, num
+        elif m_ord.group(3) and m_ord.group(4):
+            num = _ORDINAL_WORD_MAP.get(m_ord.group(3))
+            kind = _LOCATION_KIND.get(m_ord.group(4))
+            if kind and num:
+                return kind, num
+
+    # Relative line references ("next line", "previous line")
+    if prior_line is not None:
+        if re.search(r"\b(?:next|following)\s+line\b|\bஅடுத்த\s+வரி\b", msg, re.IGNORECASE):
+            return "lines", prior_line + 1
+        if re.search(r"\b(?:previous|prev)\s+line\b|\bமுந்தைய\s+வரி\b", msg, re.IGNORECASE):
+            return "lines", max(1, prior_line - 1)
+
+    return None
+
+
+def location_range_reference(message: str) -> Optional[Tuple[str, int, int]]:
+    """Match line/page ranges like 'lines 5 to 8', 'lines 5-8', 'வரி 1 முதல் 5 வரை'."""
+    m = _LOCATION_RANGE_RE.search(message or "")
     if not m:
         return None
     kind = _LOCATION_KIND.get(m.group(1).lower())
     if not kind:
         return None
-    return kind, int(m.group(2))
+    start = int(m.group(2))
+    end = int(m.group(3))
+    if start > end:
+        start, end = end, start
+    return kind, start, end
 
 
 # Words that only ask to be shown a location's text -- "what does page 2 of the
@@ -1027,8 +1183,9 @@ def location_reference(message: str) -> Optional[Tuple[str, int]]:
 _READ_ONLY_WORDS = {
     "say", "says", "said", "show", "read", "contain", "contains", "content", "contents",
     "text", "tell", "display", "give", "print", "memo", "document", "doc", "file", "pdf",
-    "uploaded", "attached", "written", "mention", "mentioned", "page", "pg", "line",
-    "paragraph", "para", "table", "number", "no",
+    "txt", "csv", "uploaded", "attached", "written", "mention", "mentioned", "page", "pg", "line",
+    "lines", "paragraph", "para", "table", "number", "no", "what", "is", "on", "in", "at",
+    "the", "a", "an", "does", "of", "enna", "ennathu", "irukku", "kattu", "sol", "சொல்", "காட்டு",
 }
 
 
@@ -1040,7 +1197,11 @@ def is_positional_only(message: str, filenames: List[str]) -> bool:
     page 2 of the memo say" with "not present" while holding page 2's text.
     """
     stripped = attachment_store.strip_filenames(message, filenames)
-    terms = [t for t in attachment_store._content_terms(_LOCATION_RE.sub(" ", stripped))
+    cleaned = _LOCATION_RE.sub(" ", stripped)
+    cleaned = _LOCATION_RANGE_RE.sub(" ", cleaned)
+    cleaned = _ORDINAL_LOC_RE.sub(" ", cleaned)
+    cleaned = _TAMIL_NUM_LOC_RE.sub(" ", cleaned)
+    terms = [t for t in attachment_store._content_terms(cleaned)
              if t not in _READ_ONLY_WORDS]
     return not terms
 
@@ -1102,6 +1263,8 @@ def targets_attachment(message: str, intent: str,
     if is_project_relevance_request(message):
         return True
     if is_negative_correction(message):
+        return True
+    if resolve_file_ordinal_pick(message, docs) is not None:
         return True
     # Nothing else claimed it: `general_query` is where the pipeline would
     # otherwise hand llama3.1:8b an ungrounded prompt, which is exactly the
@@ -1819,8 +1982,16 @@ def render_csv_result(filename: str, result: csv_ops.CsvResult,
         return (head + "\n" + "\n".join(lines) + f"\n[{citation}]", cites)
 
     if result.op == csv_ops.OP_LOOKUP:
+        if isinstance(result.value, list):
+            blocks = []
+            for item in result.value:
+                n = item.get("_row", "?")
+                shown = "\n".join(f"- {k}: {v}" for k, v in item.items() if k != "_row" and str(v).strip())
+                head = f"வரிசை {n}:" if is_ta else f"Row {n}:"
+                blocks.append(f"{head}\n{shown}")
+            return ("\n\n".join(blocks) + (f"\n[{citation}]" if citation else ""), cites)
         row = result.value or {}
-        shown = "\n".join(f"- {k}: {v}" for k, v in row.items() if str(v).strip())
+        shown = "\n".join(f"- {k}: {v}" for k, v in row.items() if k != "_row" and str(v).strip())
         n = result.rows[0] if result.rows else "?"
         head = (f"வரிசை {n}:" if is_ta else f"Row {n}:")
         return (f"{head}\n{shown}\n[{citation}]", cites)
@@ -1971,7 +2142,7 @@ async def plan_answer(
     Returns None when the turn is not an attachment question — the caller then
     carries on down the normal SIS pipeline untouched.
     """
-    officer_id = getattr(officer, "officer_id", None)
+    officer_id = getattr(officer, "officer_id", None) or getattr(officer, "id", None)
     if officer_id is None:
         return None
 
@@ -2035,8 +2206,38 @@ async def plan_answer(
         # A follow-up to an answer that was itself about the file ("what should I
         # carry to the field visit?") stays with the file, unless it is shaped
         # like a register query or names an application.
+        #
+        # Any DETERMINISTIC intent -- not just a bare service-code question
+        # like "What is F-Line Appeal?" -- is the same exemption, for the
+        # same reason: `targets_attachment()` just above only claims a turn
+        # on `general_query` because that is the one shape with no answer of
+        # its own and nothing else to lose by trying the file. An intent the
+        # parser DID resolve to something specific always has its own
+        # complete, deterministic, officer-independent handler waiting
+        # downstream, unrelated to whatever file happens to be open --
+        # `general_query` is the correct single condition to key this on
+        # (matching `targets_attachment()`'s own rule just above, not a
+        # second, separately-maintained list of exempted intents).
+        #
+        # Without this, the FIRST question asked right after ANY upload fell
+        # into this fallback and was wrongly answered from the attachment
+        # instead -- not because the question followed a real file-answer
+        # turn, but because `attachment_topic_active()` reads True from the
+        # upload endpoint's OWN confirmation message (routers/chat.py saves
+        # it with `structured_context={"entity": "attachment", ...}`), which
+        # is not a file Q&A turn at all. Confirmed live through the chatbot
+        # UI, 2026-10-13: "What is F-Line Appeal?" and "What is the
+        # difference between F-Line and F-Line Appeal?", asked as the first
+        # and second messages after attaching an unrelated CSV, both returned
+        # "I could not find this in the uploaded document." instead of ever
+        # reaching `_service_code_lookup_answer()`. The narrower, single-intent
+        # version of this fix (service_code_lookup only) was replaced with
+        # this general rule per explicit instruction not to grow a one-off
+        # exemption list; `test_attachment_routing.py` and the attachment
+        # regression suites were re-run clean against the wider condition.
         if (_APPLICATION_NO_RE.search(message or "")
                 or _is_register_shaped(message)
+                or intent != "general_query"
                 or not await attachment_topic_active(db, session_id)):
             return None
         topic_active = True
@@ -2059,8 +2260,15 @@ async def plan_answer(
                               text=_not_attached(typed, docs, language),
                               sources=[d.filename for d in docs],
                               document_ids=[str(d.id) for d in docs])
+    ordinal_doc = resolve_file_ordinal_pick(message, docs)
     if named:
         selected = named
+    elif ordinal_doc is not None:
+        selected = [ordinal_doc]
+        last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
+        prior_q = last_ctx.get("prior_question")
+        if prior_q and not resolve_file_ordinal_pick(prior_q, docs) and not is_positional_only(message, [d.filename for d in docs]):
+            message = prior_q
     elif refers_to_other_file(message) and len(docs) > 1:
         # "what about the other file?" — resolvable only when there is exactly
         # one other. With more, which "other" is meant is a real question, and
@@ -2179,14 +2387,18 @@ async def _answer_from_selected(
             # carries the word "boundary", which is also half of the header
             # "boundary_stone_status") and make column resolution ambiguous.
             csv_question = attachment_store.strip_filenames(message, [doc.filename])
-            operation = csv_ops.parse_csv_question(csv_question, headers, rows)
+            last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
+            last_row = last_ctx.get("last_row")
+            operation = csv_ops.parse_csv_question(csv_question, headers, rows, last_row=last_row)
             if operation is not None:
                 result = csv_ops.execute(operation, headers, rows)
                 text, cites = render_csv_result(doc.filename, result, language)
+                res_last_row = result.rows[-1] if result.rows else (last_row or 1)
                 return AttachmentPlan(
                     kind=KIND_DETERMINISTIC, text=text,
                     sources=[doc.filename], document_ids=[str(doc.id)],
-                    citations=cites)
+                    citations=cites,
+                    extra={"last_row": res_last_row, "last_rows": result.rows, "filename": doc.filename})
     elif len(csv_docs) >= 2:
         # "is the status of survey 805 consistent between the two files?" --
         # confirmed live (QA audit 2026-10-13, upload pass, failure id
@@ -2274,7 +2486,53 @@ async def _answer_from_selected(
 
     # ── A named page / line / paragraph / table: fetch it by position ────
     evidences: List[Evidence] = []
-    _loc_ref = location_reference(message)
+    last_ctx = await _get_last_assistant_attachment_context(db, session_id) or {}
+    prior_line = last_ctx.get("line_number")
+    _loc_ref = location_reference(message, prior_line=prior_line)
+    _loc_range = location_range_reference(message)
+
+    if _loc_range:
+        _rk, _rstart, _rend = _loc_range
+        if _rk == "lines":
+            chunks_covered = []
+            for ln in range(_rstart, _rend + 1):
+                c_hits = await attachment_store.chunks_covering_location(
+                    db, officer_id, session_id, [d.id for d in selected], "lines", ln)
+                for ch in c_hits:
+                    if not any(c.chunk_index == ch.chunk_index and c.document_id == ch.document_id for c in chunks_covered):
+                        chunks_covered.append(ch)
+            if not chunks_covered:
+                extents = await attachment_store.location_extent(
+                    db, officer_id, session_id, [d.id for d in selected], "lines")
+                if extents:
+                    return AttachmentPlan(
+                        kind=KIND_REFUSAL,
+                        text=_location_not_found("lines", _rend, extents, language),
+                        sources=[d.filename for d in selected],
+                        document_ids=[str(d.id) for d in selected],
+                        extra={"response_topic": "location_not_found", "is_refusal": True, "prior_question": message})
+            range_lines = []
+            for ln in range(_rstart, _rend + 1):
+                found_text = None
+                for ch in chunks_covered:
+                    loc = ch.location or {}
+                    start = loc.get("start", 1)
+                    raw_lines = ch.content.splitlines()
+                    idx = ln - start
+                    if 0 <= idx < len(raw_lines):
+                        found_text = raw_lines[idx]
+                        break
+                if found_text is not None:
+                    range_lines.append(f"Line {ln}: {found_text}" if found_text.strip() else f"Line {ln}: (empty)")
+            if range_lines:
+                body = "\n".join(range_lines)
+                return AttachmentPlan(
+                    kind=KIND_DETERMINISTIC, text=body,
+                    sources=sorted({d.filename for d in selected}),
+                    document_ids=[str(d.id) for d in selected],
+                    citations=[f"{d.filename}, lines {_rstart}-{_rend}" for d in selected],
+                    extra={"response_topic": "positional_evidence", "line_number": _rend, "prior_question": message})
+
     if _loc_ref:
         _loc_kind, _loc_number = _loc_ref
         evidences = await attachment_store.chunks_covering_location(
@@ -2294,6 +2552,39 @@ async def _answer_from_selected(
                     extra={"response_topic": "location_not_found", "is_refusal": True, "prior_question": message})
             # This document type has no such location kind at all (e.g. "page"
             # asked of a CSV) -- fall through to the ordinary evidence search.
+
+    if evidences and _loc_ref and _loc_kind == "lines":
+        sliced_lines = []
+        for e in evidences:
+            loc = e.location or {}
+            start = loc.get("start", 1)
+            raw_lines = e.content.splitlines()
+            idx = _loc_number - start
+            if 0 <= idx < len(raw_lines):
+                line_content = raw_lines[idx]
+                sliced_lines.append((e.filename, _loc_number, line_content))
+        if sliced_lines:
+            if is_positional_only(message, [d.filename for d in selected]):
+                if len(sliced_lines) == 1:
+                    fn, ln, content = sliced_lines[0]
+                    body = content if content.strip() else ("வரி காலியாக உள்ளது." if language in ("ta", "tanglish") else f"Line {ln} is empty.")
+                else:
+                    body = "\n\n".join(f"[{fn}, line {ln}]:\n{c}" for fn, ln, c in sliced_lines)
+                return AttachmentPlan(
+                    kind=KIND_DETERMINISTIC, text=body,
+                    sources=sorted({fn for fn, ln, c in sliced_lines}),
+                    document_ids=sorted({e.document_id for e in evidences}),
+                    citations=[f"{fn}, line {ln}" for fn, ln, c in sliced_lines],
+                    extra={"response_topic": "positional_evidence", "line_number": _loc_number, "prior_question": message})
+            else:
+                for e in evidences:
+                    loc = e.location or {}
+                    start = loc.get("start", 1)
+                    raw_lines = e.content.splitlines()
+                    idx = _loc_number - start
+                    if 0 <= idx < len(raw_lines):
+                        e.content = f"Line {_loc_number}: {raw_lines[idx]}"
+                        e.citation = f"{e.filename}, line {_loc_number}"
 
     if evidences and is_positional_only(message, [d.filename for d in selected]):
         body = "\n\n".join(f"{e.citation}:\n{e.content}" for e in evidences)

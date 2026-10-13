@@ -63,6 +63,7 @@ class CsvOperation:
     descending: bool = True
     limit: int = 10
     row_number: Optional[int] = None
+    row_numbers: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -122,7 +123,22 @@ def resolve_column(text: str, headers: Sequence[str]) -> Optional[str]:
         hn = _norm(h)
         if not hn:
             continue
-        if re.search(rf"(?<![a-z0-9]){re.escape(hn)}(?![a-z0-9])", t) and len(hn) > best_len:
+        # A trailing "s" is allowed after the header text itself -- "service
+        # codes" (the natural plural a question asks in) must match a
+        # `service_code` header the same way the singular already does.
+        # Without this, "List all the service codes in this file." failed
+        # this full-header match (the literal header ends in "code", the
+        # question in "codes", so the right-hand word boundary never closed)
+        # and fell to the single-word fallback below, where "service" alone
+        # is ALSO a distinctive word of a different column
+        # ("service_description"), so two columns tied and resolve_column()
+        # refused to pick either -- confirmed live through the chatbot UI,
+        # 2026-10-13 ("I could not find this in the uploaded document." for
+        # a column that plainly exists). The "s" is appended only to the
+        # very end of the already-escaped header text, so a multi-word
+        # header ("application number" -> "application numbers") is
+        # pluralised as a whole, not word-by-word.
+        if re.search(rf"(?<![a-z0-9]){re.escape(hn)}(?:es|s)?(?![a-z0-9])", t) and len(hn) > best_len:
             best, best_len = h, len(hn)
     if best:
         return best
@@ -164,7 +180,8 @@ _OP_WORDS: List[Tuple[str, Tuple[str, ...]]] = [
     (OP_SORT, ("sort", "order by", "ranked", "ranking", "top ")),
     (OP_COUNT, ("how many", "count", "number of", "எத்தனை", "எண்ணிக்கை")),
     (OP_FILTER, ("which rows", "which ones", "list", "show me", "show the",
-                 "find", "filter", "எந்த")),
+                 "find", "filter", "compare", "comparison", "difference",
+                 "versus", "vs", "differ", "consistent", "agree", "எந்த", "ஒப்பிடு")),
 ]
 
 # The symbolic comparators (">=", "!=", ...) are matched against the RAW
@@ -303,7 +320,8 @@ def _find_conditions(question: str, headers: Sequence[str],
 
 
 def parse_csv_question(question: str, headers: Sequence[str],
-                       rows: Sequence[Dict[str, str]]) -> Optional[CsvOperation]:
+                       rows: Sequence[Dict[str, str]],
+                       last_row: Optional[int] = None) -> Optional[CsvOperation]:
     """Classify an exact CSV question. Returns None when it is not one."""
     if not question or not headers:
         return None
@@ -321,9 +339,63 @@ def parse_csv_question(question: str, headers: Sequence[str],
                 op = name
                 break
 
-    m_row = re.search(r"\brow\s+(\d+)\b", q)
+    # Number mapping for text number words
+    _WORD_TO_NUM = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "rendu": 2, "moonu": 3, "naalu": 4, "anju": 5,
+        "இரண்டு": 2, "மூன்று": 3, "நான்கு": 4, "ஐந்து": 5,
+    }
+    def _parse_cnt(s: str) -> int:
+        s = str(s or "").strip().lower()
+        if s.isdigit():
+            return int(s)
+        return _WORD_TO_NUM.get(s, 5)
+
+    # 1. Explicit single row: "show row 2", "row 4", "வரிசை 2"
+    m_row = re.search(r"\brow\s+(\d+)\b|\bவரிசை\s+(\d+)\b", q)
     if m_row:
-        return CsvOperation(op=OP_LOOKUP, row_number=int(m_row.group(1)))
+        rn = int(m_row.group(1) or m_row.group(2))
+        return CsvOperation(op=OP_LOOKUP, row_number=rn, row_numbers=[rn])
+
+    # 2. Explicit row range: "rows 1 to 5", "rows 2-6", "வரிசைகள் 1 முதல் 5"
+    m_range = re.search(r"\brows?\s+(\d+)\s*(?:to|-)\s*(\d+)\b|\bவரிசைகள்\s+(\d+)\s*முதல்\s*(\d+)\b", q)
+    if m_range:
+        s_val = int(m_range.group(1) or m_range.group(3))
+        e_val = int(m_range.group(2) or m_range.group(4))
+        if s_val <= e_val:
+            e_clamped = min(len(rows), e_val)
+            return CsvOperation(op=OP_LOOKUP, row_number=s_val, row_numbers=list(range(s_val, e_clamped + 1)))
+
+    # 3. Relative range: "next five rows", "next 5 rows", "following ten rows", "adutha 5 rows", "அடுத்த ஐந்து வரிசைகள்"
+    m_next_n = re.search(r"\b(?:next|following|adutha|அடுத்த)\s+(\d{1,3}|two|three|four|five|six|seven|eight|nine|ten|rendu|moonu|naalu|anju|இரண்டு|மூன்று|நான்கு|ஐந்து)\s*(?:rows?|records?|வரிசைகள்|வரிசை)?\b", q)
+    if m_next_n:
+        n_cnt = _parse_cnt(m_next_n.group(1))
+        start = (last_row or 0) + 1
+        end = min(len(rows), start + n_cnt - 1)
+        r_nums = list(range(start, end + 1)) if start <= len(rows) else []
+        return CsvOperation(op=OP_LOOKUP, row_number=start, row_numbers=r_nums)
+
+    # 4. Continuation from row X: "continue from row 8"
+    m_cont_from = re.search(r"\bcontinue\s+from\s+row\s+(\d+)\b", q)
+    if m_cont_from:
+        start = int(m_cont_from.group(1))
+        end = min(len(rows), start + 4)
+        r_nums = list(range(start, end + 1)) if start <= len(rows) else []
+        return CsvOperation(op=OP_LOOKUP, row_number=start, row_numbers=r_nums)
+
+    # 5. Relative single row: "next row", "adutha row", "அடுத்த வரிசை", "following row"
+    if re.search(r"\b(?:next|following)\s+row\b|\badutha\s+row\b|\bஅடுத்த\s+வரிசை\b", q):
+        target = (last_row or 1) + 1
+        r_nums = [target] if target <= len(rows) else []
+        return CsvOperation(op=OP_LOOKUP, row_number=target, row_numbers=r_nums)
+
+    # 6. Bare continuation on CSV: "continue", "resume", "thodaru", "தொடரவும்", "show the rest", "show the remaining values", "meethi rows kaatu"
+    if re.search(r"\b(?:continue|resume|thodaru|thodarunga|show\s+the\s+rest|remaining|meethi)\b|தொடரவும்|மீதி|மீதமுள்ள", q):
+        start = (last_row or 1) + 1
+        end = min(len(rows), start + 4)
+        r_nums = list(range(start, end + 1)) if start <= len(rows) else []
+        return CsvOperation(op=OP_LOOKUP, row_number=start, row_numbers=r_nums)
 
     conds = _find_conditions(question, headers, list(rows))
     column = resolve_column(question, headers)
@@ -475,6 +547,25 @@ def execute(operation: CsvOperation, headers: Sequence[str],
                              if c])
 
     if operation.op == OP_LOOKUP:
+        if operation.row_numbers:
+            wants = operation.row_numbers
+            if not wants:
+                res.ok = False
+                res.detail = f"No further rows remain in the file (total data rows: {len(rows)})."
+                return res
+            hits = []
+            for w in wants:
+                r = next((row for n, row in numbered if n == w), None)
+                if r is not None:
+                    hits.append(dict(r, **{"_row": w}))
+            if not hits:
+                res.ok = False
+                res.detail = f"The file has {len(rows)} data rows; requested rows outside range."
+                return res
+            res.rows = [h["_row"] for h in hits]
+            res.samples = hits
+            res.value = hits if len(hits) > 1 else hits[0]
+            return res
         want = operation.row_number or 0
         hit = next((r for n, r in numbered if n == want), None)
         if hit is None:

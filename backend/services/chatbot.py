@@ -2,7 +2,7 @@
 Main chatbot service - RAG orchestration
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Sequence
 from datetime import datetime, timedelta, date, timezone
 import asyncio
 import contextvars
@@ -883,9 +883,9 @@ _DETAIL_REQUEST_PHRASES = [
     "elaborate", "in depth", "in-depth", "detailed explanation",
     "more info", "more information", "give me more", "what does it mean",
     "what does that mean", "break it down", "break down", "go deeper",
-    "expand on that", "expand on it",
-    # bare single-word triggers ("detailed", "detail", "explain", "describe")
-    "detailed", "detail", "explain", "describe",
+    "expand on that", "expand on it", "expand on this", "expand",
+    # bare single-word triggers ("detailed", "detail", "explain", "describe", "continue", "resume")
+    "detailed", "detail", "explain", "describe", "continue", "resume",
     # "give me a thorough explanation" / "a thorough answer" -- the noun form
     # of "explain" and a synonym for "detailed" that weren't in this list at
     # all, so neither `_has_detail_phrase` nor the typo-tolerant trigger-word
@@ -896,6 +896,7 @@ _DETAIL_REQUEST_PHRASES = [
     "vivaramaga solunga", "vivaramaga vilakku", "vivaramaga",
     "explain panunga", "explain pannu", "more sollu", "more vithufy",
     "full ah sollu", "full sollu", "details sollu", "details kudunga",
+    "innum sollu", "meethi sollu", "adutha vivaram",
 ]
 
 _DETAIL_REQUEST_RE = re.compile(
@@ -920,6 +921,7 @@ _DETAIL_REQUEST_PHRASES_TA = [
     "விரிவாக கூறு", "விரிவாக கூறவும்", "விரிவாக கூறுங்கள்",
     "விவரமாக சொல்", "விவரமாக சொல்லவும்", "விவரமாக விளக்கு", "விவரமாக விளக்கவும்",
     "முழு விளக்கம்", "கூடுதல் விவரம்", "கூடுதல் தகவல்",
+    "தொடரவும்", "மேலும் விவரங்கள்", "மீதி சொல்லவும்", "அடுத்த விவரம்",
 ]
 
 
@@ -931,7 +933,7 @@ def _has_detail_phrase(message: str) -> bool:
     return any(p in (message or "") for p in _DETAIL_REQUEST_PHRASES_TA)
 
 
-_DETAIL_REQUEST_TRIGGER_WORDS = ("explain", "elaborate", "detailed", "detail", "describe")
+_DETAIL_REQUEST_TRIGGER_WORDS = ("explain", "elaborate", "detailed", "detail", "describe", "continue", "resume", "expand")
 
 # "explain BRIEFLY" / "summarise it" / "the short version" asks for LESS
 # detail, not more -- a brevity word wins over a bare "explain"/"describe" in
@@ -1312,7 +1314,8 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
     """
     from backend.utils.helpers import (
         SIS_URBAN_SERVICES, describe_service_code, find_service_codes,
-        normalize_service_code,
+        normalize_service_code, is_code_only_request, is_code_and_desc_request,
+        is_table_only_request,
     )
     from backend.services.rag import extract_application_number
 
@@ -1336,6 +1339,40 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
         if len(_named) == 1:
             exact = _named
     if exact:
+        if is_code_only_request(message):
+            return ", ".join(exact)
+        if is_code_and_desc_request(message):
+            lines = [f"{c} — {SIS_URBAN_SERVICES[c]['name']} ({SIS_URBAN_SERVICES[c]['short']})"
+                     for c in exact if c in SIS_URBAN_SERVICES]
+            return "\n".join(lines)
+        if is_table_only_request(message):
+            rows = ["| Code | Service Name | Short Form | Field Visit |",
+                    "|---|---|---|---|"]
+            for c in exact:
+                if c in SIS_URBAN_SERVICES:
+                    info = SIS_URBAN_SERVICES[c]
+                    fv = "Required" if info["requires_field_visit"] else "Not required"
+                    rows.append(f"| {c} | {info['name']} | {info['short']} | {fv} |")
+            return "\n".join(rows)
+
+        # "Are F-Line and F-Line Appeal the same?" / "What is the difference between F-Line and F-Line Appeal?" (SVCCODE-001)
+        if len(exact) >= 2 and re.search(r"\b(differ|difference|compare|comparison|same|வேறுபாடு|ஒப்பீடு|ஒப்பிடு)\b", message.lower()):
+            if "0178" in exact and "0185" in exact:
+                if is_tamil:
+                    lead = ("இல்லை — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் வெவ்வேறு சேவைகள். "
+                            "0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்; 0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு.")
+                else:
+                    lead = ("No, F-Line (0178) and F-Line Appeal (0185) are different services under TAMILNILAM Urban. "
+                            "0178 (F-Line) is the initial boundary demarcation survey request, whereas 0185 (F-Line Appeal) is an appeal against a prior demarcation decision.")
+            else:
+                names = [f"{SIS_URBAN_SERVICES[c]['short']} ({c})" for c in exact if c in SIS_URBAN_SERVICES]
+                if is_tamil:
+                    lead = f"இல்லை — {', '.join(names)} ஆகியவை வெவ்வேறு சேவைகள்."
+                else:
+                    lead = f"No, {', '.join(names)} are different services under TAMILNILAM Urban."
+            full_detail = "\n\n".join(describe_service_code(c, is_tamil, brief=brief) for c in exact)
+            return lead + "\n\n" + full_detail
+
         full = "\n\n".join(describe_service_code(c, is_tamil, brief=brief) for c in exact)
         # "does ISD need a field visit?" always gives the full answer — specific question.
         if len(exact) == 1 and re.search(
@@ -1379,6 +1416,8 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
                 f"Ask \"list all service codes\" for the full table.")
 
     if count == 1:
+        if is_code_only_request(message):
+            return next(iter(matches))
         return describe_service_code(next(iter(matches)), is_tamil)
 
     lines = "\n".join(f"  • {c} — {v['name']} ({v['short']})"
@@ -1505,7 +1544,10 @@ async def _service_code_lookup_answer_natural(message: str, is_tamil: bool, brie
     questions ("what is isd") stop reading as copy-pasted. The facts
     themselves are still the deterministic lookup -- only the wording is
     handed to the model, and only kept if it did not drop or change one."""
+    from backend.utils.helpers import is_code_only_request, is_code_and_desc_request, is_table_only_request
     fact_text = _service_code_lookup_answer(message, is_tamil, brief=brief)
+    if is_code_only_request(message) or is_code_and_desc_request(message) or is_table_only_request(message):
+        return fact_text
     try:
         # the facts are already final; a slow model (20-55 s on the test bank) only delays them
         natural = await asyncio.wait_for(paraphrase_facts_naturally(fact_text, language), timeout=6)
@@ -1514,6 +1556,233 @@ async def _service_code_lookup_answer_natural(message: str, is_tamil: bool, brie
     if natural and natural != fact_text and _paraphrase_kept_the_facts(fact_text, natural):
         return natural
     return fact_text
+
+
+def _build_general_negative_correction_response(message: str, chat_history: Sequence[Dict[str, Any]],
+                                                language: str, officer: Any) -> Optional[Dict[str, Any]]:
+    """Handle disagreements/corrections ("I don't think so", "not that", "wrong answer")
+    outside of active attachment contexts (NEGCORR-001)."""
+    prev_user_q = ""
+    prev_asst_a = ""
+    if chat_history:
+        for m in reversed(chat_history):
+            if not prev_asst_a and m.get("role") in ("assistant", "ai", "bot"):
+                prev_asst_a = m.get("content") or ""
+            elif not prev_user_q and m.get("role") == "user":
+                prev_user_q = m.get("content") or ""
+            if prev_asst_a and prev_user_q:
+                break
+
+    is_ta = language in ("ta", "tanglish")
+    combined = (prev_user_q + " " + prev_asst_a).lower()
+
+    if re.search(r"\b(015[1-9]|0178|0185|f-line|fline|isd|nisd|service\s+code)\b", combined):
+        if is_ta:
+            resp = ("புரிந்தது — எனது முந்தைய பதிலில் முரண்பாடு இருக்கலாம். "
+                    "நீங்கள் குறிப்பிட்டது மற்றொரு சேவை குறியீடா (எ.கா. 0178 F-Line அல்லது 0185 F-Line Appeal), "
+                    "அல்லது குறிப்பிட்ட சேவை விதிமுறைகளை மீண்டும் சரிபார்க்க வேண்டுமா?")
+        else:
+            resp = ("Understood — my previous response may have addressed the wrong code or rules. "
+                    "Did you mean the other service code (such as 0185 F-Line Appeal instead of 0178 F-Line), "
+                    "or would you like me to re-verify the specific service code or workflow rules?")
+        return {"response": resp, "intent": "service_code_lookup"}
+
+    app_m = re.search(r"\b(\d{4}/\d{3,4}/\d{1,3}/\d+)\b", combined)
+    if app_m:
+        app_no = app_m.group(1)
+        if is_ta:
+            resp = (f"புரிந்தது. விண்ணப்பம் {app_no} குறித்த தகவல் தவறாகத் தோன்றினால், "
+                    f"அதிகாரப்பூர்வ பதிவேட்டில் இருந்து எந்த விவரத்தை (நிலை, விண்ணப்பதாரர் பெயர், ஆவணங்கள்) "
+                    f"மீண்டும் சரிபார்க்க வேண்டும் எனக் குறிப்பிடவும்.")
+        else:
+            resp = (f"Understood. If the details for application {app_no} seemed incorrect, "
+                    f"please let me know which field you would like me to re-verify against the official database "
+                    f"(such as current status, applicant name, or documents).")
+        return {"response": resp, "intent": "application_status"}
+
+    if re.search(r"\b(field\s+visit|inspection|கள\s*ஆய்வு)\b", combined):
+        if is_ta:
+            resp = ("புரிந்தது. கள ஆய்வு குறித்த எந்த குறிப்பிட்ட விவரத்தை மீண்டும் சரிபார்க்க வேண்டும் எனக் குறிப்பிடவும்.")
+        else:
+            resp = ("Understood. Please let me know which specific field visit or inspection detail you would like me to re-check.")
+        return {"response": resp, "intent": "field_visit_query"}
+
+    if is_ta:
+        resp = ("புரிந்தது — முந்தைய கேள்விக்கான பதிலில் ஏதேனும் தவறு அல்லது குறைபாடு இருந்திருக்கலாம். "
+                "நீங்கள் என்ன விவரத்தை எதிர்பார்க்கிறீர்கள் அல்லது எந்த பதிவை மீண்டும் சரிபார்க்க வேண்டும் என்று கூறவும்.")
+    else:
+        resp = ("Understood — I may have misunderstood or provided an inaccurate answer to your previous question. "
+                "Please clarify what you are looking for, or name the specific application, service code, or record to re-check.")
+    return {"response": resp, "intent": "general_negative_correction"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Negative-correction antecedent resolution (FLINE-NEGATION-001)
+# ─────────────────────────────────────────────────────────────────────────────
+# "I don't think they are the same." right after a file comparison, when the
+# claim actually being disputed ("F-Line and F-Line Appeal are the same
+# service") was made two turns earlier, got silently resolved against the
+# FILE comparison -- `attachment_qa.plan_answer()` claims any negative
+# correction unconditionally whenever `attachment_topic_active()` is True
+# (the immediately preceding assistant turn was itself about a file), with
+# no awareness that a different, non-file claim might be the one the officer
+# actually means. Confirmed live through the chatbot UI, 2026-10-13.
+#
+# This is a routing decision, not a new correction handler: the existing
+# attachment-side (`attachment_qa._handle_negative_correction`) and
+# general-side (`_build_general_negative_correction_response`, just above)
+# handlers are both kept exactly as they are. `_route_negative_correction()`
+# decides, BEFORE either one runs, which of them -- or neither, if the
+# message and the recent history are genuinely ambiguous -- gets to answer.
+
+# Message-level cue (what the OFFICER typed): a bare code like "0178" here
+# is a deliberate, explicit reference -- an officer does not type a service
+# code by accident.
+_NEGCORR_SVC_CUE_RE = re.compile(
+    r"\b(015[1-9]|0178|0185|f-line|fline|isd|nisd|service\s*codes?|definitions?)\b", re.IGNORECASE)
+_NEGCORR_FILE_CUE_RE = re.compile(
+    r"\b(files?|documents?|csv|attachments?|attached|uploaded?)\b|கோப்பு|ஆவணம்", re.IGNORECASE)
+# "I don't think the FILES have the same service codes" names "files" as the
+# grammatical subject of the disputed claim -- "service codes" is the
+# ATTRIBUTE being compared, not a second, competing claim about a bare
+# service-code definition. Checked before the symmetric explicit_file /
+# explicit_service split below, so this phrasing resolves to the file
+# re-check it plainly means instead of being read as equally about both.
+_NEGCORR_FILE_SUBJECT_RE = re.compile(
+    r"\b(?:the\s+)?(?:two\s+)?files?\b.{0,25}\b(?:have|has|contain|share|match(?:es)?|carry|carries)\b",
+    re.IGNORECASE)
+
+# History-scan cue (what a PAST ASSISTANT TURN said): deliberately narrower
+# than the message-level cue above -- no bare digit codes. A rendered CSV
+# table of service-code DATA (e.g. a "0178" row value in a comparison
+# result) is not itself a service-code CLAIM the way a sentence using the
+# word "service code" or naming "F-Line" is; matching on bare digits here
+# made `_recent_nonattachment_claim` mistake an attachment's own table
+# output for a competing non-attachment antecedent. Confirmed live,
+# 2026-10-13: "I don't think the files have the same service codes." (a
+# clear, explicit file reference) still fell through to the generic
+# fallback because the CSV table two turns back happened to contain "0178".
+_NEGCORR_HISTORY_SVC_CUE_RE = re.compile(
+    r"\b(f-line|fline|isd|nisd|service\s*codes?|definitions?)\b", re.IGNORECASE)
+_NEGCORR_APP_RE = re.compile(r"\b(\d{4}/\d{3,4}/\d{1,3}/\d+)\b")
+_NEGCORR_FV_CUE_RE = re.compile(r"\b(field\s*visits?|inspections?)\b|கள\s*ஆய்வு", re.IGNORECASE)
+
+
+async def _recent_nonattachment_claim(chat_history: Sequence[Dict[str, Any]]) -> Optional[str]:
+    """The most recent NON-attachment claim a correction could plausibly be
+    about, found by scanning the last few assistant turns the same way
+    `_build_general_negative_correction_response` already does -- service
+    code / application / field-visit cues. Only the last 3 assistant turns
+    are considered: a claim from far earlier in a long conversation is not a
+    plausible antecedent for a bare "I don't think so" with nothing else to
+    go on. Returns a short label for the clarification text, or None."""
+    seen = 0
+    for m in reversed(chat_history or []):
+        if (m.get("role") or "") not in ("assistant", "ai", "bot"):
+            continue
+        content = m.get("content") or ""
+        if _NEGCORR_HISTORY_SVC_CUE_RE.search(content):
+            return "service_code"
+        if _NEGCORR_APP_RE.search(content):
+            return "application"
+        if _NEGCORR_FV_CUE_RE.search(content):
+            return "field_visit"
+        seen += 1
+        if seen >= 3:
+            break
+    return None
+
+
+_NEGCORR_LABEL_EN = {
+    "service_code": "the service-code comparison you just asked about",
+    "application": "the application details from earlier",
+    "field_visit": "the field visit detail from earlier",
+}
+_NEGCORR_LABEL_TA = {
+    "service_code": "நீங்கள் இப்போது கேட்ட சேவை குறியீடு ஒப்பீடு",
+    "application": "முன்பு பேசிய விண்ணப்ப விவரங்கள்",
+    "field_visit": "முன்பு பேசிய கள ஆய்வு விவரம்",
+}
+
+
+async def _route_negative_correction(
+    message: str, chat_history: Sequence[Dict[str, Any]],
+    db: AsyncSession, session_id: str, language: str,
+) -> Optional[Dict[str, Any]]:
+    """Decide which claim a negative correction ("I don't think so", "not
+    that", "wrong answer", ...) is disputing, before either the attachment
+    or the general handler is allowed to answer it.
+
+    Returns None when the message is not a negative correction, or when
+    there is nothing to disambiguate (the ordinary case -- let the existing
+    callers run exactly as before). Otherwise returns one of:
+      {"route": "attachment"}  -- let `attachment_qa.plan_answer()` handle it
+      {"route": "general"}     -- skip the attachment layer this turn, go to
+                                   `_build_general_negative_correction_response()`
+      {"route": "ambiguous", "response": {...}} -- answer directly: neither
+                                   handler gets to guess, the officer is asked
+                                   which claim they mean, by name.
+
+    Explicit reference wins outright (requirement D): if the correction
+    itself names a file/document or a service code, that side is used with
+    no ambiguity check at all, however many candidates exist. Otherwise, an
+    ACTIVE attachment topic is only one of possibly several plausible
+    antecedents; a genuine conflict between it and a recent non-attachment
+    claim is asked about rather than guessed -- never silently resolved by
+    picking whichever topic is most recent."""
+    if not attachment_qa.is_negative_correction(message):
+        return None
+
+    msg_low = (message or "").lower()
+    if _NEGCORR_FILE_SUBJECT_RE.search(msg_low):
+        # "the files HAVE/CONTAIN/MATCH ..." -- files are the grammatical
+        # subject even when the sentence also names "service codes" as the
+        # attribute being compared.
+        return {"route": "attachment"}
+    explicit_file = bool(_NEGCORR_FILE_CUE_RE.search(msg_low))
+    explicit_service = bool(_NEGCORR_SVC_CUE_RE.search(msg_low))
+    if explicit_file and not explicit_service:
+        return {"route": "attachment"}
+    if explicit_service and not explicit_file:
+        return {"route": "general"}
+
+    # Read via `_get_last_assistant_attachment_context()` rather than the
+    # bare `attachment_topic_active()` bool, so its `document_ids` can be
+    # CARRIED FORWARD onto the ambiguous clarification below -- otherwise
+    # that clarification turn itself becomes the new "most recent assistant
+    # turn", and since it is saved with no attachment structured_data, the
+    # VERY NEXT turn's own lookup of "which files were being discussed"
+    # would come back empty even though nothing about the file context
+    # actually changed. Confirmed live, 2026-10-13: an explicit file
+    # correction sent right after this ambiguous clarification still fell
+    # through to a bare "which file?" because the file context had been
+    # silently dropped one turn earlier.
+    last_att_ctx = await attachment_qa._get_last_assistant_attachment_context(db, session_id)
+    att_active = bool(last_att_ctx)
+    other_claim = await _recent_nonattachment_claim(chat_history)
+
+    if att_active and other_claim:
+        # Two genuinely plausible antecedents and the message itself gives
+        # no cue -- ask, naming both, rather than defaulting to either one.
+        ta = language in ("ta", "tanglish")
+        labels = _NEGCORR_LABEL_TA if ta else _NEGCORR_LABEL_EN
+        other_label = labels.get(other_claim, labels["service_code"])
+        if ta:
+            text = (f"புரிந்தது — நீங்கள் எதைக் குறிப்பிடுகிறீர்கள் என்று தெளிவாக இல்லை: "
+                    f"பதிவேற்றிய கோப்பு(கள்) பற்றிய பதிலா, அல்லது {other_label}? "
+                    f"குறிப்பிட்டால் அதை மீண்டும் சரிபார்க்கிறேன்.")
+        else:
+            text = (f"Understood — it's not clear which answer you mean: the uploaded file(s), "
+                    f"or {other_label}? Let me know which one, and I'll re-check it.")
+        return {"route": "ambiguous",
+                "response": {"response": text, "intent": "general_negative_correction"},
+                "carry_context": last_att_ctx}
+
+    if att_active:
+        return {"route": "attachment"}
+    if other_claim:
+        return {"route": "general"}
+    return None
 
 
 _CI_VERB =(r"(?:clear\w*|wip(?:e|es|ed|ing)|eras\w*|delet\w*|remov\w*|expung\w*|purg\w*|discard\w*|reset\w*|forget\w*|"
@@ -1715,8 +1984,9 @@ def _corpus_vocab():
 # follow-up ("how long will this type take?", "இதற்கு எவ்வளவு நாள் ஆகும்?").
 _CONTEXT_CUE_RE = re.compile(
     r"\b(this|that|it|its|they|them|these|those|here|same|how|what|when|why|who|which|"
+    r"continue|resume|proceed|next|more|rest|remaining|further|go\s+on|thodaru|thodarunga|meethi|adutha|innum|"
     r"evlo|evvalavu|enna|eppo|eppadi|yaar|yaaru|edhu|idhu|adhu|idhuku|adhuku)\b"
-    r"|[஀-௿]*(இது|அது|இதற்கு|அதற்கு|இதன்|அதன்|எவ்வளவு|எத்தனை|என்ன|எப்போது|ஏன்|யார்|எந்த)",
+    r"|[஀-௿]*(இது|அது|இதற்கு|அதற்கு|இதன்|அதன்|எவ்வளவு|எத்தனை|என்ன|எப்போது|ஏன்|யார்|எந்த|தொடர்|தொடர|மீதி|மீத|அடுத்த|அடுத்து|மேலும்)",
     re.IGNORECASE)
 
 
@@ -10623,7 +10893,7 @@ _RECALL_QUALIFIER_WORDS = [
     # previous/last/earlier alongside them -- "do you remember our chat" and
     # "can you recall our conversation" carry no other qualifier word.
     "remember", "recall", "recollect",
-    "முந்தைய", "கடந்த", "முன்பு", "மேலே", "முதல்", "நினைவு",
+    "முந்தைய", "கடந்த", "முன்பு", "மேலே", "முதல்", "நினைவு", "கடைசி",
 ]
 
 
@@ -10654,7 +10924,9 @@ _RECALL_DATA_WORDS = [
 # 9012, 3456") instead of saying it had nothing to resume. These phrases are
 # self-sufficient recall signals and skip the qualifier/subject check, but
 # still go through the same _RECALL_DATA_WORDS guard below.
-_RECALL_CONTINUATION_PHRASES = [
+# Continuation idioms ("where we left off", "let's continue", "resume our conversation")
+# are handled by the contextual continuation dispatcher, NOT conversation recall.
+_CONTINUATION_IDIOM_PHRASES = [
     "where we left off", "left off", "pick up where", "picking up where",
     "carry on from", "resume our conversation", "resume from before",
     "resume where", "continue our conversation", "continue from before",
@@ -10686,12 +10958,10 @@ def _is_conversation_recall(message: str) -> bool:
             for w in words
         )
 
-    is_continuation = any(p in m for p in _RECALL_CONTINUATION_PHRASES)
-    if not is_continuation:
-        if not _hit(_RECALL_QUALIFIER_WORDS):
-            return False
-        if not _hit(_RECALL_SUBJECT_WORDS):
-            return False
+    if not _hit(_RECALL_QUALIFIER_WORDS):
+        return False
+    if not _hit(_RECALL_SUBJECT_WORDS):
+        return False
     # "status of my previous application" is about data, not the conversation.
     # "can" alone is the CAN-number signal ("what is the CAN number of the
     # previous question?"), but "can you recall our earlier conversation?"
@@ -13848,6 +14118,26 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
     _after = _AFTER_RE.search(msg)
     if _after:
         return "AFTER:" + _after.group(1).lower()
+    _next_step_q = bool(re.search(
+        r"^(?:please\s+|and\s+|then\s+)?(?:what\s+comes\s+next|what\s+is\s+the\s+next\s+step|what\s+is\s+next|what\s+next|next\s+step|what\s+happens\s+next|continue\s+with\s+(?:the\s+)?next\s+steps?|adutha\s+step\s+enna|அடுத்த\s+படி\s+என்ன|அடுத்த\s+கட்டம்\s+என்ன|அடுத்து\s+என்ன)\b[?.!]*$",
+        msg
+    ))
+    if _next_step_q:
+        _last_text = ""
+        if chat_history:
+            for _m in reversed(chat_history[-4:]):
+                if isinstance(_m, dict):
+                    _c = (_m.get("content") or "").lower()
+                    if _c:
+                        _last_text += " " + _c
+        if re.search(r"\b(?:dis|deputy\s+inspector)\b", _last_text):
+            return "AFTER:dis"
+        elif re.search(r"\b(?:sd|draughtsman|draftsman)\b", _last_text):
+            return "AFTER:sd"
+        elif re.search(r"\b(?:sis|sub\s+inspector|surveyor|isd|nisd|0153|0154)\b", _last_text):
+            return "AFTER:sis"
+        else:
+            return "CLARIFY_WORKFLOW"
     _who = re.search(r"\bwho\s+(?:app?rov\w*|signs?|decides|gives\s+the\s+final)\b.*\b(isd|nisd)\b", msg)
     if _who:
         return "WHO:" + _who.group(1).upper()
@@ -13937,6 +14227,10 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
 
 def _workflow_steps_answer(topic: str, is_tamil: bool, brief: bool = False) -> str:
     lang = "ta" if is_tamil else "en"
+    if topic == "CLARIFY_WORKFLOW":
+        return ("Do you mean the ISD (0154) workflow (Involving Sub-Division) or NISD (0153) workflow (Not Involving Sub-Division)? Please specify which procedure you would like to know the next steps for."
+                if not is_tamil else
+                "ISD (0154) பணிப்பாய்வா அல்லது NISD (0153) பணிப்பாய்வா? எந்த நடைமுறையின் அடுத்த கட்டத்தை அறிய விரும்புகிறீர்கள் என்று குறிப்பிடவும்.")
     if topic.startswith("GLOSS:"):
         return _GLOSSARY[topic[6:]][1 if is_tamil else 0]
     if topic.startswith("AFTER:"):
@@ -17859,6 +18153,11 @@ _STAGE_DEF_RE = re.compile(
 async def _howto_turn(message, session_id, officer, db, chat_history):
     """Policy / how-to questions with no application in them: answered from the reference documents (howto_qa)."""
     text = (message or "").strip()
+    _oid = getattr(officer, "officer_id", None) or getattr(officer, "id", None)
+    _is_att = (await attachment_qa.attachment_topic_active(db, session_id)
+               or await attachment_qa.any_active_documents(db, _oid, session_id))
+    if _is_att:
+        return None
     if (re.search(r"\b(?:first|second|third|fourth|fifth|last|top)\s+(?:one|application|file)\b|\b(?:1st|2nd|3rd|4th|5th)\b", text, re.IGNORECASE)
             and not extract_application_number(text) and len(text.split()) <= 8
             and not any(re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", str(m.get("content") if isinstance(m, dict) else m))
@@ -18434,6 +18733,35 @@ async def _answer_multi(plan, message, session_id, officer, db, chat_history):
     return out
 
 
+_CONTINUATION_COMMAND_RE = re.compile(
+    r"^(?:please\s+)?(?:continue|resume|proceed|go\s+on|keep\s+going|carry\s+on|"
+    r"show\s+(?:the\s+)?(?:rest|remaining\s+part)|the\s+rest|finish\s+the\s+remaining\s+(?:part|steps)|"
+    r"continue\s+(?:the\s+)?remaining\s+part|continue\s+from\s+(?:where\s+you\s+stopped|before)|"
+    r"continue\s+where\s+we\s+left\s+off|let'?s\s+continue|continue\s+our\s+conversation|"
+    r"resume\s+our\s+conversation|pick\s+up\s+where\s+we\s+left\s+off|continue\s+the\s+previous\s+answer|"
+    r"meethi\s*(?:sollu|pesu)?|thodaru|thodarunga|"
+    r"தொடரவும்|தொடர்ந்து\s*பேசுவோம்|நிறுத்திய\s*இடத்திலிருந்து(?:\s*தொடரவும்)?|மீதி)\s*[.!?]*$",
+    re.IGNORECASE
+)
+
+
+def _is_incomplete_answer(last_assistant_msg: str, user_prompt: str) -> bool:
+    if not last_assistant_msg:
+        return False
+    if re.search(r"where\s+you\s+stopped|remaining\s+part|remaining\s+steps|resume|finish\s+the|நிறுத்திய\s*இடத்திலிருந்து|மீதி", user_prompt, re.I):
+        return True
+    m = last_assistant_msg.strip()
+    if m.endswith("...") or m.endswith("…") or m.endswith(":") or m.endswith("-"):
+        return True
+    if re.search(r"\n\s*(?:[-*]|\d+\.)\s*$", m):
+        return True
+    if m.count("```") % 2 != 0:
+        return True
+    if len(m) > 100 and m[-1] not in (".", "!", "?", ":", ")", '"', "'", "*", ">", "”", "’"):
+        return True
+    return False
+
+
 async def process_chat(
     message: str,
     session_id: str,
@@ -18722,6 +19050,135 @@ async def _process_chat_impl(
         _followup_ctx = (await _load_followup_context(db, session_id, chat_history, _original_message,
                                                       officer_id=officer.officer_id if officer else None)
                          or _context_from_history(chat_history))
+
+        # Continuation handler (context-aware resumption, pagination, and elaboration)
+        if _CONTINUATION_COMMAND_RE.match(_original_message.strip()):
+            _is_att_active = (await attachment_qa.attachment_topic_active(db, session_id) or
+                              await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id))
+            _is_list_active = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION_LIST)
+            if not _is_att_active and not _is_list_active:
+                _prev_user_q = ""
+                _prev_asst_a = ""
+                if chat_history:
+                    for _m in reversed(chat_history):
+                        if not _prev_asst_a and _m.get("role") == "assistant":
+                            _prev_asst_a = _m.get("content") or ""
+                        elif not _prev_user_q and _m.get("role") == "user":
+                            _prev_user_q = _m.get("content") or ""
+                        if _prev_asst_a and _prev_user_q:
+                            break
+
+                # Case 1: Empty session / No prior context
+                if not _prev_asst_a and not _followup_ctx:
+                    _empty_text = (
+                        "தொடர்வதற்கு முந்தைய தலைப்போ பணியோ எதுவும் இல்லை. விண்ணப்பம், நில அளவை எண், சேவை குறியீடு அல்லது ஆவணம் பற்றி கேளுங்கள்."
+                        if language in ("ta", "tanglish") else
+                        "There is no previous topic or task to continue from. Please ask about an application, survey number, service code, or upload a document."
+                    )
+                    logger.info("Continuation requested with no context; asked for domain topic")
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_empty_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=None
+                    )
+                    return {
+                        "response": _empty_text, "language": language, "intent": "continuation_clarification",
+                        "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "context_used": False, "response_time_ms": int((time.time() - start_time) * 1000),
+                        "table_data": None
+                    }
+
+                # Case 2: Incomplete / Truncated previous answer (Type A resumption)
+                if _is_incomplete_answer(_prev_asst_a, _original_message):
+                    logger.info("Resuming truncated/incomplete previous answer via LLM")
+                    if language in ("ta", "tanglish"):
+                        _resump_prompt = (
+                            f"முந்தைய பதில் முழுமையடையாமல் நின்றது.\n\n"
+                            f"[கேள்வி]:\n{_prev_user_q}\n\n"
+                            f"[இதுவரை வழங்கப்பட்ட பகுதி பதில்]:\n{_prev_asst_a}\n\n"
+                            f"ஏற்கனவே கூறியவற்றை மீண்டும் கூறாமல், நிறுத்திய இடத்திலிருந்து தடையின்றி விடையைத் தொடரவும்:"
+                        )
+                    else:
+                        _resump_prompt = (
+                            f"The previous answer to the question was cut off or incomplete.\n\n"
+                            f"[Original Question]:\n{_prev_user_q}\n\n"
+                            f"[Partial Answer Provided So Far]:\n{_prev_asst_a}\n\n"
+                            f"Please continue the answer seamlessly from where it was cut off without repeating what has already been said:"
+                        )
+                    _res_text = await call_llama(_resump_prompt)
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_res_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_followup_ctx.to_json() if _followup_ctx else None
+                    )
+                    return {
+                        "response": _res_text, "language": language, "intent": "resumed_answer",
+                        "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                        "table_data": None
+                    }
+
+                # Case 3: Service code in context (Type B service code expansion)
+                _sc_code = None
+                if _followup_ctx and _followup_ctx.entity == fctx.ENTITY_SERVICE_CODE:
+                    _sc_code = (_followup_ctx.filters or {}).get("service_code") or (_followup_ctx.application_numbers[0] if _followup_ctx.application_numbers else None)
+                if not _sc_code and _prev_asst_a:
+                    _m_code = re.search(r"\b(015[1-9]|isd|nisd)\b", (_prev_user_q + " " + _prev_asst_a).lower())
+                    if _m_code:
+                        _sc_code = _m_code.group(1).upper()
+                if _sc_code:
+                    logger.info(f"Continuation expanding service code {_sc_code}")
+                    _sc_text = await _service_code_lookup_answer_natural(
+                        f"explain in detail {_sc_code}", language in ("ta", "tanglish"), brief=False,
+                        language=language, chat_history=chat_history
+                    )
+                    _sc_ctx = fctx.FollowupContext(entity=fctx.ENTITY_SERVICE_CODE, application_numbers=[_sc_code],
+                                                  filters={"service_code": _sc_code}, query_type="Service Code")
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_sc_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_sc_ctx.to_json()
+                    )
+                    return {
+                        "response": _sc_text, "language": language, "intent": "service_code_lookup",
+                        "sources": ["workflow_guide.txt"], "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                        "table_data": None
+                    }
+
+                # Case 4: Single application in context (Type B application expansion)
+                if _followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION and _followup_ctx.application_numbers:
+                    _app_num = _followup_ctx.application_numbers[0]
+                    logger.info(f"Continuation expanding application details for {_app_num}")
+                    _original_message = message = f"more details for {_app_num}"
+
+                # Case 5: Completed general answer in context (Type B topic continuation)
+                elif _prev_user_q:
+                    logger.info("Continuation on completed general turn; offering elaboration")
+                    _topic_prompt = (
+                        f"முந்தைய தலைப்பு: \"{_prev_user_q}\".\n\nஇது குறித்து கூடுதல் விவரங்கள் தேவையா, அல்லது குறிப்பிட்ட விண்ணப்பம், நில அளவை எண், சேவை குறியீடு அல்லது பணிப்பாய்வு பற்றி அறிய விரும்புகிறீர்களா?"
+                        if language in ("ta", "tanglish") else
+                        f"The previous topic was about: \"{_prev_user_q}\".\n\nWould you like more details on this topic, or would you like to inquire about a specific application, survey number, service code, or workflow step?"
+                    )
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_topic_prompt, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_followup_ctx.to_json() if _followup_ctx else None
+                    )
+                    return {
+                        "response": _topic_prompt, "language": language, "intent": "topic_continuation",
+                        "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                        "table_data": None
+                    }
         _sort_msg, _sort_reset = fctx.normalise_sort_negation(_original_message, _followup_ctx)
         if _sort_msg != _original_message:
             logger.info(f"Sort negation resolved: '{_original_message}' -> '{_sort_msg}'")
@@ -19105,6 +19562,8 @@ async def _process_chat_impl(
                 and not attachment_qa.is_negative_correction(_original_message)
                 and not attachment_qa.is_project_relevance_request(_original_message)
                 and not attachment_qa.location_reference(_original_message)
+                and not await attachment_qa.attachment_topic_active(db, session_id)
+                and not await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id)
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
                      or _is_bare_fragment_without_context(_original_message, _followup_ctx, chat_history))):
@@ -19682,9 +20141,47 @@ async def _process_chat_impl(
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
         )
-        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked) else await attachment_qa.plan_answer(
-            db=db, officer=officer, session_id=session_id,
-            message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
+        # Which antecedent a negative correction ("I don't think so", "not
+        # that") disputes -- decided BEFORE the attachment layer gets a
+        # chance to claim it just because the topic happens to be active.
+        # See `_route_negative_correction()` (FLINE-NEGATION-001).
+        _neg_route = await _route_negative_correction(message, chat_history, db, session_id, language)
+        if _neg_route and _neg_route["route"] == "ambiguous":
+            _neg_resp = _neg_route["response"]["response"]
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_neg_resp, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_neg_route.get("carry_context")
+            )
+            return {
+                "response": _neg_resp, "language": language,
+                "intent": _neg_route["response"].get("intent", "general_negative_correction"),
+                "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None
+            }
+        if _neg_route and _neg_route["route"] == "attachment":
+            # The router already established -- from the message itself, not
+            # from `attachment_topic_active()`'s single-last-turn read -- that
+            # this correction is about the file(s). Calling the handler
+            # directly here (rather than letting `plan_answer()` re-derive
+            # topic-active state and possibly decline) is what makes an
+            # EXPLICIT file reference work even when an intervening turn (for
+            # instance this router's own "ambiguous" clarification, saved
+            # with no attachment context) would otherwise have reset that
+            # flag. No DB write happens here -- only a read of which
+            # documents are active.
+            _neg_docs = await attachment_qa.attachment_store.active_documents(
+                db, officer.officer_id if officer else None, session_id)
+            _att_plan = await attachment_qa._handle_negative_correction(
+                db, officer, session_id, message, language, _neg_docs) if _neg_docs else None
+        else:
+            _force_general_negcorr = bool(_neg_route and _neg_route["route"] == "general")
+            _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked or _force_general_negcorr) else await attachment_qa.plan_answer(
+                db=db, officer=officer, session_id=session_id,
+                message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
             if _att_plan.prompt:
                 res_txt = await call_llama(_att_plan.prompt)
@@ -19727,6 +20224,24 @@ async def _process_chat_impl(
                 "citations": _att_plan.citations,
                 "document_ids": _att_plan.document_ids,
             }
+
+        if _att_plan is None and not _contentless_message(_original_message) and attachment_qa.is_negative_correction(_original_message):
+            _neg_data = _build_general_negative_correction_response(_original_message, chat_history, language, officer)
+            if _neg_data:
+                _res_text = _neg_data["response"]
+                await save_chat_messages(
+                    db=db, session_id=session_id, user_message=_original_message,
+                    assistant_message=_res_text, language=language,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    officer_id=officer.officer_id if officer else None,
+                    structured_context=None
+                )
+                return {
+                    "response": _res_text, "language": language, "intent": _neg_data.get("intent", "general_negative_correction"),
+                    "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                    "table_data": None
+                }
 
 
 
@@ -24858,6 +25373,126 @@ async def _process_chat_stream_impl(
         _followup_ctx = (await _load_followup_context(db, session_id, chat_history, _original_message,
                                                       officer_id=officer.officer_id if officer else None)
                          or _context_from_history(chat_history))
+
+        # Continuation handler (context-aware resumption, pagination, and elaboration) (STREAMING)
+        if _CONTINUATION_COMMAND_RE.match(_original_message.strip()):
+            _is_att_active = (await attachment_qa.attachment_topic_active(db, session_id) or
+                              await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id))
+            _is_list_active = bool(_followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION_LIST)
+            if not _is_att_active and not _is_list_active:
+                import json as _json_cont
+                _prev_user_q = ""
+                _prev_asst_a = ""
+                if chat_history:
+                    for _m in reversed(chat_history):
+                        if not _prev_asst_a and _m.get("role") == "assistant":
+                            _prev_asst_a = _m.get("content") or ""
+                        elif not _prev_user_q and _m.get("role") == "user":
+                            _prev_user_q = _m.get("content") or ""
+                        if _prev_asst_a and _prev_user_q:
+                            break
+
+                # Case 1: Empty session / No prior context
+                if not _prev_asst_a and not _followup_ctx:
+                    _empty_text = (
+                        "தொடர்வதற்கு முந்தைய தலைப்போ பணியோ எதுவும் இல்லை. விண்ணப்பம், நில அளவை எண், சேவை குறியீடு அல்லது ஆவணம் பற்றி கேளுங்கள்."
+                        if language in ("ta", "tanglish") else
+                        "There is no previous topic or task to continue from. Please ask about an application, survey number, service code, or upload a document."
+                    )
+                    logger.info("Continuation requested with no context; asked for domain topic (stream)")
+                    yield f"data: {_json_cont.dumps({'content': _empty_text}, ensure_ascii=False)}\n\n".encode('utf-8')
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_empty_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=None
+                    )
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                # Case 2: Incomplete / Truncated previous answer (Type A resumption)
+                if _is_incomplete_answer(_prev_asst_a, _original_message):
+                    logger.info("Resuming truncated/incomplete previous answer via LLM (stream)")
+                    if language in ("ta", "tanglish"):
+                        _resump_prompt = (
+                            f"முந்தைய பதில் முழுமையடையாமல் நின்றது.\n\n"
+                            f"[கேள்வி]:\n{_prev_user_q}\n\n"
+                            f"[இதுவரை வழங்கப்பட்ட பகுதி பதில்]:\n{_prev_asst_a}\n\n"
+                            f"ஏற்கனவே கூறியவற்றை மீண்டும் கூறாமல், நிறுத்திய இடத்திலிருந்து தடையின்றி விடையைத் தொடரவும்:"
+                        )
+                    else:
+                        _resump_prompt = (
+                            f"The previous answer to the question was cut off or incomplete.\n\n"
+                            f"[Original Question]:\n{_prev_user_q}\n\n"
+                            f"[Partial Answer Provided So Far]:\n{_prev_asst_a}\n\n"
+                            f"Please continue the answer seamlessly from where it was cut off without repeating what has already been said:"
+                        )
+                    _full_res_text = ""
+                    async for _chunk in call_llama_stream(_resump_prompt):
+                        _full_res_text += _chunk
+                        yield f"data: {_json_cont.dumps({'content': _chunk}, ensure_ascii=False)}\n\n".encode('utf-8')
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_full_res_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_followup_ctx.to_json() if _followup_ctx else None
+                    )
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                # Case 3: Service code in context (Type B service code expansion)
+                _sc_code = None
+                if _followup_ctx and _followup_ctx.entity == fctx.ENTITY_SERVICE_CODE:
+                    _sc_code = (_followup_ctx.filters or {}).get("service_code") or (_followup_ctx.application_numbers[0] if _followup_ctx.application_numbers else None)
+                if not _sc_code and _prev_asst_a:
+                    _m_code = re.search(r"\b(015[1-9]|isd|nisd)\b", (_prev_user_q + " " + _prev_asst_a).lower())
+                    if _m_code:
+                        _sc_code = _m_code.group(1).upper()
+                if _sc_code:
+                    logger.info(f"Continuation expanding service code {_sc_code} (stream)")
+                    _sc_text = await _service_code_lookup_answer_natural(
+                        f"explain in detail {_sc_code}", language in ("ta", "tanglish"), brief=False,
+                        language=language, chat_history=chat_history
+                    )
+                    _sc_ctx = fctx.FollowupContext(entity=fctx.ENTITY_SERVICE_CODE, application_numbers=[_sc_code],
+                                                  filters={"service_code": _sc_code}, query_type="Service Code")
+                    yield f"data: {_json_cont.dumps({'content': _sc_text}, ensure_ascii=False)}\n\n".encode('utf-8')
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_sc_text, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_sc_ctx.to_json()
+                    )
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                # Case 4: Single application in context (Type B application expansion)
+                if _followup_ctx and _followup_ctx.entity == fctx.ENTITY_APPLICATION and _followup_ctx.application_numbers:
+                    _app_num = _followup_ctx.application_numbers[0]
+                    logger.info(f"Continuation expanding application details for {_app_num} (stream)")
+                    _original_message = message = f"more details for {_app_num}"
+
+                # Case 5: Completed general answer in context (Type B topic continuation)
+                elif _prev_user_q:
+                    logger.info("Continuation on completed general turn; offering elaboration (stream)")
+                    _topic_prompt = (
+                        f"முந்தைய தலைப்பு: \"{_prev_user_q}\".\n\nஇது குறித்து கூடுதல் விவரங்கள் தேவையா, அல்லது குறிப்பிட்ட விண்ணப்பம், நில அளவை எண், சேவை குறியீடு அல்லது பணிப்பாய்வு பற்றி அறிய விரும்புகிறீர்களா?"
+                        if language in ("ta", "tanglish") else
+                        f"The previous topic was about: \"{_prev_user_q}\".\n\nWould you like more details on this topic, or would you like to inquire about a specific application, survey number, service code, or workflow step?"
+                    )
+                    yield f"data: {_json_cont.dumps({'content': _topic_prompt}, ensure_ascii=False)}\n\n".encode('utf-8')
+                    await save_chat_messages(
+                        db=db, session_id=session_id, user_message=_original_message,
+                        assistant_message=_topic_prompt, language=language,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        officer_id=officer.officer_id if officer else None,
+                        structured_context=_followup_ctx.to_json() if _followup_ctx else None
+                    )
+                    yield b"data: [DONE]\n\n"
+                    return
         _sort_msg, _sort_reset = fctx.normalise_sort_negation(_original_message, _followup_ctx)
         if _sort_msg != _original_message:
             logger.info(f"Sort negation resolved: '{_original_message}' -> '{_sort_msg}'")
@@ -25173,6 +25808,8 @@ async def _process_chat_stream_impl(
                 and not attachment_qa.is_negative_correction(_original_message)
                 and not attachment_qa.is_project_relevance_request(_original_message)
                 and not attachment_qa.location_reference(_original_message)
+                and not await attachment_qa.attachment_topic_active(db, session_id)
+                and not await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id)
                 and (_is_orphan_list_followup(_original_message, _followup_ctx)
                      or _is_empty_sort_followup(_original_message, _followup_ctx)
                      or _is_bare_fragment_without_context(_original_message, _followup_ctx, chat_history))):
@@ -25632,9 +26269,34 @@ async def _process_chat_stream_impl(
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
         )
-        _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked) else await attachment_qa.plan_answer(
-            db=db, officer=officer, session_id=session_id,
-            message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
+        # Same antecedent-routing decision as the non-streaming path, just
+        # delivered as a single SSE chunk instead of a plain return value.
+        # See `_route_negative_correction()` (FLINE-NEGATION-001).
+        _neg_route = await _route_negative_correction(message, chat_history, db, session_id, language)
+        if _neg_route and _neg_route["route"] == "ambiguous":
+            import json as _json_negroute
+            _neg_resp = _neg_route["response"]["response"]
+            yield f"data: {_json_negroute.dumps({'content': _neg_resp})}\n\n".encode('utf-8')
+            await save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_neg_resp, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_neg_route.get("carry_context")
+            )
+            return
+        if _neg_route and _neg_route["route"] == "attachment":
+            # Same direct-call reasoning as the non-streaming path -- see
+            # that site's comment (FLINE-NEGATION-001).
+            _neg_docs = await attachment_qa.attachment_store.active_documents(
+                db, officer.officer_id if officer else None, session_id)
+            _att_plan = await attachment_qa._handle_negative_correction(
+                db, officer, session_id, message, language, _neg_docs) if _neg_docs else None
+        else:
+            _force_general_negcorr = bool(_neg_route and _neg_route["route"] == "general")
+            _att_plan = None if (_attachment_turn_is_not_about_a_file(message) or _cm_blocked or _force_general_negcorr) else await attachment_qa.plan_answer(
+                db=db, officer=officer, session_id=session_id,
+                message=attachment_qa.drop_appended_numbers(message, _RAW_MESSAGE.get()), intent=intent, language=language)
         if _att_plan is not None:
             import json as _json_upl
             _acc = ""
@@ -25674,6 +26336,21 @@ async def _process_chat_stream_impl(
                 structured_context=_att_ctx
             )
             return
+
+        if _att_plan is None and not _contentless_message(_original_message) and attachment_qa.is_negative_correction(_original_message):
+            _neg_data = _build_general_negative_correction_response(_original_message, chat_history, language, officer)
+            if _neg_data:
+                import json as _json_neg
+                _res_text = _neg_data["response"]
+                yield f"data: {_json_neg.dumps({'content': _res_text})}\n\n".encode('utf-8')
+                await save_chat_messages(
+                    db=db, session_id=session_id, user_message=_original_message,
+                    assistant_message=_res_text, language=language,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    officer_id=officer.officer_id if officer else None,
+                    structured_context=None
+                )
+                return
 
 
 

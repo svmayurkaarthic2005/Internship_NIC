@@ -1465,9 +1465,12 @@ The same bytes uploaded again in the same chat reuse the existing document (sess
 `content_hash`) and renew its window. Because the store is PostgreSQL, a restart
 loses nothing that has not expired — the exact failure the in-memory store had.
 
-**Still unsupported, deliberately:** scanned / image-only PDFs (recorded as
-`no_extractable_text`, explained to the officer, never answered from), images,
-and legacy `.doc`. There is no OCR and no vision anywhere in this path.
+**Document extraction & OCR support:**
+- **Searchable PDFs, Word (.docx), CSV, Plain Text (.txt):** Text and tabular structures are extracted directly using native parsers (`pypdf`, `python-docx`, `csv.DictReader`).
+- **Scanned / image-only PDF pages (OCR fallback):** When a PDF page contains fewer than `OCR_MIN_CHARS_PER_PAGE` (20) selectable characters, it falls back to page-level OCR via Tesseract (`backend.services.doc_extract._ocr_pdf_pages`, reusing `backend.ingest._ocr_page` with English + Tamil language models `eng+tam`). Pages successfully OCR'd are recorded in `doc.ocr_pages`; pages where OCR yields no text are recorded in `doc.failed_ocr_pages`.
+- **Standalone image files (unsupported):** Uploads of standalone image files (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.tiff`) remain unsupported and are rejected at the upload endpoint with an explanatory message ("Images are not read - this assistant reads text only, and does not do vision / OCR over image files.").
+- **Unsupported formats:** Legacy `.doc` (Word 97-2003 binary), audio, and video files are unsupported.
+- **Extraction limitations:** OCR quality depends on scan resolution and legibility; handwritten text may not be recognized. Exact physical line numbering is maintained for text files; OCR'd PDF pages are indexed by page number.
 
 **Config** (`backend/config.py`, all `UPLOAD_*`): file bytes, pages, extracted
 chars, CSV rows/columns, extraction timeout, chunk size/overlap, retrieval
