@@ -1,0 +1,10 @@
+SIS Upload QA Fixture -- Line Position Test (synthetic, not an official record)
+
+Record one begins here. Service code 0154 applies to survey 701.
+Record one continues: subdivision number is 701/1, application TEST/0154/99/000701.
+
+Record two begins here. Service code 0178 (F-Line) applies to survey 702.
+Ithu Tamil varigal -- survey number 702, subdivision 702/1 (தமிழ் வரி: சர்வே எண் 702).
+Record two continues: application TEST/0178/99/000702, status Approved.
+Spelling mistake line: Servcie cod 0154 repeted here for survey 701 agian.
+Final line contains the known value: LAST-LINE-VALUE-ALPHA-999.

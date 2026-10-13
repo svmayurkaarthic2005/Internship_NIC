@@ -1474,6 +1474,43 @@ chars, CSV rows/columns, extraction timeout, chunk size/overlap, retrieval
 top-k, evidence floor, docs per session, retention hours, embeddings on/off,
 raw-file storage and its directory.
 
+### A survey number from an attachment carries its subdivision number too
+
+`survey_subdivision_pairs()` / `_render_survey_pairs_answer()` /
+`_render_survey_subdivision_table()` in `attachment_qa.py`; the same
+column-pairing rule in `csv_ops.py`'s `_sibling_subdivision_column()` /
+`execute()`. `python SIS_Upload_Regression_Tests/test_survey_subdivision_pairing.py`
+(22 checks, no LLM). Full writeup: `SIS_Survey_Subdivision_Pairing_Fix_Report.md`.
+
+Whenever an uploaded document or CSV answer names a survey number, it now
+carries whatever subdivision number(s) sit beside it in the source — the
+database-path rule in "Database Layout" above (an ISD parcel carries two
+sub-division numbers) applies to attachment evidence the same way, not just
+to the ORM-backed `survey_detail` intent.
+
+- **Free text**: `survey_subdivision_pairs()` scans a window after each
+  survey-number match (bounded by the next survey match or
+  `_PAIR_WINDOW_CHARS = 400`) for subdivision matches, excluding boundary
+  mentions ("South — Town Survey Number 999"), and keeps every distinct
+  subdivision in document order — a survey with two sub-divisions (e.g. an
+  ISD parcel split two ways) gets both, never just the first.
+- **CSV**: `_sibling_subdivision_column()` finds a requested survey column's
+  subdivision column by **header name** (never position), and
+  `render_csv_result()` renders `row N: V (subdivision: SUB or Not specified
+  in source)` instead of silently dropping the paired column.
+- **Missing subdivision is stated, never guessed**: `"Not specified in
+  source"`, both in prose and as its own table row.
+- **Known gaps, confirmed and documented, not fixed in this pass** (see
+  `SIS_Survey_Subdivision_Failure_Cases.jsonl`, PAIR-005/006): a reverse
+  lookup naming one survey number and asking for its subdivisions ("find all
+  subdivisions belonging to survey 101") is not a registered shape and falls
+  through to the ordinary LLM/retrieval path; a follow-up after a paired
+  enumeration answer ("what other subdivisions belong to it?") does not
+  resolve, because `_enumerate_entities_answer()` / `_render_survey_pairs_answer()`
+  record no `FollowupContext` for the next turn to resolve against — the same
+  pre-existing gap "Implicit follow-ups" above documents for the ORM-backed
+  intents, just not yet closed for attachment enumeration answers.
+
 ## Agent layer — LLM tool calling
 
 `backend/services/agent.py` + `backend/services/agent_tools.py`.

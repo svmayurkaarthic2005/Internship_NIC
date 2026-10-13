@@ -686,6 +686,16 @@ _ALIASES: Dict[str, Tuple[str, ...]] = {
     "status": ("status", "நிலை"),
     "owner": ("owner", "உரிமையாளர்"),
     "date": ("date", "தேதி"),
+    # Not a cross-script pair like the rest of this table -- a plain English
+    # hyphen-spelling variant. `_TOKEN_RE` keeps a hyphen as part of its
+    # token (needed for codes like survey sub-numbers), so "subdivision" in
+    # a question and "Sub-division" in a document tokenise to two different
+    # strings and never matched at all (lexical score 0.0, even though the
+    # document plainly says "Sub-division Number: 777/9") -- a real officer
+    # question ("what subdivision number belongs to the first record?")
+    # could not find evidence that is sitting right there.
+    "subdivision": ("subdivision", "sub-division", "sub division"),
+    "sub-division": ("subdivision", "sub-division", "sub division"),
 }
 
 _TAMIL_RE = re.compile(r"[஀-௿]")

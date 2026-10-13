@@ -446,6 +446,22 @@ def _matches(row: Dict[str, str], cond: Condition) -> bool:
     return False
 
 
+def _sibling_subdivision_column(survey_column: str, headers: Sequence[str]) -> Optional[str]:
+    """A survey-number column's own subdivision counterpart, found by header
+    NAME (e.g. "synthetic_survey_no" -> "synthetic_subdivision_no"), never
+    guessed from column position or row order -- a survey number is never
+    returned isolated from its subdivision when the subdivision column is
+    right there in the same table. Returns None for any column that is not
+    itself survey-number-shaped, or when no subdivision column exists."""
+    if not survey_column or "survey" not in survey_column.lower():
+        return None
+    for h in headers:
+        hl = h.lower()
+        if h != survey_column and ("subdivision" in hl or "sub_division" in hl or "subdiv" in hl):
+            return h
+    return None
+
+
 def execute(operation: CsvOperation, headers: Sequence[str],
             rows: Sequence[Dict[str, str]]) -> CsvResult:
     """Run the operation over the stored rows. Rows are 1-based by position."""
@@ -476,8 +492,19 @@ def execute(operation: CsvOperation, headers: Sequence[str],
         res.samples = [dict(r, **{"_row": n}) for n, r in matched[:20]]
         if operation.op == OP_FILTER and operation.column:
             # A projection: the asked-for column, cell by cell, with its row.
-            res.value = [(n, (r.get(operation.column) or "").strip())
-                         for n, r in matched[:20]]
+            sub_col = _sibling_subdivision_column(operation.column, headers)
+            if sub_col:
+                # A survey-number column: pair each value with its own row's
+                # subdivision value (never another row's), "" meaning
+                # genuinely blank in the source -- render_csv_result() turns
+                # that into "Not specified in source", never a guess.
+                res.value = [(n, (r.get(operation.column) or "").strip(),
+                             (r.get(sub_col) or "").strip())
+                             for n, r in matched[:20]]
+                res.columns = [operation.column, sub_col]
+            else:
+                res.value = [(n, (r.get(operation.column) or "").strip())
+                             for n, r in matched[:20]]
         return res
 
     if operation.op == OP_GROUP:

@@ -1,0 +1,6 @@
+row,service_code,service_description,application_number,status
+1,0154,Involving Subdivision,TEST/0154/99/000701,Pending
+2,0178,F-Line Urban Demarcation,TEST/0178/99/000702,Approved
+3,0158,Modification,TEST/0158/99/000703,Pending
+4,0153,Not Involving Subdivision,TEST/0153/99/000704,Rejected
+5,0154,Involving Subdivision,TEST/0154/99/000701,Pending

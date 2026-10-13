@@ -1,7 +1,6 @@
 {
   "_disclaimer": "All values in this file and in every fixture it describes are entirely synthetic test data invented for this QA pass. None of it is copied from, or represents, a real SIS officer record, a real application, or any production database row. This file was generated from the fixture-build script (SIS_Upload_QA_Fixtures/_build_fixtures.py) BEFORE any chatbot answers were seen -- it is independent ground truth, not a transcription of chatbot output.",
   "_scope_note": "Only the fixtures actually exercised through the live chatbot UI in this QA pass are recorded here with full expected-answer detail. See SIS_Upload_QA_Report.md for the complete list of fixtures that were built but NOT exercised against the UI (sis_sample_workflow_en.pdf's full follow-up scenario, sis_near_limit_test.txt, sis_oversized_test.txt only tested for rejection not partial-read, Tamil-script PDF OCR, DOCX).",
-
   "sis_extraction_test_en.txt": {
     "type": "txt",
     "chars_expected": 712,
@@ -25,31 +24,107 @@
       "Which officer approved this? (no approval or officer name appears)"
     ]
   },
-
   "sis_survey_records_en.csv": {
     "type": "csv",
     "chars_expected": 3875,
     "row_count": 12,
-    "columns": ["test_record_id", "synthetic_survey_no", "synthetic_subdivision_no",
-                "synthetic_ward", "synthetic_block", "synthetic_application_ref",
-                "synthetic_status", "synthetic_area_sqm", "synthetic_date", "notes"],
+    "columns": [
+      "test_record_id",
+      "synthetic_survey_no",
+      "synthetic_subdivision_no",
+      "synthetic_ward",
+      "synthetic_block",
+      "synthetic_application_ref",
+      "synthetic_status",
+      "synthetic_area_sqm",
+      "synthetic_date",
+      "notes"
+    ],
     "rows_by_id": {
-      "QA-CSV-001": {"row": 1, "survey_no": "801", "status": "Pending"},
-      "QA-CSV-002": {"row": 2, "survey_no": "802", "status": "Approved"},
-      "QA-CSV-003": {"row": 3, "survey_no": "803", "status": "Rejected"},
-      "QA-CSV-004": {"row": 4, "survey_no": "804", "status": "Pending"},
-      "QA-CSV-005": {"row": 5, "survey_no": "805", "status": "Pending", "note": "conflicts with QA-CSV-011 (duplicate survey+app ref)"},
-      "QA-CSV-006": {"row": 6, "survey_no": "806", "status": "Approved"},
-      "QA-CSV-007": {"row": 7, "survey_no": "807", "status": "Rejected"},
-      "QA-CSV-008": {"row": 8, "survey_no": "808", "status": "Pending"},
-      "QA-CSV-009": {"row": 9, "survey_no": "809", "status": "Approved"},
-      "QA-CSV-010": {"row": 10, "survey_no": "810", "status": "Pending"},
-      "QA-CSV-011": {"row": 11, "survey_no": "805", "status": "Approved", "note": "DELIBERATE CONFLICT with QA-CSV-005: same survey_no + application_ref, different status/area"},
-      "QA-CSV-012": {"row": 12, "survey_no": "812", "status": "Pending"}
+      "QA-CSV-001": {
+        "row": 1,
+        "survey_no": "801",
+        "status": "Pending"
+      },
+      "QA-CSV-002": {
+        "row": 2,
+        "survey_no": "802",
+        "status": "Approved"
+      },
+      "QA-CSV-003": {
+        "row": 3,
+        "survey_no": "803",
+        "status": "Rejected"
+      },
+      "QA-CSV-004": {
+        "row": 4,
+        "survey_no": "804",
+        "status": "Pending"
+      },
+      "QA-CSV-005": {
+        "row": 5,
+        "survey_no": "805",
+        "status": "Pending",
+        "note": "conflicts with QA-CSV-011 (duplicate survey+app ref)"
+      },
+      "QA-CSV-006": {
+        "row": 6,
+        "survey_no": "806",
+        "status": "Approved"
+      },
+      "QA-CSV-007": {
+        "row": 7,
+        "survey_no": "807",
+        "status": "Rejected"
+      },
+      "QA-CSV-008": {
+        "row": 8,
+        "survey_no": "808",
+        "status": "Pending"
+      },
+      "QA-CSV-009": {
+        "row": 9,
+        "survey_no": "809",
+        "status": "Approved"
+      },
+      "QA-CSV-010": {
+        "row": 10,
+        "survey_no": "810",
+        "status": "Pending"
+      },
+      "QA-CSV-011": {
+        "row": 11,
+        "survey_no": "805",
+        "status": "Approved",
+        "note": "DELIBERATE CONFLICT with QA-CSV-005: same survey_no + application_ref, different status/area"
+      },
+      "QA-CSV-012": {
+        "row": 12,
+        "survey_no": "812",
+        "status": "Pending"
+      }
     },
-    "status_counts": {"Pending": 6, "Approved": 4, "Rejected": 2},
-    "rejected_row_numbers": [3, 7],
-    "non_rejected_row_numbers": [1, 2, 4, 5, 6, 8, 9, 10, 11, 12],
+    "status_counts": {
+      "Pending": 6,
+      "Approved": 4,
+      "Rejected": 2
+    },
+    "rejected_row_numbers": [
+      3,
+      7
+    ],
+    "non_rejected_row_numbers": [
+      1,
+      2,
+      4,
+      5,
+      6,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
     "supported_questions": {
       "How many records are Pending?": 6,
       "How many records are Approved?": 4,
@@ -57,17 +132,25 @@
       "Show all records except rejected.": "rows 1, 2, 4, 5, 6, 8, 9, 10, 11, 12 (10 rows) -- see FAILURE CASE CSV-NEG-001: the chatbot returned only rows 1,2,4,5,8,9,10 (7 rows), silently omitting rows 6, 11 and 12"
     }
   },
-
   "sis_survey_records_en_v2.csv": {
     "type": "csv",
     "chars_expected": 892,
     "row_count": 2,
     "rows_by_id": {
-      "QA-CSV2-001": {"row": 1, "survey_no": "805", "status": "Rejected", "note": "second document; DELIBERATE CONFLICT with sis_survey_records_en.csv row QA-CSV-005 on STATUS (Pending vs Rejected) for the same survey_no + application_ref"},
-      "QA-CSV2-002": {"row": 2, "survey_no": "901", "status": "Pending", "note": "unique to this document"}
+      "QA-CSV2-001": {
+        "row": 1,
+        "survey_no": "805",
+        "status": "Rejected",
+        "note": "second document; DELIBERATE CONFLICT with sis_survey_records_en.csv row QA-CSV-005 on STATUS (Pending vs Rejected) for the same survey_no + application_ref"
+      },
+      "QA-CSV2-002": {
+        "row": 2,
+        "survey_no": "901",
+        "status": "Pending",
+        "note": "unique to this document"
+      }
     }
   },
-
   "sis_sample_workflow_en.pdf": {
     "type": "pdf",
     "pages_expected": 3,
@@ -81,7 +164,6 @@
     "not_run_against_ui": true,
     "not_run_reason": "Extraction verified directly (3 segments, correct page split, correct text) but the full Scenario B follow-up chain (prerequisites / second step / exceptions / table / add-source-column / remove-description-column / explain-OCR) was not executed against the live UI in this bounded pass."
   },
-
   "sis_scanned_records_en.pdf": {
     "type": "pdf_scanned_image_only",
     "native_text_layer_chars": 0,
@@ -100,7 +182,6 @@
       "What is the synthetic survey number and status?": "950, Pending -- CONFIRMED EXACT MATCH in live UI test"
     }
   },
-
   "sis_terms_ta.txt": {
     "type": "txt",
     "language": "ta",
@@ -111,13 +192,11 @@
     "synthetic_area_sqm": "388.20",
     "note": "Same identifiers as sis_scanned_records_en.pdf, deliberately, so a cross-document consistency check is possible between the OCR'd scan and the plain Tamil text file."
   },
-
   "sis_oversized_test.txt": {
     "type": "txt",
     "size_bytes": 5454820,
     "expected_behavior": "Rejected by the backend with HTTP 413 and the message 'File exceeds the 5 MB limit.' -- CONFIRMED in live test via the real uploadFile() code path (not a raw API call)."
   },
-
   "sis_near_limit_test.txt": {
     "type": "txt",
     "size_bytes": 5233150,
@@ -125,19 +204,16 @@
     "not_run_against_ui": true,
     "not_run_reason": "Built but not exercised against the UI in this bounded pass -- extraction would also hit UPLOAD_MAX_DOC_CHARS (20,000) truncation, which was not separately verified."
   },
-
   "sis_corrupt.pdf": {
     "type": "pdf_invalid",
     "actual_content": "plain text bytes, not a real PDF, saved with a .pdf extension",
     "expected_behavior": "Rejected with HTTP 422 'This file is not a PDF, whatever its name says.' -- CONFIRMED in live test via the real uploadFile() code path."
   },
-
   "sis_empty.txt": {
     "type": "txt",
     "size_bytes": 0,
     "expected_behavior": "Rejected with HTTP 422 'The file is empty.' -- CONFIRMED in live test via the real uploadFile() code path."
   },
-
   "not_built_fixtures": {
     "sis_sample_workflow_ta.pdf": "SKIPPED -- would need a Tamil-capable TTF embedded via fpdf2; not attempted in this bounded pass.",
     "sis_validation_manual_en.docx": "SKIPPED -- python-docx is available but DOCX extraction/UI testing was not exercised in this bounded pass.",
@@ -145,5 +221,51 @@
     "sis_scanned_records_ta.pdf": "SKIPPED -- Tamil OCR IS confirmed available in this environment (tesseract --list-langs shows 'tam'), so this fixture is buildable and testable, but was not built/run in this bounded pass. Flagged, per the task's own instruction, as blocked-for-later rather than claimed as tested.",
     "sis_low_quality_scan.pdf": "SKIPPED -- not built in this bounded pass.",
     "sis_multi_page_table.pdf": "SKIPPED -- not built in this bounded pass."
+  },
+  "sis_multi_survey_test.txt": {
+    "type": "txt",
+    "note": "Built 2026-10-13 for the enumeration-vs-lookup consistency regression. Not generated by _build_fixtures.py (added directly); values independently fixed here BEFORE the chatbot was asked about this file. Extended 2026-10-13 with Record E (survey 104, TWO distinct subdivisions) for the survey/subdivision-pairing regression.",
+    "unique_survey_numbers": [
+      "101",
+      "102",
+      "103",
+      "104"
+    ],
+    "total_genuine_survey_number_mentions": 5,
+    "survey_number_occurrences": {
+      "101": 2,
+      "102": 1,
+      "103": 1,
+      "104": 1
+    },
+    "excluded_neighbour_mention": "999 (South boundary of Record D -- a neighbouring parcel, must NOT appear as one of this document's own survey numbers)",
+    "subdivision_numbers_by_record": {
+      "A": "101/1",
+      "B": "102/4",
+      "C": "101/1",
+      "D": null,
+      "E": [
+        "104/1A",
+        "104/1B"
+      ]
+    },
+    "supported_questions": {
+      "List every survey number mentioned.": "Unique: 101, 102, 103 (three numbers; 101 is mentioned twice, in Records A and C)",
+      "How many survey-number mentions are there?": 4,
+      "List all unique survey numbers.": "101, 102, 103"
+    },
+    "survey_subdivision_pairs_expected": {
+      "101": [
+        "101/1"
+      ],
+      "102": [
+        "102/4"
+      ],
+      "103": [],
+      "104": [
+        "104/1A",
+        "104/1B"
+      ]
+    }
   }
 }

@@ -243,6 +243,8 @@ parse_intent → deterministic handler ─────────────�
 
 Officers can upload PDFs, DOCX, CSVs, and TXT files (`POST /api/v1/chat/upload`). Evidence is extracted with source locations (page/paragraph/row), stored in `chat_attachments` / `attachment_chunks` / `attachment_rows`, and cited precisely in answers. CSV arithmetic (count/sum/min/max/group) is computed deterministically — the LLM never touches numbers.
 
+A survey number pulled from an attachment (free text or CSV) is always paired with its subdivision number(s) when the source carries one — see CLAUDE.md's "A survey number from an attachment carries its subdivision number too" for the mechanism, the multi-subdivision case, and the two known-unfixed gaps (reverse lookup, follow-up continuation).
+
 ## API Endpoints
 
 **Authentication**
@@ -341,6 +343,9 @@ python test_igrs_can_queries.py --data
 python test_attachments.py
 python test_attachments.py --fast
 python test_attachments.py --no-db
+
+# Survey/subdivision pairing in attachment answers (free text + CSV)
+python SIS_Upload_Regression_Tests/test_survey_subdivision_pairing.py
 
 # Agent layer (tool calling, authorization, grounding)
 python test_agent_layer.py

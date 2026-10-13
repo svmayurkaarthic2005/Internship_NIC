@@ -148,6 +148,7 @@ Both scripts print a summary and exit non-zero on failure.
 4. **Never let the LLM count or enumerate application numbers** — always fetch from DB and inject into context.
 5. **Never add `print()` in service/router code** — use `get_logger(__name__)` from `backend.utils.logger`.
 6. **Always exclude rejected applications** in query results to avoid ghost data.
+7. **A survey number answered from an uploaded document must carry its subdivision number(s)** when the source has one — don't add a new entity-extraction path for survey numbers without routing it through `survey_subdivision_pairs()` in `attachment_qa.py` (or its CSV counterpart in `csv_ops.py`), or the pairing regresses silently.
 
 ---
 
@@ -162,3 +163,5 @@ Both scripts print a summary and exit non-zero on failure.
 | [`backend/services/postgres.py`](file:///c:/proj/nic_internship/backend/services/postgres.py) | All DB query functions |
 | [`backend/utils/fuzzy.py`](file:///c:/proj/nic_internship/backend/utils/fuzzy.py) | Fuzzy month/token matching logic |
 | [`test_questions_206.txt`](file:///c:/proj/nic_internship/test_questions_206.txt) | Largest question bank for manual testing |
+| [`backend/services/attachment_qa.py`](file:///c:/proj/nic_internship/backend/services/attachment_qa.py) | Uploaded-document Q&A: entity extraction, enumeration, survey/subdivision pairing |
+| [`SIS_Survey_Subdivision_Pairing_Fix_Report.md`](file:///c:/proj/nic_internship/SIS_Survey_Subdivision_Pairing_Fix_Report.md) | Survey/subdivision pairing requirement — design, tests, known gaps |

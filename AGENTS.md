@@ -236,6 +236,18 @@ statuses to fit.
 
 **All queries exclude `rejected` applications** to prevent ghost data appearing in lists.
 
+### Chat attachments — uploaded files as cited evidence
+
+Officers can upload PDFs/DOCX/CSV/TXT (`POST /api/v1/chat/upload`); evidence is
+extracted with source locations and stored in `chat_attachments` /
+`attachment_chunks` / `attachment_rows` (`backend/services/attachment_store.py`,
+`attachment_qa.py`, `csv_ops.py`). No evidence below the lexical floor, no LLM
+call; CSV arithmetic is computed, never narrated. A survey number pulled from
+an attachment is always paired with its subdivision number(s) when the source
+carries one (`survey_subdivision_pairs()` in `attachment_qa.py`) — see
+CLAUDE.md's "Chat attachments" section for the full pipeline and the
+survey/subdivision pairing subsection for that rule's mechanism and known gaps.
+
 ---
 
 ## Coding Conventions
