@@ -313,27 +313,30 @@ def _svc_name_alias_match(text: str) -> Optional[str]:
 
 
 def _all_alias_codes(text: str) -> List[str]:
-    """Every code with an alias present as a substring, in order of first
-    appearance -- unlike `_svc_name_alias_match()` (which returns only the
-    single longest/most-specific alias, "f-line appeal" over "f-line"), this
-    sees BOTH: "f-line" is still its own literal substring of "f-line
-    appeal" text, bounded on a real word ("f-line[SPACE]appeal"), so a
-    message that genuinely names both terms must not have the shorter one
-    hidden by the longer one winning the other function's single-best pick.
-    Used only by `find_service_codes()`'s comparison-language branch, never
-    as a replacement for `_svc_name_alias_match()`'s own single-best use in
-    `find_service_code_by_name()`."""
+    """Every code with an alias present as a distinct non-overlapping substring,
+    in order of appearance. A longer alias ("f-line appeal" for 0185) takes
+    precedence over its shorter substring ("f-line" for 0178) at the SAME
+    position, so "what is F-Line Appeal?" yields only 0185. But when a message
+    names BOTH separately ("difference between F-Line and F-Line Appeal",
+    "What is similar between F-Line and F-Line Appeal?"), the separate
+    occurrence of "F-Line" is preserved and both codes are returned."""
     low = str(text or "").lower()
-    hits: List[Tuple[int, str]] = []  # (position, code)
+    all_spans: List[Tuple[int, int, int, str]] = []  # (start, end, length, code)
     for code, aliases in _SVC_NAME_ALIASES.items():
         for alias in aliases:
-            m = re.search(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low)
-            if m:
-                hits.append((m.start(), code))
-                break
-    hits.sort()
+            for m in re.finditer(r'(?<![a-z])' + re.escape(alias) + r'(?![a-z])', low):
+                all_spans.append((m.start(), m.end(), len(alias), code))
+    all_spans.sort(key=lambda x: (x[0], -x[2]))
+    selected: List[Tuple[int, str]] = []
+    occupied: List[Tuple[int, int]] = []
+    for start, end, l, code in all_spans:
+        if any(not (end <= o_start or start >= o_end) for o_start, o_end in occupied):
+            continue
+        selected.append((start, code))
+        occupied.append((start, end))
+    selected.sort()
     seen: List[str] = []
-    for _, code in hits:
+    for _, code in selected:
         if code not in seen:
             seen.append(code)
     return seen
@@ -424,30 +427,20 @@ def find_service_codes(text: str) -> List[str]:
         if code and code not in found:
             found.append(code)
     if not found:
+        alias_codes = _all_alias_codes(text)
+        if len(alias_codes) >= 2:
+            return alias_codes
         by_name = find_service_code_by_name(text)
         if by_name:
             found.append(by_name)
-        # "difference between F-Line and F-Line Appeal" names BOTH a
-        # colloquial abbreviation (0178) and a longer official name that
-        # happens to contain it (0185, the `by_name` winner above) -- a
-        # comparison question naming two real services must not collapse to
-        # one. `_svc_name_alias_match()` alone cannot surface this: it
-        # deliberately returns only the single longest/most-specific alias
-        # ("f-line appeal" over "f-line") for its OWN single-code callers, so
-        # `_all_alias_codes()` is used here instead -- it checks every alias
-        # independently and returns every code whose alias is genuinely
-        # present as its own bounded substring, "f-line" included even when
-        # "f-line appeal" also matches.
-        # Gated on actual comparison/pairing language: "what is F-Line
-        # Appeal?" alone still names only 0185 -- "f-line" there is a
-        # substring of "F-Line Appeal", not a second, separately-asked-about
-        # service, and must not silently grow into a two-code answer nobody
-        # asked for.
+        elif alias_codes:
+            found.append(alias_codes[0])
         if found and re.search(
-                r'\bdifference\b|\bdiffer\b|\bcompare\b|\bcomparison\b|\bversus\b|\bvs\.?\b'
-                r'|\bboth\b|\btwo\b|\bsame\b|\bor\s+not\b',
+                r'\bdiffer\w*|\bcompa?r\w*|\bversus\b|\bvs\.?\b|\bboth\b|\btwo\b|\bsame\b|\bor\s+not\b|'
+                r'\bsimilar\w*|\bcommon\w*|\bshar\w*|\balike\b|\bresembl\w*|'
+                r'வேறுபா\w*|ஒப்பீ\w*|ஒற்றுமை\w*|பொதுவான\w*|ஒரே|வித்தியாச\w*',
                 text or "", re.IGNORECASE):
-            for alias_hit in _all_alias_codes(text):
+            for alias_hit in alias_codes:
                 if alias_hit not in found:
                     found.append(alias_hit)
     return found

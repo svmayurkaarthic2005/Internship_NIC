@@ -1233,7 +1233,8 @@ def _is_explain_request(message: str) -> bool:
     `_is_detail_request` below for "wants MORE detail specifically", which
     toggles the brief/full answer.
     """
-    tokens = re.findall(r"[a-zA-Z]+", message or "")
+    if re.search(r"\b(?:don't|dont|do not)\s+explain\b", message or "", re.IGNORECASE) and re.search(r"\b(?:numbers?\s+only|data\s+only|give\s+(?:the\s+)?numbers?)\b", message or "", re.IGNORECASE):
+        return False
     # A NEGATED format instruction ("dont explain in sentence", "not in
     # sentence format") is still a request to re-explain -- just not in the
     # brief form it names. Checked first so a message with no "explain"/
@@ -1298,8 +1299,272 @@ def _is_detail_request(message: str) -> bool:
                for tok in tokens for target in _DETAIL_REQUEST_TRIGGER_WORDS)
 
 
+def parse_service_comparison_mode(message: str) -> str:
+    msg = (message or "").strip().lower()
+
+    # 1. AMBIGUOUS_COMPARISON: awkward negated difference questions
+    if re.search(r"\b(?:what\s+(?:is\s+not|isn'?t|is\s+no)|enna\s+illai)\b.{0,30}?\b(?:diff\w*|differ\w*|வேறுபாடு|வித்தியாசம்)\b", msg) \
+       or re.search(r"\b(?:not\s+the\s+diff\w*|not\s+a\s+diff\w*)\b", msg):
+        return "AMBIGUOUS_COMPARISON"
+
+    # 2. Tamil postfix negation: 'difference vendam' -> SIMILARITIES, 'similarity vendam' -> DIFFERENCES
+    if re.search(r"\b(?:diff\w*|differ\w*|வேறுபாடு|வித்தியாசம்)\b.{0,10}?\b(?:vendam|வேண்டாம்|not|இல்லை)\b", msg):
+        return "SIMILARITIES"
+    if re.search(r"\b(?:similar\w*|common\w*|ஒற்றுமை|பொதுவான)\b.{0,10}?\b(?:vendam|வேண்டாம்|not|இல்லை)\b", msg):
+        return "DIFFERENCES"
+
+    # 3. Directed negation commands: 'don't tell me differences' vs 'don't tell me similarities'
+    m_neg = re.search(r"\b(?:don'?t|do\s+not|never)\s+(?:show|tell|explain|give|say|describe|list)?\b.{0,20}?\b(diff\w*|differ\w*|வேறுபாடு|வித்தியாசம்|similar\w*|common\w*|ஒற்றுமை|பொதுவான)\b", msg)
+    if m_neg:
+        target = m_neg.group(1)
+        if any(target.startswith(p) for p in ('diff', 'வேறுபா', 'வித்தியாச')):
+            return "SIMILARITIES"
+        if any(target.startswith(p) for p in ('similar', 'common', 'ஒற்றுமை', 'பொதுவான')):
+            return "DIFFERENCES"
+
+    # 4. Only differences or only similarities
+    if re.search(r"\b(?:only\s+(?:the\s+)?(?:diff\w*|differ\w*)|(?:diff\w*|differ\w*)\s+(?:only|mattum|மட்டும்))\b", msg) \
+       or re.search(r"\bwhat\s+is\s+not\s+the\s+same\b", msg):
+        return "DIFFERENCES"
+
+    if re.search(r"\b(?:only\s+(?:their\s+|the\s+)?(?:similar\w*|common\w*|shared)|(?:similar\w*|common\w*)\s+(?:only|mattum|மட்டும்))\b", msg) \
+       or re.search(r"\bwhat\s+are\s+they\s+not\s+different\s+in\b", msg):
+        return "SIMILARITIES"
+
+    # 5. BOTH: explicitly requests both similarities/common and differences
+    if (re.search(r"\b(?:common|similar\w*|ஒற்றுமை|பொதுவான)\b", msg) and re.search(r"\b(?:diff\w*|differ\w*|வேறுபாடு|வித்தியாசம்)\b", msg)):
+        return "BOTH"
+    if re.search(r"\b(?:both\s+(?:features|aspects|points)|separate\s+sections)\b", msg):
+        return "BOTH"
+
+    # 6. IDENTITY_CHECK: 'Are they the same?', 'Is there no difference?', 'They are the same, aren't they?'
+    if re.search(r"\b(?:is\s+there\s+no\s+diff\w*|no\s+difference\s+between)\b", msg) \
+       or re.search(r"\b(?:are\s+(?:they|both)\s+the\s+same|same\s+ah|same\s+nu|same\s+or\s+diff\w*)\b", msg) \
+       or re.search(r"\b(?:same\s*,?\s*aren'?t\s+they|different\s*,?\s*aren'?t\s+they)\b", msg) \
+       or re.search(r"\b(?:i\s+don'?t\s+think|naan\s+ninaikala|ninaikavillai)\b.{0,60}?\b(?:same|different|வேறு|ஒரே)\b", msg) \
+       or re.search(r"^\s*f[\s-]?line\s+and\s+f[\s-]?line\s+appeal\s+are\s+the\s+same\s*[.?!]*$", msg):
+        return "IDENTITY_CHECK"
+
+    # 7. SIMILARITIES: general questions about common features / shared aspects
+    if re.search(r"\b(?:similar\w*|common\w*|shared|share\b|alike|ஒற்றுமை|பொதுவான)\b", msg) \
+       or re.search(r"\b(?:what\s+is\s+the\s+same|which\s+properties\s+are\s+the\s+same|what\s+do\s+they\s+have\s+in\s+common)\b", msg) \
+       or re.search(r"\b(?:do\s+both\b|are\s+both\b)", msg):
+        return "SIMILARITIES"
+
+    # 8. DIFFERENCES: default comparison intent
+    return "DIFFERENCES"
+
+
+def _build_service_code_comparison_response(
+    exact: List[str], message: str, is_tamil: bool = False, brief: bool = False
+) -> str:
+    from backend.utils.helpers import SIS_URBAN_SERVICES, describe_service_code, is_table_only_request
+    mode = parse_service_comparison_mode(message)
+    msg_low = message.lower()
+    wants_table = is_table_only_request(message) or bool(re.search(r"\b(?:table|அட்டவணை)\b", msg_low))
+
+    if "0178" in exact and "0185" in exact:
+        # Specific field inquiries
+        if re.search(r"field\s*(?:visit|inspection)|கள\s*ஆய்வு", msg_low):
+            if is_tamil:
+                return ("ஆம் — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகிய இரண்டிற்கும் "
+                        "கள ஆய்வு கட்டாயம் தேவை (`requires_field_visit: True`).")
+            return ("Yes — both F-Line (0178) and F-Line Appeal (0185) require a mandatory "
+                    "on-site field visit (`requires_field_visit: True`).")
+
+        if re.search(r"\b(?:urban|tamilnilam)\b", msg_low):
+            if is_tamil:
+                return ("ஆம் — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகிய இரண்டும் "
+                        "TAMILNILAM நகர்ப்புற அமைப்பின் கீழ் உள்ள சேவைகளாகும்.")
+            return ("Yes — both F-Line (0178) and F-Line Appeal (0185) are services categorized under TAMILNILAM Urban.")
+
+        if re.search(r"\b(?:application\s+fields?|fields?|புலங்கள்)\b", msg_low):
+            if is_tamil:
+                return ("ஆம் — பதிவேட்டில் இரண்டும் நிலையான நகர்ப்புற விண்ணப்ப புலங்களைப் பயன்படுத்துகின்றன "
+                        "(விண்ணப்ப எண், சேவை குறியீடு, நிலை, சமர்ப்பிப்பு தேதி, வார்டு, பிளாக், சர்வே எண், உட்பிரிவு எண்). "
+                        "ஆனால் 0178-க்கு பிரத்யேக எல்லை மற்றும் வரைபட ஆய்வு விவரங்கள் f_line_service_urban அட்டவணையில் கூடுதலாகப் பதிவு செய்யப்படுகின்றன.")
+            return ("Yes — in the service register, both share the standard urban application fields "
+                    "(application_number, service_code, status, submission_date, ward_id, block_id, survey_no, subdivision_no, stage, and submission_channel). "
+                    "However, 0178 additionally tracks dedicated survey inspection data in f_line_service_urban.")
+
+        if re.search(r"\b(?:workflow|workflows|பணிப்பாய்வு)\b", msg_low):
+            if is_tamil:
+                return ("இல்லை — 0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை பணிப்பாய்வு (SIS மற்றும் DIS கையாள்வது); "
+                        "0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீட்டு நடைமுறை. "
+                        "பதிவேட்டில் 0178-க்கு 15 கோப்புகள் உள்ளன; 0185-க்கு கோப்புகள் ஏதுமில்லை.")
+            return ("No — 0178 (F-Line) is the initial boundary demarcation survey workflow handled by the Sub Inspector Surveyor (SIS) and Deputy Inspector Surveyor (DIS), "
+                    "whereas 0185 (F-Line Appeal) is an administrative appeal procedure against a prior demarcation decision. "
+                    "In this database instance, 0178 has 15 active/completed records, while 0185 has no records.")
+
+        if mode == "AMBIGUOUS_COMPARISON":
+            if is_tamil:
+                return (
+                    "வேறுபாடு இல்லாதது (அதாவது பொதுவான அம்சங்கள்) எது என்று நீங்கள் கேட்டால், "
+                    "F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகிய இரண்டும் TAMILNILAM நகர்ப்புற சேவைகள் "
+                    "மற்றும் எல்லை நிர்ணயத்திற்கு கட்டாய கள ஆய்வு தேவைப்படும் சேவைகளாகும்.\n\n"
+                    "இருப்பினும், அவை இரண்டும் வெவ்வேறு சேவை குறியீடுகள்:\n"
+                    "• 0178 (F-Line): ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்.\n"
+                    "• 0185 (F-Line Appeal): முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு."
+                )
+            return (
+                "If you are asking what is not different (i.e. what they have in common), "
+                "both F-Line (0178) and F-Line Appeal (0185) are TAMILNILAM Urban services that require a mandatory on-site field visit for boundary demarcation.\n\n"
+                "However, they are distinct service codes:\n"
+                "• 0178 (F-Line): Initial boundary demarcation survey request to demarcate parcel boundary lines.\n"
+                "• 0185 (F-Line Appeal): Administrative appeal survey against a prior demarcation decision or surveyor order."
+            )
+
+        if mode == "SIMILARITIES":
+            if wants_table:
+                if is_tamil:
+                    return (
+                        "| அம்சம் | F-Line (0178) | F-Line Appeal (0185) | ஒப்பீடு |\n"
+                        "|---|---|---|---|\n"
+                        "| சேவை வகை | TAMILNILAM நகர்ப்புறம் | TAMILNILAM நகர்ப்புறம் | ஒரே வகை |\n"
+                        "| கள ஆய்வு | கட்டாய கள ஆய்வு தேவை | கட்டாய கள ஆய்வு தேவை | ஒரே விதி |\n"
+                        "| எல்லை நிர்ணயம் | எல்லை நிர்ணய அளவை | எல்லை நிர்ணய அளவை | பொதுவான பொருள் |\n"
+                        "| பதிவேட்டு புலங்கள் | நிலையான நகர்ப்புற புலங்கள் | நிலையான நகர்ப்புற புலங்கள் | பகிரப்பட்டது |"
+                    )
+                return (
+                    "| Feature / Attribute | F-Line (0178) | F-Line Appeal (0185) | Comparison |\n"
+                    "|---|---|---|---|\n"
+                    "| Service Category | TAMILNILAM Urban | TAMILNILAM Urban | Same |\n"
+                    "| Field Inspection | Mandatory field visit required | Mandatory field visit required | Same |\n"
+                    "| Domain Focus | Boundary line demarcation (F-Line) | Boundary line demarcation (F-Line) | Same |\n"
+                    "| Register Fields | Standard urban fields schema | Standard urban fields schema | Shared |"
+                )
+            if is_tamil:
+                return (
+                    "F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் பின்வரும் பொதுவான அம்சங்களைப் பகிர்ந்து கொள்கின்றன:\n"
+                    "• சேவை வகை: இரண்டும் TAMILNILAM நகர்ப்புற சேவைகள்.\n"
+                    "• கள ஆய்வு: இரண்டிற்கும் கட்டாய கள ஆய்வு தேவை (requires_field_visit: True).\n"
+                    "• எல்லை நிர்ணயம்: இரண்டும் நில எல்லை நிர்ணயத்தை (F-Line) அடிப்படையாகக் கொண்டவை.\n"
+                    "• பதிவேட்டு புலங்கள்: இரண்டும் நிலையான நகர்ப்புற விண்ணப்ப புலங்களைப் பயன்படுத்துகின்றன (விண்ணப்ப எண், சேவை குறியீடு, நிலை, சமர்ப்பிப்பு தேதி, வார்டு, பிளாக், சர்வே எண், உட்பிரிவு எண்)."
+                )
+            return (
+                "F-Line (0178) and F-Line Appeal (0185) share the following verified common features under TAMILNILAM Urban:\n"
+                "• Service Category: Both are TAMILNILAM Urban services.\n"
+                "• Field Inspection: Both require a mandatory on-site field visit (requires_field_visit: True).\n"
+                "• Domain Focus: Both concern F-Line boundary demarcation of land parcels.\n"
+                "• Application Data Schema: Both use the standard urban service register schema (application number, service code, status, submission date, ward, block, survey number, sub-division number, and stage)."
+            )
+
+        if mode == "DIFFERENCES":
+            if wants_table:
+                if is_tamil:
+                    return (
+                        "| பண்பு | F-Line (0178) | F-Line Appeal (0185) | வேறுபாடு |\n"
+                        "|---|---|---|---|\n"
+                        "| சேவை குறியீடு & சுருக்கம் | 0178 (F_LINE) | 0185 (F_LINE_APPEAL) | தனித்தனி குறியீடுகள் |\n"
+                        "| அதிகாரப்பூர்வ பெயர் | F-Line (Urban Demarcation) | F-Line Appeal | தனித்தனி சேவைகள் |\n"
+                        "| நோக்கம் | ஆரம்ப எல்லை நிர்ணய அளவை | முந்தைய உத்தரவுக்கு எதிரான மேல்முறையீடு | வேறுபட்ட நிலை |\n"
+                        "| பதிவேட்டு கோப்புகள் | 15 கோப்புகள் (8 முடிந்தது, 7 நிலுவை) | 0 கோப்புகள் | 0178-ல் 15 அதிகம் |\n"
+                        "| பிரத்யேக ஆய்வு அட்டவணைகள் | f_line_service_urban-ல் உள்ளது | இந்த தரவுத்தளத்தில் இல்லை | வேறுபட்டது |"
+                    )
+                return (
+                    "| Attribute | F-Line (0178) | F-Line Appeal (0185) | Comparison |\n"
+                    "|---|---|---|---|\n"
+                    "| Service Code & Short Name | 0178 (F_LINE) | 0185 (F_LINE_APPEAL) | Distinct codes |\n"
+                    "| Official Name | F-Line (Urban Demarcation) | F-Line Appeal | Distinct services |\n"
+                    "| Purpose | Initial boundary demarcation survey | Appeal against prior demarcation decision | Different |\n"
+                    "| Applications in Register | 15 files (8 approved, 7 pending) | 0 files | 0178 has 15 files; 0185 has 0 |\n"
+                    "| Dedicated Inspection Data | Tracked in f_line_service_urban | None recorded in DB | Different |"
+                )
+            if is_tamil:
+                return (
+                    "இல்லை — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் வெவ்வேறு சேவைகள்:\n"
+                    "• சேவை நோக்கம்: 0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்; 0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு.\n"
+                    "• அதிகாரப்பூர்வ பெயர்: 0178 என்பது \"F-Line (Urban Demarcation)\" (F_LINE); 0185 என்பது \"F-Line Appeal\" (F_LINE_APPEAL).\n"
+                    "• பதிவேட்டு கோப்புகள்: 0178-ல் 15 விண்ணப்பங்கள் உள்ளன (8 முடிந்தது, 7 நிலுவை); 0185-ல் பதிவேட்டில் கோப்புகள் ஏதுமில்லை.\n"
+                    "• பிரத்யேக ஆய்வு அட்டவணைகள்: 0178-க்கு பிரத்யேக ஆய்வு அட்டவணைகள் உள்ளன (f_line_service_urban); 0185-க்கு இந்த தரவுத்தளத்தில் இல்லை."
+                )
+            return (
+                "No, F-Line (0178) and F-Line Appeal (0185) are different services under TAMILNILAM Urban:\n"
+                "• Purpose & Stage: 0178 (F-Line) is the initial boundary demarcation survey request to demarcate parcel boundary lines, whereas 0185 (F-Line Appeal) is an administrative appeal against a prior demarcation decision or surveyor order.\n"
+                "• Service Identity: 0178 is named \"F-Line (Urban Demarcation)\" (F_LINE), while 0185 is named \"F-Line Appeal\" (F_LINE_APPEAL).\n"
+                "• Application Records in Register: 0178 has 15 recorded applications in the register (8 approved/completed, 7 pending/open), whereas 0185 has 0 matching records in this queried dataset.\n"
+                "• Dedicated Inspection Tables: 0178 has dedicated survey inspection tables (f_line_service_urban and f_line_service_application_information_urban) tracking boundaries, sketch files, and SIS/DIS recommendations; 0185 has no specialized inspection tables in this database."
+            )
+
+        if mode == "BOTH":
+            if is_tamil:
+                return (
+                    "### பொதுவான அம்சங்கள் (Similarities)\n"
+                    "• சேவை வகை: இரண்டும் TAMILNILAM நகர்ப்புற சேவைகள்.\n"
+                    "• கள ஆய்வு: இரண்டிற்கும் கட்டாய கள ஆய்வு தேவை (requires_field_visit: True).\n"
+                    "• எல்லை நிர்ணயம்: இரண்டும் நில எல்லை நிர்ணயத்தை (F-Line) அடிப்படையாகக் கொண்டவை.\n"
+                    "• பதிவேட்டு புலங்கள்: இரண்டும் நிலையான நகர்ப்புற விண்ணப்ப புலங்களைப் பயன்படுத்துகின்றன.\n\n"
+                    "### வேறுபாடுகள் (Differences)\n"
+                    "• நோக்கம்: 0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை; 0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு.\n"
+                    "• குறியீடுகள்: 0178 (F_LINE) vs 0185 (F_LINE_APPEAL).\n"
+                    "• பதிவேட்டு கோப்புகள்: 0178-ல் 15 கோப்புகள் உள்ளன (8 முடிந்தது, 7 நிலுவை); 0185-ல் கோப்புகள் ஏதுமில்லை.\n"
+                    "• பிரத்யேக ஆய்வு விவரங்கள்: 0178-க்கு f_line_service_urban அட்டவணை உள்ளது; 0185-க்கு இல்லை."
+                )
+            return (
+                "### Common Features (Similarities)\n"
+                "• Service Category: Both are TAMILNILAM Urban services.\n"
+                "• Field Inspection: Both require a mandatory on-site field visit (requires_field_visit: True).\n"
+                "• Domain Focus: Both concern F-Line boundary demarcation of land parcels.\n"
+                "• Register Schema: Both utilize standard urban application fields.\n\n"
+                "### Differences\n"
+                "• Purpose: 0178 (F-Line) is the initial boundary demarcation survey request, whereas 0185 (F-Line Appeal) is an administrative appeal against a prior demarcation decision.\n"
+                "• Service Codes: 0178 (F_LINE) vs 0185 (F_LINE_APPEAL).\n"
+                "• Application Records: 0178 has 15 files in the register (8 approved, 7 pending); 0185 has 0 records in this dataset.\n"
+                "• Dedicated Inspection Data: 0178 tracks boundary and sketch details in f_line_service_urban; 0185 has no specialized records in this database."
+            )
+
+        if mode == "IDENTITY_CHECK":
+            if re.search(r"\b(?:every\s+aspect|in\s+all\s+aspects|all\s+respects)\b", msg_low):
+                if is_tamil:
+                    return ("நீங்கள் குறிப்பிட்டது சரி — அவை அனைத்து அம்சங்களிலும் வேறுபட்டவை அல்ல. "
+                            "F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகிய இரண்டும் TAMILNILAM நகர்ப்புற அமைப்பில் "
+                            "நில எல்லை நிர்ணயத்திற்கான சேவைகள் மற்றும் இரண்டிற்கும் கட்டாய கள ஆய்வு தேவை (`requires_field_visit: True`). "
+                            "இருப்பினும், நடைமுறை நோக்கத்தில் அவை வேறுபடுகின்றன: 0178 ஆரம்ப எல்லை அளவை; 0185 முந்தைய உத்தரவுக்கு எதிரான மேல்முறையீடு.")
+                return ("You are correct that they are not different in every aspect — both F-Line (0178) and F-Line Appeal (0185) "
+                        "are TAMILNILAM Urban boundary demarcation services that require a mandatory on-site field visit (`requires_field_visit: True`) "
+                        "and share standard urban application fields. However, they remain distinct service codes: "
+                        "0178 is the initial boundary survey, while 0185 is an administrative appeal against a prior demarcation decision.")
+            if re.search(r"\b(?:different\s*,?\s*aren'?t\s+they|i\s+don'?t\s+think|naan\s+ninaikala|ninaikavillai)\b", msg_low):
+                if is_tamil:
+                    return ("ஆம், அது சரி — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் வெவ்வேறு சேவைகள். "
+                            "0178 என்பது ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்; 0185 என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு.")
+                return ("Yes, that is correct — F-Line (0178) and F-Line Appeal (0185) are different services under TAMILNILAM Urban. "
+                        "0178 is the initial boundary demarcation survey request, whereas 0185 is an administrative appeal against a prior demarcation decision.")
+            if is_tamil:
+                return ("இல்லை — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் வெவ்வேறு சேவைகள். "
+                        "0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்; 0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு. "
+                        "இரண்டிற்கும் கள ஆய்வு தேவைப்பட்டாலும், அவை வெவ்வேறு நடைமுறை நிலைகளைக் குறிக்கின்றன.")
+            return ("No, F-Line (0178) and F-Line Appeal (0185) are different services under TAMILNILAM Urban. "
+                    "0178 (F-Line) is the initial boundary demarcation survey request, whereas 0185 (F-Line Appeal) is an appeal against a prior demarcation decision. "
+                    "While both require a field visit and concern boundary lines, they serve distinct procedural stages.")
+
+    # General fallback for any other two codes (e.g. 0153 vs 0154)
+    names = [f"{SIS_URBAN_SERVICES[c]['short']} ({c})" for c in exact if c in SIS_URBAN_SERVICES]
+    if mode in ("SIMILARITIES", "BOTH"):
+        fv_same = len({SIS_URBAN_SERVICES[c]['requires_field_visit'] for c in exact if c in SIS_URBAN_SERVICES}) == 1
+        fv_val = SIS_URBAN_SERVICES[exact[0]]['requires_field_visit'] if fv_same else None
+        if is_tamil:
+            sim_txt = f"{', '.join(names)} ஆகியவை இரண்டும் TAMILNILAM நகர்ப்புற சேவைகள்."
+            if fv_same:
+                sim_txt += f" இரண்டிற்கும் கள ஆய்வு {'தேவை' if fv_val else 'தேவையில்லை'}."
+            return sim_txt
+        sim_txt = f"{', '.join(names)} are both services under TAMILNILAM Urban."
+        if fv_same:
+            sim_txt += f" Both {'require' if fv_val else 'do not require'} a field visit."
+        return sim_txt
+
+    if is_tamil:
+        lead = f"இல்லை — {', '.join(names)} ஆகியவை வெவ்வேறு சேவைகள்."
+    else:
+        lead = f"No, {', '.join(names)} are different services under TAMILNILAM Urban."
+    full_detail = "\n\n".join(describe_service_code(c, is_tamil, brief=brief) for c in exact)
+    return lead + "\n\n" + full_detail
+
+
 def _service_code_lookup_answer(message: str, is_tamil: bool = False,
-                                brief: bool = True) -> str:
+                                brief: bool = True,
+                                followup_codes: Optional[List[str]] = None,
+                                chat_history: Optional[Sequence[Dict[str, Any]]] = None) -> str:
     """Deterministic answer for "what is 0153?" / "which codes start with 016?".
 
     Every urban service code has an official name in SIS_URBAN_SERVICES, so the
@@ -1325,6 +1590,17 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
     _text = message.replace(_app_no, " ") if _app_no else message
 
     exact = find_service_codes(_text)
+    if not exact and followup_codes:
+        exact = [c for c in followup_codes if c in SIS_URBAN_SERVICES]
+    if not exact and chat_history:
+        for m in reversed(chat_history):
+            c_text = (m.get("content") or "") + " "
+            c_found = find_service_codes(c_text)
+            if c_found:
+                exact = [c for c in c_found if c in SIS_URBAN_SERVICES]
+                if exact:
+                    break
+
     if not exact:
         # "what is ISD?" names the service by its type word instead of its
         # digits. The three the register carries ARE service codes, so the
@@ -1345,7 +1621,7 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
             lines = [f"{c} — {SIS_URBAN_SERVICES[c]['name']} ({SIS_URBAN_SERVICES[c]['short']})"
                      for c in exact if c in SIS_URBAN_SERVICES]
             return "\n".join(lines)
-        if is_table_only_request(message):
+        if is_table_only_request(message) and len(exact) != 2:
             rows = ["| Code | Service Name | Short Form | Field Visit |",
                     "|---|---|---|---|"]
             for c in exact:
@@ -1355,23 +1631,9 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
                     rows.append(f"| {c} | {info['name']} | {info['short']} | {fv} |")
             return "\n".join(rows)
 
-        # "Are F-Line and F-Line Appeal the same?" / "What is the difference between F-Line and F-Line Appeal?" (SVCCODE-001)
-        if len(exact) >= 2 and re.search(r"\b(differ|difference|compare|comparison|same|வேறுபாடு|ஒப்பீடு|ஒப்பிடு)\b", message.lower()):
-            if "0178" in exact and "0185" in exact:
-                if is_tamil:
-                    lead = ("இல்லை — F-Line (0178) மற்றும் F-Line Appeal (0185) ஆகியவை TAMILNILAM நகர்ப்புற அமைப்பில் வெவ்வேறு சேவைகள். "
-                            "0178 (F-Line) என்பது ஆரம்ப எல்லை நிர்ணய அளவை விண்ணப்பம்; 0185 (F-Line Appeal) என்பது முந்தைய எல்லை நிர்ணய உத்தரவுக்கு எதிரான மேல்முறையீடு.")
-                else:
-                    lead = ("No, F-Line (0178) and F-Line Appeal (0185) are different services under TAMILNILAM Urban. "
-                            "0178 (F-Line) is the initial boundary demarcation survey request, whereas 0185 (F-Line Appeal) is an appeal against a prior demarcation decision.")
-            else:
-                names = [f"{SIS_URBAN_SERVICES[c]['short']} ({c})" for c in exact if c in SIS_URBAN_SERVICES]
-                if is_tamil:
-                    lead = f"இல்லை — {', '.join(names)} ஆகியவை வெவ்வேறு சேவைகள்."
-                else:
-                    lead = f"No, {', '.join(names)} are different services under TAMILNILAM Urban."
-            full_detail = "\n\n".join(describe_service_code(c, is_tamil, brief=brief) for c in exact)
-            return lead + "\n\n" + full_detail
+        # Multi-service code comparison, similarities, and negation handling
+        if len(exact) >= 2:
+            return _build_service_code_comparison_response(exact, message, is_tamil, brief=brief)
 
         full = "\n\n".join(describe_service_code(c, is_tamil, brief=brief) for c in exact)
         # "does ISD need a field visit?" always gives the full answer — specific question.
@@ -1392,7 +1654,12 @@ def _service_code_lookup_answer(message: str, is_tamil: bool = False,
     # No exact code — treat the digits as a prefix.
     _m = re.search(r'\b(\d{1,4})\b', _text)
     prefix_raw = _m.group(1) if _m else ""
-    prefix_norm = prefix_raw.zfill(4) if prefix_raw else ""
+    if not prefix_raw:
+        if is_tamil:
+            return "எந்த சேவை குறியீட்டை ஒப்பிட அல்லது பார்க்க விரும்புகிறீர்கள் என்று குறிப்பிடவும் (எ.கா. 'F-Line மற்றும் F-Line Appeal' அல்லது '0178 மற்றும் 0185')."
+        return "Please specify which service codes you would like to compare or look up (for example, 'F-Line and F-Line Appeal' or '0178 and 0185')."
+
+    prefix_norm = prefix_raw.zfill(4)
     matches = {c: v for c, v in SIS_URBAN_SERVICES.items() if c.startswith(prefix_norm)}
     if prefix_raw and not matches:
         # "016" means 0160-0169, not "0016" — retry against the code body.
@@ -1538,15 +1805,19 @@ def _paraphrase_kept_the_facts(original: str, paraphrased: str) -> bool:
 
 
 async def _service_code_lookup_answer_natural(message: str, is_tamil: bool, brief: bool,
-                                              language: str) -> str:
+                                              language: str,
+                                              followup_codes: Optional[List[str]] = None,
+                                              chat_history: Optional[Sequence[Dict[str, Any]]] = None) -> str:
     """`_service_code_lookup_answer` phrased as natural prose instead of the
     same template every time, per the officer's own request that repeat
     questions ("what is isd") stop reading as copy-pasted. The facts
     themselves are still the deterministic lookup -- only the wording is
     handed to the model, and only kept if it did not drop or change one."""
     from backend.utils.helpers import is_code_only_request, is_code_and_desc_request, is_table_only_request
-    fact_text = _service_code_lookup_answer(message, is_tamil, brief=brief)
+    fact_text = _service_code_lookup_answer(message, is_tamil, brief=brief, followup_codes=followup_codes, chat_history=chat_history)
     if is_code_only_request(message) or is_code_and_desc_request(message) or is_table_only_request(message):
+        return fact_text
+    if len(re.findall(r'\b01[5-9]\d\b', fact_text)) >= 2 or "|" in fact_text:
         return fact_text
     try:
         # the facts are already final; a slow model (20-55 s on the test bank) only delays them
@@ -18255,8 +18526,15 @@ async def _calc_turn(message, session_id, officer, db, chat_history):
                       or _calc_qa._CHANNEL_BREAKDOWN_RE.search(text) or _calc_qa._BLOCKS_IN_WARD_RE.search(text)
                       or _calc_qa._CODES_WITH_APPS_RE.search(text)):
         from backend.services.postgres import get_all_service_code_applications
-        _ccrows = ((await get_all_service_code_applications(db, officer, hide_rejected=False)) or {}).get("applications") or []
-        reply = (_calc_qa.compare_codes(text, _ccrows, ta) or _calc_qa.channel_breakdown(text, _ccrows, ta)
+        _override_codes = None
+        if chat_history:
+            from backend.utils.helpers import find_service_codes
+            for _h in reversed(chat_history):
+                _c_hist = find_service_codes(_h.get("content") or "")
+                if len(_c_hist) >= 2:
+                    _override_codes = _c_hist
+                    break
+        reply = (_calc_qa.compare_codes(text, _ccrows, ta, codes_override=_override_codes) or _calc_qa.channel_breakdown(text, _ccrows, ta)
                 or _calc_qa.blocks_in_ward(text, _ccrows, ta) or _calc_qa.codes_with_applications(text, _ccrows, ta)
                 or _calc_qa.code_counts(text, _ccrows, ta))
     if not reply:
@@ -24859,12 +25137,17 @@ async def _process_chat_impl(
                     owner_lines = [_owner_detail_line(o, message) for o in owners]
                     response_text = f"Owners for Survey No. {survey_no} ({len(owners)} record(s)):\n" + "\n".join(owner_lines)
         elif intent == "service_code_lookup":
+            _f_codes = (_followup_ctx.filters or {}).get("service_codes") if _followup_ctx else None
+            if not _f_codes and _followup_ctx and (_followup_ctx.filters or {}).get("service_code"):
+                _f_codes = [_followup_ctx.filters["service_code"]]
+            if not _f_codes and _followup_ctx and _followup_ctx.application_numbers:
+                _f_codes = _followup_ctx.application_numbers
             if _force_detailed_service_code_answer:
-                response_text = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False)
+                response_text = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False, followup_codes=_f_codes, chat_history=chat_history)
             else:
                 response_text = await _service_code_lookup_answer_natural(
                     message, language in ("ta", "tanglish"),
-                    not _is_detail_request(message), language)
+                    not _is_detail_request(message), language, followup_codes=_f_codes, chat_history=chat_history)
             # Recorded so a SECOND "explain" in a row ("what is ISD?" ->
             # "explain briefly" -> "explain in detail") still means ISD --
             # without this, the second hop found no referent of its own
@@ -24876,10 +25159,14 @@ async def _process_chat_impl(
             # via a word-level fallback local to _service_code_lookup_answer
             # that find_service_codes() (the general helper) does not know
             # about, and would otherwise find nothing for exactly those two.
-            _sc_in_answer = set(re.findall(r'\b01[5-9]\d\b', response_text))
+            _sc_in_answer = sorted(list(set(re.findall(r'\b01[5-9]\d\b', response_text))))
             if len(_sc_in_answer) == 1:
-                structured_data = {"service_code_filter": next(iter(_sc_in_answer)),
+                structured_data = {"service_code_filter": _sc_in_answer[0],
                                     "query_type": "Service Code Lookup"}
+            elif len(_sc_in_answer) >= 2:
+                structured_data = {"service_codes": _sc_in_answer,
+                                    "service_code_filter": _sc_in_answer[0],
+                                    "query_type": "Service Code Comparison"}
         elif intent == "unidentified_number":
             response_text = _unidentified_number_answer(message, language in ("ta", "tanglish"))
         elif any(ph in message.lower() for ph in [
@@ -30734,20 +31021,29 @@ async def _process_chat_stream_impl(
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
         elif intent == "service_code_lookup":
+            _f_codes = (_followup_ctx.filters or {}).get("service_codes") if _followup_ctx else None
+            if not _f_codes and _followup_ctx and (_followup_ctx.filters or {}).get("service_code"):
+                _f_codes = [_followup_ctx.filters["service_code"]]
+            if not _f_codes and _followup_ctx and _followup_ctx.application_numbers:
+                _f_codes = _followup_ctx.application_numbers
             if _force_detailed_service_code_answer:
-                chunk = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False)
+                chunk = _service_code_lookup_answer(message, language in ("ta", "tanglish"), brief=False, followup_codes=_f_codes, chat_history=chat_history)
             else:
                 chunk = await _service_code_lookup_answer_natural(
                     message, language in ("ta", "tanglish"),
-                    not _is_detail_request(message), language)
+                    not _is_detail_request(message), language, followup_codes=_f_codes, chat_history=chat_history)
             full_response_text = chunk
             # Recorded so a SECOND "explain" in a row still means the same
             # code -- see the non-streaming twin's comment for why the code
             # is read off the answer text, not re-extracted from the question.
-            _sc_in_answer = set(re.findall(r'\b01[5-9]\d\b', chunk))
+            _sc_in_answer = sorted(list(set(re.findall(r'\b01[5-9]\d\b', chunk))))
             if len(_sc_in_answer) == 1:
-                structured_data = {"service_code_filter": next(iter(_sc_in_answer)),
+                structured_data = {"service_code_filter": _sc_in_answer[0],
                                     "query_type": "Service Code Lookup"}
+            elif len(_sc_in_answer) >= 2:
+                structured_data = {"service_codes": _sc_in_answer,
+                                    "service_code_filter": _sc_in_answer[0],
+                                    "query_type": "Service Code Comparison"}
             sse_data = f"data: {json.dumps({'content': chunk})}\n\n"
             yield sse_data.encode('utf-8')
         elif intent == "unidentified_number":

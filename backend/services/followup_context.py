@@ -194,10 +194,12 @@ def build_context(intent: Optional[str],
     # key at all -- so a zero-row listing's own follow-up ("how many of them
     # are approved?") fell all the way through to the officer's whole
     # jurisdiction total instead of correctly answering "0 of 0".
-    if sd.get("service_code_filter") and "applications" not in sd:
+    if (sd.get("service_code_filter") or sd.get("service_codes")) and "applications" not in sd:
+        sc_list = [str(c) for c in sd.get("service_codes", [])] if sd.get("service_codes") else [str(sd["service_code_filter"])]
         return FollowupContext(
             entity=ENTITY_SERVICE_CODE,
-            filters={**filters, "service_code": sd["service_code_filter"]},
+            application_numbers=sc_list,
+            filters={**filters, "service_code": sc_list[0], "service_codes": sc_list},
             query_type=sd.get("query_type"),
             intent=intent,
         )

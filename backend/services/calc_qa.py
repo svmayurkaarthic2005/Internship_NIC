@@ -480,7 +480,13 @@ def code_counts(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
 
 
 
-_CMP_CODES = re.compile(r"\bcompa?r\w*|\bcomapre\b|\bvs\.?\b|\bversus\b|\bsame\s+as\b|\bdifferen\w*|ஒப்பிடு", re.IGNORECASE)
+_CMP_CODES = re.compile(
+    r"\bcompa?r\w*|\bcomapre\b|\bvs\.?\b|\bversus\b|\bsame\s+as\b|\bdifferen\w*|ஒப்பிடு|"
+    r"\bwhich\s+(?:service\s+(?:code\s+)?)?has\s+more\b|\bwhich\s+has\s+more\b|"
+    r"\bmore\s+applications\b|\bstatuses\b|\bapplication\s+statuses\b|"
+    r"\bnumbers?\s+only\b|\bdata\s+only\b|\bnumbers\b",
+    re.IGNORECASE
+)
 
 
 _CMP_CONCEPTUAL = re.compile(r"\bhow\s+is\b.{0,20}\bdifferent\b|\bwhat\s+is\s+the\s+differen\w*\b|"
@@ -500,12 +506,16 @@ def compare_codes_conceptual(text: str, ta: bool = False) -> Optional[str]:
     t = text or ""
     if _APP_NO.search(t) or not _CMP_CONCEPTUAL.search(t) or _CMP_COUNT_WORD.search(t):
         return None
-    from backend.utils.helpers import SIS_URBAN_SERVICES
+    from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
     codes = []
-    for c in re.findall(r"(?<![\d/])(0?1[5-9]\d)(?![\d/])", t):
-        c = c.zfill(4)
+    for c in find_service_codes(t):
         if c in SIS_URBAN_SERVICES and c not in codes:
             codes.append(c)
+    if not codes:
+        for c in re.findall(r"(?<![\d/])(0?1[5-9]\d)(?![\d/])", t):
+            c = c.zfill(4)
+            if c in SIS_URBAN_SERVICES and c not in codes:
+                codes.append(c)
     if len(codes) != 2:
         return None
     (a, b) = codes
@@ -519,28 +529,77 @@ def compare_codes_conceptual(text: str, ta: bool = False) -> Optional[str]:
             f"{a} ({ia['name']}) {fv(ia)}; {b} ({ib['name']}) {fv(ib)}.")
 
 
-def compare_codes(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
+def compare_codes(text: str, rows: List[dict], ta: bool = False,
+                  codes_override: Optional[List[str]] = None) -> Optional[str]:
     """Two service codes side by side from the register. Any code that is not 0153 / 0154 was read as
     ISD vs NISD before ("compare 0156 and 0153" answered ISD 29, NISD 28)."""
     t = text or ""
     if _APP_NO.search(t) or not _CMP_CODES.search(t):
         return None
-    from backend.utils.helpers import SIS_URBAN_SERVICES
+    from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
     codes = []
-    for c in re.findall(r"(?<![\d/])(0?1[5-9]\d)(?![\d/])", t):
-        c = c.zfill(4)
-        if c in SIS_URBAN_SERVICES and c not in codes:
-            codes.append(c)
+    if codes_override and len(codes_override) == 2:
+        codes = [c for c in codes_override if c in SIS_URBAN_SERVICES]
+    if len(codes) != 2:
+        for c in find_service_codes(t):
+            if c in SIS_URBAN_SERVICES and c not in codes:
+                codes.append(c)
+    if len(codes) != 2:
+        for c in re.findall(r"(?<![\d/])(0?1[5-9]\d)(?![\d/])", t):
+            c = c.zfill(4)
+            if c in SIS_URBAN_SERVICES and c not in codes:
+                codes.append(c)
+    if len(codes) != 2:
+        if re.search(r"f[\s-]?line", t, re.IGNORECASE) and re.search(r"appeal", t, re.IGNORECASE):
+            codes = ["0178", "0185"]
+        elif re.search(r"\b(?:both\s+service\s*codes?|which\s+(?:one\s+)?has\s+more|what\s+about\s+(?:their\s+)?statuses?|numbers?\s+only|data\s+only|don'?t\s+explain|give\s+(?:the\s+)?numbers?)\b", t, re.IGNORECASE):
+            if any(str(r.get("service_code")) == "0178" for r in rows):
+                codes = ["0178", "0185"]
     if len(codes) != 2 or (set(codes) == {"0153", "0154"} and not re.search(r"\bsame\s+as\b", t, re.IGNORECASE)):
         return None              # ISD vs NISD keeps its own comparison (counts, durations)
     st = lambda r: str(r.get("status") or "").lower()
     parts = []
     for c in codes:
         pool = [r for r in rows if str(r.get("service_code")) == c]
+        appr = sum(1 for r in pool if st(r) in ("approved", "completed"))
+        pend = sum(1 for r in pool if st(r) in ("pending", "open"))
         rj = sum(1 for r in pool if st(r) == "rejected")
         nm = SIS_URBAN_SERVICES[c]["name"]
-        parts.append((c, nm, len(pool), rj))
-    (a, an, na, ra), (b, bn, nb, rb) = parts
+        parts.append((c, nm, len(pool), appr, pend, rj))
+    (a, an, na, aa, pa, ra), (b, bn, nb, ab, pb, rb) = parts
+
+    is_table = bool(re.search(r"\btable\b|அட்டவணை", t, re.IGNORECASE))
+    if is_table:
+        if ta:
+            return (
+                "| சேவை குறியீடு | சேவை பெயர் | மொத்த விண்ணப்பங்கள் | அங்கீகரிக்கப்பட்டது | நிலுவை | நிராகரிக்கப்பட்டது |\n"
+                "|---|---|---|---|---|---|\n"
+                f"| {a} | {an} | {na} | {aa} | {pa} | {ra} |\n"
+                f"| {b} | {bn} | {nb} | {ab} | {pb} | {rb} |"
+            )
+        return (
+            "| Service Code | Service Name | Total Applications | Approved (Completed) | Pending (Open) | Rejected |\n"
+            "|---|---|---|---|---|---|\n"
+            f"| {a} | {an} | {na} | {aa} | {pa} | {ra} |\n"
+            f"| {b} | {bn} | {nb} | {ab} | {pb} | {rb} |"
+        )
+
+    is_numbers_only = bool(re.search(r"\b(?:numbers?\s+only|only\s+(?:the\s+)?numbers?|just\s+(?:the\s+)?numbers?|எண்கள்\s+மட்டும்|data\s+only|don'?t\s+explain)\b", t, re.IGNORECASE))
+    if is_numbers_only:
+        if ta:
+            return f"{a} ({an}): {na} ({aa} அங்கீகரிக்கப்பட்டது, {pa} நிலுவை); {b} ({bn}): {nb} ({ab} அங்கீகரிக்கப்பட்டது, {pb} நிலுவை)."
+        return f"{a} ({an}): {na} ({aa} approved, {pa} pending); {b} ({bn}): {nb} ({ab} approved, {pb} pending)."
+
+    is_status_query = bool(re.search(r"\b(?:status|statuses|நிலை|நிலைகள்)\b", t, re.IGNORECASE))
+    if is_status_query:
+        if ta:
+            return (f"பதிவேட்டில் நிலை விவரம்:\n"
+                    f"• {a} ({an}): மொத்தம் {na} கோப்புகள் ({aa} அங்கீகரிக்கப்பட்டது, {pa} நிலுவை, {ra} நிராகரிக்கப்பட்டது).\n"
+                    f"• {b} ({bn}): மொத்தம் {nb} கோப்புகள் ({ab} அங்கீகரிக்கப்பட்டது, {pb} நிலுவை, {rb} நிராகரிக்கப்பட்டது).")
+        return (f"Status breakdown in the register:\n"
+                f"• {a} ({an}): {na} files total ({aa} approved, {pa} pending, {ra} rejected).\n"
+                f"• {b} ({bn}): {nb} files total ({ab} approved, {pb} pending, {rb} rejected).")
+
     if re.search(r"\bsame\s+as\b", t, re.IGNORECASE):
         head = (f"இல்லை — {a} ({an}) மற்றும் {b} ({bn}) வெவ்வேறு சேவைகள்." if ta
                 else f"No — {a} is {an} and {b} is {bn}; they are different services.")

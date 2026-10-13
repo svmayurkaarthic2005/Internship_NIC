@@ -3349,7 +3349,7 @@ def parse_comparison_query(message: str) -> Optional[dict]:
     # reads, so "which service code is 0153" was answered "ISD 13 vs NISD 76".
     # It belongs to service_code_lookup / service_code_guide. An application
     # number in the message is a genuine file comparison and is kept.
-    if not numbers and re.search(r"\bservice\s+codes?\b", raw, re.IGNORECASE):
+    if not numbers and re.search(r"\bservice\s+codes?\b", raw, re.IGNORECASE) and not re.search(r"\b(?:application\s+counts?|how\s+many\s+applications|more\s+applications|applications?)\b", raw, re.IGNORECASE):
         return None
     # An application number carries its own service code, and 0153 / 0154 are
     # exactly the tokens the type table looks for: left in, "compare
@@ -4530,6 +4530,20 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
             and not re.search(r"விண்ணப்ப|எனது|எனக்கு|எத்தனை", msg)):
         return "service_code_guide"
+
+    from backend.utils.helpers import find_service_codes as _sc_find_codes
+    _sc_in_msg = _sc_find_codes(msg)
+    if (len(_sc_in_msg) >= 2
+            and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
+            and not re.search(r"\b(?:application\s+counts?|how\s+many\s+applications|more\s+applications)\b", msg)):
+        return "service_code_lookup"
+
+    if prev_intent in ("service_code_lookup", "service_code_guide") and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg):
+        if re.search(r"\b(?:similar\w*|common\w*|shared|diff\w*|differ\w*|same|identical|alike|resembl\w*|"
+                     r"both|these\s+two|two\s+services?|them|properties|features?|workflows?|fields?|"
+                     r"table|numbers?\s+only|data\s+only)\b|"
+                     r"வேறுபா\w*|ஒப்பீ\w*|ஒற்றுமை\w*|பொதுவான\w*|ஒரே|வித்தியாச\w*", msg, re.IGNORECASE):
+            return "service_code_lookup"
 
     # "does ISD need a field visit?" / "ISD ku field visit venuma?" asks whether
     # the service REQUIRES a visit -- a fact about the service code, answered by
