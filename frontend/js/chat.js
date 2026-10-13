@@ -382,6 +382,8 @@ function setupEventListeners() {
     // Message input
     if (messageInput) {
         messageInput.addEventListener('input', handleInputChange);
+        messageInput.addEventListener('change', handleInputChange);
+        messageInput.addEventListener('paste', () => setTimeout(handleInputChange, 50));
         messageInput.addEventListener('keydown', handleKeyDown);
     }
 
@@ -393,6 +395,21 @@ function setupEventListeners() {
             stopResponse();
         }
     });
+
+    // Quick chips
+    const quickChipsContainer = document.getElementById('quickChips');
+    if (quickChipsContainer) {
+        quickChipsContainer.addEventListener('click', (e) => {
+            const chip = e.target.closest('.quick-chip');
+            if (!chip) return;
+            const q = chip.getAttribute('data-q') || chip.textContent.trim();
+            if (q) {
+                messageInput.value = q;
+                handleInputChange();
+                sendMessage();
+            }
+        });
+    }
     
     // Quick suggestions
     if (quickSuggestions) {
