@@ -539,7 +539,7 @@ async def dispatch_intent_stream(
         # "do they have an IGRS number" is a yes/no, and a table is not a
         # yes/no -- lead with the answer.
         _igrs_note = _igrs_over_list_note(
-            message, structured_data.get("applications") or [])
+            message, structured_data.get("applications") or [], language)
         if _igrs_note:
             structured_data["lead_note"] = _igrs_note
 
@@ -602,6 +602,25 @@ async def dispatch_intent_stream(
                 if isinstance(status_filter, str) else "Pending"
             structured_data["query_type"] = f"{_scalar_label}{type_str}{chan_str} Applications{month_str}{year_str}{date_range_str}{geo_str}"
 
+        # Same fix as the non-streaming twin: the structured scope this
+        # listing actually ran with, so "include rejected too" can widen the
+        # status while carrying every other active constraint forward from
+        # validated values instead of scraping them back out of rendered
+        # text. TOP-LEVEL keys -- `followup_context.build_context()` reads
+        # `sd.get("application_type")` / `sd.get("ward_number")` etc.
+        # directly off `structured_data`, never a nested "filters" key.
+        if app_type and "application_type" not in structured_data:
+            structured_data["application_type"] = app_type
+        if status_filter and "status" not in structured_data:
+            structured_data["status"] = status_filter
+        if ward_num and "ward_number" not in structured_data:
+            structured_data["ward_number"] = ward_num
+        if block_num and "block_number" not in structured_data:
+            structured_data["block_number"] = block_num
+        if submission_year and "submission_year" not in structured_data:
+            structured_data["submission_year"] = submission_year
+        if submission_month and "submission_month" not in structured_data:
+            structured_data["submission_month"] = submission_month
 
     elif intent == "overdue_applications":
         # Extract application type if mentioned in message
@@ -1053,7 +1072,7 @@ async def dispatch_intent_stream(
                     "govt_fee": "₹100.00",
                     "csc_fee": "₹60.00",
                     "sla_days": "15-20 working days",
-                    "workflow": "Citizen / CSC / Sub-Registrar → SIS Officer (Document Verification) → Zonal Level Tahsildar (Review + Digital Signature / DSC + Approval) [No field visit required]"
+                    "workflow": "Citizen / CSC / Sub-Registrar → SIS Officer (Document Verification) → Zonal Deputy Tahsildar (Review + Digital Signature / DSC + Approval) [No field visit required]"
                 },
                 {
                     "service_code": "0154",

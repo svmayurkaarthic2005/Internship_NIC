@@ -195,7 +195,7 @@ The channel is decided by source_name and camp_flag, as set out above.
 
 - Property tax, water charge and non-tax dues linked to the survey number must
   be cleared before the patta transfer order is generated.
-- The Zonal Level Tahsildar (ZDT) confirms arrears status during review before
+- The Zonal Deputy Tahsildar (ZDT) confirms arrears status during review before
   approving the patta transfer order; unpaid dues are a documented rejection
   reason.
 

@@ -2200,10 +2200,11 @@ def _decision_date_answer(sd: dict, app_no: str, is_tamil: bool) -> str:
         # handing back the submission date.
         # `_stage_labels` is built inside the two answer sites, not at module
         # level, so name the desk here rather than reaching for it.
+        _tahsildar_label = "the Tahsildar" if (app_no and "/0154/" in app_no) else "the Zonal Deputy Tahsildar"
         _desks = {"SIS": "the Sub Inspector Surveyor",
                   "SD": "the Senior Draughtsman",
                   "DIS": "the Deputy Inspector Surveyor",
-                  "TAHSILDAR": "the Zonal Level Tahsildar"}
+                  "TAHSILDAR": _tahsildar_label}
         stage = (sd.get("stage") or "").upper()
         where = _desks.get(stage, stage) if stage else None
         if is_tamil:

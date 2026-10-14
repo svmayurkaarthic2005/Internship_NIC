@@ -1447,7 +1447,7 @@ _FULLFORMS = {
     "sd": ("SD = Senior Draughtsman.", "SD = Senior Draughtsman (மூத்த வரைவாளர்)."),
     "dis": ("DIS = Deputy Inspector Surveyor.", "DIS = Deputy Inspector Surveyor (துணை ஆய்வு சர்வேயர்)."),
     "dsc": ("DSC = Digital Signature Certificate.", "DSC = Digital Signature Certificate (மின்னணு கையொப்பச் சான்று)."),
-    "zdt": ("ZDT = Zonal Level Tahsildar.", "ZDT = மண்டல நிலை தாசில்தார் (Zonal Level Tahsildar)."),
+    "zdt": ("ZDT = Zonal Deputy Tahsildar.", "ZDT = மண்டல துணை வட்டாட்சியர் (Zonal Deputy Tahsildar)."),
     "isd": ("ISD = Involving Sub-Division (service code 0154).", "ISD = Involving Sub-Division (சேவைக் குறியீடு 0154)."),
     "nisd": ("NISD = Not Involving Sub-Division (service code 0153).", "NISD = Not Involving Sub-Division (சேவைக் குறியீடு 0153)."),
     "fmb": ("FMB = Field Measurement Book -- not part of this register or workflow.",

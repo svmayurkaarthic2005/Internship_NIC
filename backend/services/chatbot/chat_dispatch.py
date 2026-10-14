@@ -557,7 +557,7 @@ async def dispatch_intent(
         # "do they have an IGRS number" is a yes/no, and a table is not a
         # yes/no -- lead with the answer.
         _igrs_note = _igrs_over_list_note(
-            message, structured_data.get("applications") or [])
+            message, structured_data.get("applications") or [], language)
         if _igrs_note:
             structured_data["lead_note"] = _igrs_note
 
@@ -622,6 +622,31 @@ async def dispatch_intent(
             _scalar_label = _STATUS_LABELS.get(status_filter, str(status_filter).title()) \
                 if isinstance(status_filter, str) else "Pending"
             structured_data["query_type"] = f"{_scalar_label}{type_str}{chan_str} Applications{month_str}{year_str}{date_range_str}{geo_str}"
+
+        # The structured scope this listing was actually run with, so a later
+        # widening follow-up ("include rejected too") can carry every active
+        # constraint forward by reading validated values here instead of
+        # scraping the WARD/TYPE words back out of this answer's own rendered
+        # text (see `_resolve_rejected_widen` in chat_smalltalk.py) -- the
+        # scrape-based approach silently dropped the type and ward/block scope
+        # entirely, widening "pending ISD in ward 102" to the whole register.
+        # These are TOP-LEVEL keys, not nested under a "filters" key:
+        # `followup_context.build_context()` reads `sd.get("application_type")`
+        # / `sd.get("ward_number")` etc. directly off `structured_data` to
+        # build its own `filters` dict -- a nested dict here is simply never
+        # read.
+        if app_type and "application_type" not in structured_data:
+            structured_data["application_type"] = app_type
+        if status_filter and "status" not in structured_data:
+            structured_data["status"] = status_filter
+        if ward_num and "ward_number" not in structured_data:
+            structured_data["ward_number"] = ward_num
+        if block_num and "block_number" not in structured_data:
+            structured_data["block_number"] = block_num
+        if submission_year and "submission_year" not in structured_data:
+            structured_data["submission_year"] = submission_year
+        if submission_month and "submission_month" not in structured_data:
+            structured_data["submission_month"] = submission_month
 
     elif intent == "overdue_applications":
         # Extract application type if mentioned in message
@@ -1290,7 +1315,7 @@ async def dispatch_intent(
                     "govt_fee": "₹100.00",
                     "csc_fee": "₹60.00",
                     "sla_days": "15-20 working days",
-                    "workflow": "Citizen / CSC / Sub-Registrar → SIS Officer (Document Verification) → Zonal Level Tahsildar (Review + Digital Signature / DSC + Approval) [No field visit required]"
+                    "workflow": "Citizen / CSC / Sub-Registrar → SIS Officer (Document Verification) → Zonal Deputy Tahsildar (Review + Digital Signature / DSC + Approval) [No field visit required]"
                 },
                 {
                     "service_code": "0154",

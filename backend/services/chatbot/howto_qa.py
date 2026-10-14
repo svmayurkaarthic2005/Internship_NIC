@@ -51,7 +51,7 @@ EN = {
     "approve_without_visit": (
         "ISD (0154): no -- the field visit is mandatory for every ISD application. NISD (0153): it is a document-only verification, so "
         "no visit is required unless a specific issue is flagged. Note also that the SIS officer does not approve: an ISD file goes "
-        "SIS -> Senior Draughtsman (sketch) -> DIS review -> Tahsildar's digital signature; an NISD file goes SIS -> Zonal Level "
+        "SIS -> Senior Draughtsman (sketch) -> DIS review -> Tahsildar's digital signature; an NISD file goes SIS -> Zonal Deputy "
         "Tahsildar, who holds the DSC key and approves. This assistant only reads the register; approvals are done in the TAMILNILAM portal."),
     "docs": ("Documents for a patta transfer.\nNISD (0153, no new sub-division):\n" + _NISD_DOCS +
              "\nISD (0154, involving sub-division):\n" + _ISD_DOCS),
@@ -63,8 +63,8 @@ EN = {
         "numbers {existing sub-division}/T{sequence} (e.g. 3/T1, 3/T2); on approval each gets its final number (3/T1 -> 3, 3/T2 -> 4)."),
     "steps_nisd": (
         "NISD (0153) from application to patta order: 1) application through CSC, Sub-Registrar or the citizen portal; 2) SIS verifies "
-        "Sale Deed, EC and Photo ID, checks the survey number, area and any dispute or litigation, and forwards to the Zonal Level "
-        "Tahsildar (about 5 working days; no field visit unless flagged); 3) the Zonal Level Tahsildar checks revenue arrears and the "
+        "Sale Deed, EC and Photo ID, checks the survey number, area and any dispute or litigation, and forwards to the Zonal Deputy "
+        "Tahsildar (about 5 working days; no field visit unless flagged); 3) the Zonal Deputy Tahsildar checks revenue arrears and the "
         "sale deed registration, and with the DSC key approves and generates the patta transfer order, or rejects with reasons (about 3 "
         "working days); 4) ownership is transferred and land records and property tax records are updated; 5) the citizen downloads the "
         "patta from the portal. Total about 15-20 working days."),

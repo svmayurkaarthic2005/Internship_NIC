@@ -11,7 +11,7 @@ CASES = [
     ("Is it allowed to approve an application without a field visit?", "approve_without_visit", "mandatory"),
     ("Explain how a sub-division sketch is prepared", "sketch", "Senior Draughtsman"),
     ("உட்பிரிவு வரைபடம் எப்படி தயாரிக்கப்படுகிறது?", "sketch", "SD"),
-    ("List the steps from application to patta order for an NISD file", "steps_nisd", "Zonal Level Tahsildar"),
+    ("List the steps from application to patta order for an NISD file", "steps_nisd", "Zonal Deputy Tahsildar"),
     ("Can you explain what a field visit involves and what I should check?", "field_visit", "GPS"),
     ("கள ஆய்வு என்றால் என்ன? எளிமையாக சொல்லுங்கள்", "field_visit", "GPS"),
     ("What should I do if an applicant does not turn up for the field visit?", "noshow", "Tahsildar"),

@@ -222,9 +222,18 @@ _MUTATION_OBJECT_RE = re.compile(
 
 # Things in the department's record. A mutation verb aimed at anything else
 # ("add a note for me") is not this.
+#
+# "row"/"rows" is deliberately NOT in this tuple (removed 2026-10-15): nobody
+# refers to the SIS register by that word -- every documented phrasing says
+# "applications" -- but it is exactly how an officer describes the lines of
+# an uploaded CSV/table on screen ("remove rejected rows", "show only pending
+# rows"). Treating it as a register object made a read-only filter over
+# attachment data refused as "I cannot change the records", the same
+# confidently-wrong refusal the "columns" exemption just below already exists
+# to avoid for column requests.
 _MUTATION_OBJECTS = (
     "application", "applications", "record", "records", "data", "database",
-    "db", "table", "tables", "row", "rows", "register", "registry",
+    "db", "table", "tables", "register", "registry",
     "knowledge base", "knowledgebase", "corpus", "document", "documents",
     "embedding", "embeddings", "vector", "field visit", "field visits", "visit",
     "survey", "patta", "owner", "owners", "status", "workflow", "subdivision",
@@ -247,10 +256,42 @@ _POLITE_PREFIX = re.compile(
 
 # Verb-final Tamil / Tanglish imperatives: "delete pannu", "approve pannunga",
 # "விண்ணப்பத்தை அங்கீகரி", "ரத்து செய்", "எல்லாத்தையும் நீக்கு".
+#
+# Polite suffixes added 2026-10-15: the bare imperative stem ("நீக்கு",
+# "மாற்று") only ever matched when nothing followed it before the end of the
+# message. An officer's actual polite imperative conjugates that stem --
+# "அங்கீகரிக்கவும்" (please approve), "நீக்குங்கள்" (please delete),
+# "மாற்றவும்"/"மாற்றுங்கள்" (please change) -- and NONE of those forms were
+# in the pattern at all, so a polite request to mutate a real record (not a
+# question about one) fell through this guard entirely, undetected, for
+# every verb in the list. Each stem below is followed by an explicit,
+# enumerated set of the polite suffixes actually in use, rather than an
+# unrestricted trailing character class -- a greedy class would also have
+# swallowed a QUESTION's own suffix ("முடக்கப்பட்டதா?", "has it been
+# frozen?"), misreading a read-only question as the mutation it asks about.
+# "முடக்கு"/"முடக்க" (freeze a ward/block, service code 0163) and its
+# reversal "திற" (unfreeze) are new verbs here, matching the English
+# freeze/unfreeze/revoke entries in `_MUTATION_VERBS` above, which had no
+# Tamil-script equivalent at all.
+#
+# Pure-Tanglish (Latin-script) imperatives with no English verb prefix --
+# "neekkunga" (delete), "maathunga" (change), "mudakkavum" (freeze) -- are
+# how these verbs are actually typed on a phone keyboard; the first
+# alternative above only ever matched an ENGLISH verb word plus a Tanglish
+# "pannu"-style suffix ("delete pannu"), never a fully Tanglish verb with no
+# English word in it at all.
 _TA_TANGLISH_MUTATION_RE = re.compile(
-    r"\b(?:delete|remove|approve|reject|cancel|update|change|modify|edit|forward|escalate|assign)\s+"
+    r"\b(?:delete|remove|approve|reject|cancel|update|change|modify|edit|forward|escalate|assign|freeze|unfreeze|revoke)\s+"
     r"(?:pannu|panu|pannunga|pannidu|panidu|seiyyu|seyyu|pannungo)\b"
-    r"|(?:அங்கீகரி|நிராகரி|ரத்து\s*செய்|நீக்கு|அழி|மாற்று|திருத்து|புதுப்பி|முன்னனுப்பு)\s*[.!?]*$",
+    r"|\b(?:neekk|azhikk|maath|thiruth|puthupp|munnanupp|mudakk|thirakk|rathu\s*seiy|ratsu\s*seiy)\w*(?:unga|avum|idu|u)\b"
+    # "மாற்று" (change) and "முடக்கு" (freeze) already carry their own
+    # vowel-shifted stem ("மாற்ற", "முடக்க") as separate alternatives above
+    # and below -- Tamil's "வும்" polite suffix attaches to that shifted
+    # stem ("மாற்றவும்"), never to the dictionary stem itself
+    # ("மாற்றுவும்" is not a real word), so the dictionary-stem alternative
+    # needs only the suffixes that attach to IT directly (உங்கள்/ங்கள்).
+    r"|(?:அங்கீகரி|நிராகரி|ரத்து\s*செய்|நீக்கு|அழி|மாற்று|திருத்து|புதுப்பி|முன்னனுப்பு|முடக்கு|முடக்க|திற|மாற்ற|நீக்க|அழிக்க|திருத்த|புதுப்பிக்க|முன்னனுப்ப|திறக்க)"
+    r"(?:க்கவும்|யவும்|வும்|யுங்கள்|உங்கள்|ங்கள்)?\s*[.!?]*$",
     re.IGNORECASE)
 
 # "add the subdivision number after the survey number" / "put block before
@@ -450,7 +491,16 @@ async def _llm_greeting(message: str, kind: str, is_tamil: bool):
     # actually is. Telling it the real IST period and forbidding any other
     # guess fixes that instead of leaving it to chance.
     period = _ist_time_period()
-    if period == "night":
+    # "Good night" IS the correct farewell at night -- the restriction below
+    # exists only for an OPENER, where it would read as the assistant ending
+    # the chat before it begins. Applied unconditionally (fixed 2026-10-15),
+    # it meant an officer who genuinely said goodbye at night was told the
+    # model must NOT say "good night" either, and any "good night" it wrote
+    # back anyway was then rejected by `_greeting_reply_ok`'s own period
+    # check below -- forcing the generic fixed farewell text instead of a
+    # time-appropriate one.
+    is_farewell = (kind == "farewell")
+    if period == "night" and not is_farewell:
         # "Good night" is a sign-off in English (and in Tamil), not an
         # opener -- saying it to a message that STARTS the conversation
         # ("hi", "namaskaram") reads as the assistant ending the chat before
@@ -460,6 +510,11 @@ async def _llm_greeting(message: str, kind: str, is_tamil: bool):
             "It is currently late at night in India. Do NOT say \"good night\" or "
             "name any time of day -- that is a farewell, not a greeting to start "
             "a conversation with. Just greet them plainly."
+        )
+    elif period == "night" and is_farewell:
+        time_rule = (
+            "It is currently late at night in India. The officer is signing off, "
+            "so a closing \"good night\" is appropriate here."
         )
     else:
         time_rule = (
@@ -486,7 +541,7 @@ async def _llm_greeting(message: str, kind: str, is_tamil: bool):
     except Exception as exc:
         logger.warning(f"LLM greeting unavailable, using fixed text: {exc}")
         return None
-    if not _greeting_reply_ok(text, period):
+    if not _greeting_reply_ok(text, None if is_farewell else period):
         logger.warning("LLM greeting rejected (empty, long, or carried a figure); using fixed text")
         return None
     return text
@@ -684,8 +739,39 @@ def _fv_cols_message(state: dict) -> str:
 
 _NO_WORDS = frozenset({"no", "nope", "nah", "illa", "illai", "இல்லை", "nvm", "never mind",
                        "இல்ல பரவாயில்ல", "apdi illa", "appadi illa", "illa apdi illa", "அப்படி இல்லை"})
+# Kept as the superset of every word `_AFFIRMATIVE_RE` below also matches
+# (added 2026-10-15): the two were independently maintained and had
+# different gaps -- "seri"/"சரி" matched `_AFFIRMATIVE_RE` but not this set,
+# "சரிதான்" the exact reverse, and "sure"/"right"/"ok"/"okay"/"ஆமாம்" were
+# missing from one side or the other. An officer answering a pending
+# question with "seri" got the honest pending-aware reply; the same officer
+# answering "சரி" instead -- the same word, different script -- silently did
+# not. Kept as two sets rather than one shared constant because this one is
+# also matched case-sensitively bare (no polite-prefix stripping) against a
+# single-word message, unlike `_AFFIRMATIVE_RE`'s fuller sentence anchors.
 _YES_WORDS = frozenset({"yes", "yeah", "yep", "yup", "ya", "yaa", "correct", "exactly",
-                        "true", "aama", "ama", "aamam", "ஆம்", "ஆமா", "சரிதான்"})
+                        "true", "sure", "right", "ok", "okay", "aama", "ama", "aamam",
+                        "seri", "sari", "ஆம்", "ஆமாம்", "ஆமா", "சரி", "சரிதான்"})
+
+
+# A rendered question is not always the last character in the string -- "Do
+# you want to see ISD or NISD applications? (for example "applications from
+# CSC")" and a question closed inside a quote ("...applications"?") both end
+# with a parenthetical or a trailing quote mark, not a bare "?". Checking only
+# the final character missed both, so a genuine pending question wasn't
+# recognised as one and a bare "yes"/"no" after it fell through to the plain
+# "nothing is pending" reply instead. One trailing parenthetical aside and one
+# layer of trailing quote/whitespace are stripped before the check; Tamil
+# questions in this codebase are written with the same "?" mark, so no
+# separate Tamil punctuation path is needed.
+_TRAILING_PAREN_ASIDE_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_TRAILING_WRAP_CHARS = " \t\r\n\"'“”‘’"
+
+
+def _ends_with_question(text: str) -> bool:
+    t = (text or "").strip()
+    t = _TRAILING_PAREN_ASIDE_RE.sub("", t).rstrip(_TRAILING_WRAP_CHARS)
+    return t.endswith("?")
 
 
 def _contentless_reply(kind: str, language: str, message: str = "", chat_history: list = None) -> str:
@@ -741,7 +827,7 @@ def _contentless_reply(kind: str, language: str, message: str = "", chat_history
     word = (message or "").strip().strip(_TRIM_CHARS).strip().lower()
     last_was_question = bool(chat_history) and isinstance(chat_history[-1], dict) \
         and str(chat_history[-1].get("role", "")).lower() in ("assistant", "ai", "bot") \
-        and str(chat_history[-1].get("content", "")).strip().endswith("?")
+        and _ends_with_question(chat_history[-1].get("content", ""))
     if word in _NO_WORDS:
         if last_was_question:
             return ("பதிவு செய்யப்பட்டது, ஆனால் முந்தைய கேள்வி என் கைவசம் இல்லை. எதை விரும்புகிறீர்கள் என்று மீண்டும் தெளிவாகக் கேளுங்கள்." if is_tamil
@@ -874,7 +960,15 @@ def _is_out_of_scope(message: str) -> bool:
 _CAPABILITY_CUES = (
     "what can u do", "what can you do for me", "use of this chatbot", "use of this bot",
     "purpose of this chatbot", "what is this chatbot", "what is this bot",
-    "who is this", "what is this", "who are you", "what are you", "what can you do", "what do you do",
+    # "who is this" / "what is this" are deliberately NOT here (removed
+    # 2026-10-15): as a plain substring they matched "What is this FILE
+    # ABOUT?" and "what is this APPLICATION'S status" the same way, sending a
+    # genuine attachment/application question to the capability blurb. The
+    # bare, whole-message form of the question is already caught correctly,
+    # anchored, by `_IDENTITY_THIS_RE` just above -- checked first in
+    # `_is_capability_question`, so removing the unanchored duplicates here
+    # loses no real coverage.
+    "who are you", "what are you", "what can you do", "what do you do",
     "what can you help", "how can you help", "what can i ask",
     "what do you know", "what is your purpose", "what are your capabilities",
     "tell me about yourself", "about yourself", "how do you work", "how does this work",
@@ -1032,13 +1126,14 @@ _LLM_LEAK_RE = re.compile(
     r"|survey officer access", re.IGNORECASE)
 
 
-def _scrub_llm_answer(text: str) -> str:
+def _scrub_llm_answer(text: str, language: Optional[str] = None) -> str:
     """An LLM-written answer that repeats its own prompt or talks about "the tool"
     or "the officer" is an internal failure, not an answer. Replaced by the plain
     statement of what is true: it was not found."""
     if not text or not _LLM_LEAK_RE.search(text):
         return text
-    if re.search(r"[\u0B80-\u0BFF]", text):
+    is_tamil = (language in ("ta", "tanglish")) if language is not None else bool(re.search(r"[\u0B80-\u0BFF]", text))
+    if is_tamil:
         return ("இதை பதிவேட்டிலோ குறிப்பு ஆவணங்களிலோ என்னால் கண்டறிய முடியவில்லை. கேள்வியை மாற்றிக் கேளுங்கள் "
                 "அல்லது விண்ணப்ப எண், கணக்கெண், வார்டு அல்லது சேவை குறியீடு பற்றிக் கேளுங்கள்.")
     return ("I could not find that in the register or the reference documents. Try rephrasing, or ask "
@@ -1244,6 +1339,8 @@ _WFH_STAGE_LABELS = {"SIS": "SIS (Sub Inspector Surveyor)", "SD": "SD (Senior Dr
 _WFH_STAGE_ALIASES = {"sis": "SIS", "sub inspector": "SIS", "surveyor": "SIS", "sd": "SD",
                        "senior draughtsman": "SD", "draughtsman": "SD", "dis": "DIS",
                        "deputy inspector": "DIS", "tahsildar": "TAHSILDAR", "zdt": "TAHSILDAR",
+                       "zonal deputy tahsildar": "TAHSILDAR", "zonal level tahsildar": "TAHSILDAR",
+                       "deputy tahsildar": "TAHSILDAR",
                        "completed": "COMPLETED", "complete": "COMPLETED",
                        "rejected": "REJECTED", "reject": "REJECTED"}
 # Ordered narrowest-first so "final workflow transition" isn't swallowed by a looser cue, and so
@@ -1293,8 +1390,24 @@ def _wfh_find_stage(text: str) -> Optional[str]:
     return None
 
 
-def _wfh_desk_label(stage) -> str:
+def _wfh_desk_label_base(stage, app_no: Optional[str] = None) -> str:
+    """The display name for a workflow_history stage.
+
+    `app_no` added 2026-10-15: the "TAHSILDAR" stage is one generic label for
+    two DIFFERENT real-world posts, and the register's own data shows the
+    difference -- NISD files are the only ones that ever reach this stage at
+    all (SIS -> TAHSILDAR -> COMPLETED/REJECTED, role 16, "Forward To ZDT" in
+    the source extract); an ISD file is always closed at SD and never reaches
+    a Tahsildar stage in this register. Collapsing both into the bare word
+    "Tahsildar" lost that distinction for the one type that actually reaches
+    it, even though the chatbot's own conceptual answers elsewhere (glossary,
+    "who approves") already correctly call NISD's approver the Zonal Level
+    Tahsildar. The application number's own service-code segment (0153 =
+    NISD, 0154 = ISD) decides which label applies -- no new query needed.
+    """
     s = str(stage or "").upper()
+    if s == "TAHSILDAR" and app_no and re.search(r"/0153/", app_no):
+        return "Zonal Deputy Tahsildar"
     return _WFH_STAGE_LABELS.get(s, s) or "not recorded"
 
 
@@ -1314,6 +1427,12 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
     m = message or ""
     if not _WFH_CUE.search(m):
         return None
+    # Bound to THIS application's own number, so "TAHSILDAR" renders as the
+    # Zonal Level Tahsildar for NISD and plain Tahsildar for ISD -- see
+    # `_wfh_desk_label_base`'s docstring. Shadows the module-level name only
+    # inside this function; every call below is unchanged.
+    def _wfh_desk_label(stage):
+        return _wfh_desk_label_base(stage, app_no)
     from backend.services.postgres import get_workflow_history
     hops = await get_workflow_history(db, officer, app_no)
     if hops is None:
@@ -1577,13 +1696,19 @@ def _unknown_from_reply(word: str, language: str) -> str:
 # parsing ever sees it.
 _AFFIRMATIVE_RE = re.compile(
     r"^\s*(?:yes|yeah|yep|yup|ya|sure|correct|right|ok|okay|that'?s\s+right|that\s+one|confirm(?:ed)?)\s*[.!]*\s*$|"
-    r"^\s*(?:ஆம்|ஆமாம்|சரி|அது\s*தான்)\s*[.!]*\s*$|"
+    # "ஆமா" / "சரிதான்" added 2026-10-15, closing the reverse gap from
+    # `_YES_WORDS` above: both are ordinary spoken-Tamil affirmatives
+    # ("yeah" / "that's right"), already recognised by `_YES_WORDS` but
+    # missing here.
+    r"^\s*(?:ஆம்|ஆமாம்|ஆமா|சரி|சரிதான்|அது\s*தான்)\s*[.!]*\s*$|"
     # Tanglish (Latin-script) affirmatives -- "aama"/"ama" are how officers
     # actually type ஆம்/ஆமாம் on a phone keyboard. Missing here, a confirmed
     # CAN-number guess ("Did you mean the CAN number?") answered "aama" fell
     # straight to the generic contentless reply, the same gap this function
-    # exists to close for the Tamil-script and English spellings.
-    r"^\s*(?:aama|ama|seri)\s*[.!]*\s*$",
+    # exists to close for the Tamil-script and English spellings. "aamam"
+    # and "sari" (added 2026-10-15) are the same spoken forms `_YES_WORDS`
+    # already carried.
+    r"^\s*(?:aama|ama|aamam|seri|sari)\s*[.!]*\s*$",
     re.IGNORECASE)
 _UNKNOWN_FROM_GUESS_RE = re.compile(
     r"Did you mean (Sub-Registrar \(SRO\)|CSC)\?|(Sub-Registrar \(SRO\)|CSC)\s*என்று சொல்ல வந்தீர்களா",
@@ -1639,11 +1764,26 @@ _LISTING_CHANNEL_TEXT_RE = re.compile(r"\bfrom\s+(Sub-Registrar|CSC|citizen port
 _CHANNEL_TEXT_TO_CODE = {"sub-registrar": "sub_registrar", "csc": "csc", "citizen portal": "citizen"}
 
 
-def _resolve_rejected_widen(message: str, chat_history: list) -> Optional[str]:
+_WIDEN_CODE_TO_CHANNEL_WORD = {"csc": "CSC", "sub_registrar": "Sub-Registrar", "citizen": "citizen portal"}
+
+
+def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None) -> Optional[str]:
     """"include rejected too" / "rejected applications too" -- the request it widens to,
-    carrying forward whatever channel the previous listing was scoped to. None when this
-    message is not that widening request."""
-    if not _REJECTED_TOO_RE.search(message or ""):
+    carrying forward every filter the previous listing actually ran with (type, ward,
+    block, channel), not just the channel. None when this message is not that widening
+    request."""
+    # `followup_context.negation_normalise()` runs on `message` BEFORE this
+    # function is ever reached (orchestrator.py, right after `_original_
+    # message` is first captured) and already rewrites "include rejected
+    # too" down to the literal phrase "all pending approved rejected" --
+    # by the time control gets here, `_REJECTED_TOO_RE` (which looks for
+    # "include"/"too"/etc.) no longer matches anything, so the ward/type
+    # restoration below was never reached at all and the widened query ran
+    # with no scope. Recognising that already-normalised phrase as the same
+    # widening request closes that gap without duplicating or reordering the
+    # earlier rewrite.
+    _already_normalised = bool(re.fullmatch(r"all\s+pending\s+approved\s+rejected\.?", (message or "").strip(), re.IGNORECASE))
+    if not _already_normalised and not _REJECTED_TOO_RE.search(message or ""):
         return None
     # "Show rejected applications in ward 005." names its OWN fresh ward --
     # a complete, self-contained listing request, not a continuation phrase
@@ -1658,11 +1798,6 @@ def _resolve_rejected_widen(message: str, chat_history: list) -> Optional[str]:
     if re.search(r"\bward\s*\d|\bblock\s*\d|\b(?:service\s*code\s*)?0\d{3}\b|\b(?:19|20)\d{2}\b",
                  message or "", re.IGNORECASE):
         return None
-    last_assistant = next((
-        (m.get("content") or "") if isinstance(m, dict) else str(m)
-        for m in reversed(chat_history or [])
-        if isinstance(m, dict) and str(m.get("role", "")).lower() in ("assistant", "ai", "bot")
-    ), "")
     # "include rejected too" asks to ADD rejected back to whatever was
     # already being shown, not to narrow down to ONLY rejected -- this used
     # to rewrite straight to "rejected applications", so an officer who had
@@ -1671,12 +1806,51 @@ def _resolve_rejected_widen(message: str, chat_history: list) -> Optional[str]:
     # whole register). Naming every register status together collapses to
     # "no filter" in `_requested_status_filter_for_register`, the correct
     # effect of un-excluding one of them.
+    base = "all pending approved rejected applications"
+    # Prefer the PREVIOUS listing's own validated filters (set alongside its
+    # query_type in chat_dispatch.py / chat_dispatch_stream.py) over scraping
+    # them back out of the rendered answer text -- the scrape only ever
+    # recovered the channel, so "pending ISD applications in ward 102" ->
+    # "include rejected too" silently widened to the WHOLE register (every
+    # type, every ward) instead of keeping ISD + ward 102 and only adding
+    # rejected back.
+    filters = getattr(followup_ctx, "filters", None) if followup_ctx is not None else None
+    if filters:
+        bits = []
+        app_type = filters.get("application_type")
+        if isinstance(app_type, (list, tuple)):
+            bits.append(" ".join(app_type))
+        elif app_type:
+            bits.append(str(app_type))
+        if filters.get("ward_number"):
+            bits.append(f"in ward {filters['ward_number']}")
+        if filters.get("block_number"):
+            bits.append(f"block {filters['block_number']}")
+        if filters.get("submission_month"):
+            bits.append(f"for month {filters['submission_month']}")
+        if filters.get("submission_year"):
+            bits.append(f"in {filters['submission_year']}")
+        chan = filters.get("submission_channel")
+        chan_list = list(chan) if isinstance(chan, (list, tuple, set)) else ([chan] if chan else [])
+        chan_words = [_WIDEN_CODE_TO_CHANNEL_WORD.get(c, c) for c in chan_list if c]
+        if chan_words:
+            bits.append(f"from {' and '.join(chan_words)}")
+        if bits:
+            return f"{base} {' '.join(bits)}"
+        return base
+    # No structured context (an older saved turn, or a non-listing context) --
+    # fall back to scraping the channel out of the rendered text, the only
+    # signal this ever had before the structured filters existed.
+    last_assistant = next((
+        (m.get("content") or "") if isinstance(m, dict) else str(m)
+        for m in reversed(chat_history or [])
+        if isinstance(m, dict) and str(m.get("role", "")).lower() in ("assistant", "ai", "bot")
+    ), "")
     m = _LISTING_CHANNEL_TEXT_RE.search(last_assistant)
     if not m:
-        return "all pending approved rejected applications"
+        return base
     code = _CHANNEL_TEXT_TO_CODE.get(m.group(1).strip().lower())
-    return (f"all pending approved rejected applications from {code}" if code
-            else "all pending approved rejected applications")
+    return f"{base} from {code}" if code else base
 
 
 _QUALIFIER_LIST_INTENTS = frozenset({"pending_applications", "isd_applications", "nisd_applications",
@@ -1886,58 +2060,64 @@ def _special_scope_kind(message: str):
 
 
 def _special_scope_reply(message: str, language: str) -> str:
-    if _special_scope_kind(message) == "format_unsupported":
+    # `_special_scope_kind(message)` was re-evaluated once per branch below
+    # (up to 16 times for the same call) -- a pure classification of
+    # `message` alone, with no side effect and no dependency on anything
+    # that changes between those calls, so one evaluation up front is
+    # exactly equivalent. Branch order and every response are unchanged.
+    ssk = _special_scope_kind(message)
+    if ssk == "format_unsupported":
         return _format_unsupported_reply(language)
-    if _special_scope_kind(message) == "fullform_ask":
+    if ssk == "fullform_ask":
         return ("எந்தச் சொல்லின் விரிவாக்கம் வேண்டும்? (எ.கா. \"IGRS full form\", \"SRO full form\")" if language in ("ta", "tanglish")
                 else "The full form of which term? For example \"full form of IGRS\" or \"full form of SRO\".")
-    if _special_scope_kind(message) == "fullform":
+    if ssk == "fullform":
         return _FULLFORMS[_fullform_term(message)][1 if language in ("ta", "tanglish") else 0]
-    if _special_scope_kind(message) == "unknown_fullform":
+    if ssk == "unknown_fullform":
         w = _unknown_fullform(message).upper()
         return (f"{w}-இன் விரிவாக்கம் SIS ஆவணங்களில் இல்லை, எனவே யூகிக்க மாட்டேன். அதன் பொருளை துறை ஆவணங்களில் உள்ளபடி மட்டுமே சொல்வேன் "
                 "(எ.கா. IGRS, SRO, CSC, CAN, SLA, DSC, SD, DIS)." if language in ("ta", "tanglish") else
                 f"I do not have the full form of {w} in the SIS documents, so I will not guess. I can give the ones the department "
                 "documents define -- for example IGRS, SRO, CSC, CAN, SLA, DSC, SD, DIS.")
-    if _special_scope_kind(message) == "unknown_term":
+    if ssk == "unknown_term":
         return _unknown_term_reply(_unknown_term(message), language)
-    if _special_scope_kind(message) == "cn_number":
+    if ssk == "cn_number":
         return ("'cn' என்பது எனக்குத் தெரிந்த சொல் அல்ல. CAN எண் (Citizen Access Number) வேண்டுமா? "
                 "\"CAN எண்\" என்று கேளுங்கள், தருகிறேன்." if language in ("ta", "tanglish") else
                 "I do not recognise \"cn\". Did you mean the CAN number (Citizen Access Number)? "
                 "Ask for \"CAN number\" and I will give it.")
-    if _special_scope_kind(message) == "unknown_qualifier":
+    if ssk == "unknown_qualifier":
         return _unknown_qualifier_reply(_unknown_qualifier(message), language)
-    if _special_scope_kind(message) == "unknown_from":
+    if ssk == "unknown_from":
         return _unknown_from_reply(_unknown_from_word(message), language)
-    if _special_scope_kind(message) == "opinion":
+    if ssk == "opinion":
         return _opinion_reply(language)
-    if _special_scope_kind(message) == "compare_ask":
+    if ssk == "compare_ask":
         return _COMPARE_ASK[1 if language in ("ta", "tanglish") else 0]
-    if _special_scope_kind(message) == "clear_info":
+    if ssk == "clear_info":
         ta = (language in ("ta", "tanglish") or bool(re.search(r"[\u0B80-\u0BFF]", message or ""))
               or bool(re.search(r"\b(?:pann\w*|panr\w*|thirumba|kedaikk\w*|kidaikk\w*|aagum|nadakkum|azhi\w*|poidum\w*|eppadi|epdi|neekk?u\w*)\b",
                                 (message or "").lower())))
         return _CLEAR_INFO_TEXT[_clear_info_topic(message)][1 if ta else 0]
-    if _special_scope_kind(message) in ("praise", "complaint"):
-        return _sentiment_reply(_special_scope_kind(message), message, language)
-    if _special_scope_kind(message) == "identity":
+    if ssk in ("praise", "complaint"):
+        return _sentiment_reply(ssk, message, language)
+    if ssk == "identity":
         return _identity_reply(message, language)
-    if _special_scope_kind(message) == "time":
+    if ssk == "time":
         return _time_now_reply(language)
-    if _special_scope_kind(message) == "unheld":
+    if ssk == "unheld":
         if language in ("ta", "tanglish"):
             return ("அது SIS பதிவேட்டிலோ துறை ஆவணங்களிலோ என்னிடம் இல்லை — அலுவலக நேரம், விடுமுறை, "
                     "உதவி எண், முத்திரைக் கட்டணம் போன்றவற்றுக்கு அலுவலகத்தையோ TAMILNILAM தளத்தையோ பார்க்கவும்.")
         return ("That is not in the SIS register or the department documents I hold — for office "
                 "hours, holidays, helpline numbers or stamp duty, check with the office or the "
                 "TAMILNILAM portal.")
-    if _special_scope_kind(message) == "date":
+    if ssk == "date":
         d, mon = _invalid_calendar_date(message)
         if language in ("ta", "tanglish"):
             return f"{mon} மாதத்தில் {d}-ஆம் தேதி இல்லை. சரியான தேதியைக் கொடுங்கள்."
         return f"{d} {mon} is not a valid date — that month does not have a day {d}. Give a valid date and I will look it up."
-    if _special_scope_kind(message) == "bare_date_narrative":
+    if ssk == "bare_date_narrative":
         if language in ("ta", "tanglish"):
             return ("ஒரு தேதி மட்டும் போதாது -- ஒரு நாளில் நடந்த அனைத்தையும் பதிவு செய்யும் பொதுவான பட்டியல் "
                     "என்னிடம் இல்லை. விண்ணப்ப எண்ணைக் கொடுங்கள், அல்லது என்ன வகை தகவல் வேண்டும் என்று சொல்லுங்கள் -- "
@@ -2155,20 +2335,16 @@ _WORKFLOW_STEPS_TEXT = {
             "ISD (no field visit, no SD sketch, no DIS):\n"
             "1. Application (CSC / citizen portal / Sub-Registrar referral)\n"
             "2. SIS -- Sub Inspector Surveyor: document verification only\n"
-            "3. Zonal Level Tahsildar -- holds the DSC key; approves and "
-            "generates the patta transfer order\n\n"
-            "This one matches the register: 167 of 168 seeded NISD "
-            "applications reach the Tahsildar stage."),
+            "3. Zonal Deputy Tahsildar -- holds the DSC key; approves and "
+            "generates the patta transfer order"),
         "ta": (
             "NISD (சேவை குறியீடு 0153, உட்பிரிவு இல்லாதது) — முழு சர்வே எண்ணின் "
             "நேரடி பட்டா மாற்றம், ISD-ஐ விட குறுகியது (கள ஆய்வு இல்லை, SD வரைபடம் "
             "இல்லை, DIS இல்லை):\n"
             "1. விண்ணப்பம் (CSC / குடிமகன் போர்ட்டல் / துணை பதிவாளர் பரிந்துரை)\n"
             "2. SIS — ஆவண சரிபார்ப்பு மட்டும்\n"
-            "3. மண்டல அளவு தாசில்தார் — DSC பயன்படுத்தி ஒப்புதல் மற்றும் பட்டா மாற்ற "
-            "உத்தரவு\n\n"
-            "இது பதிவேட்டுடன் பொருந்துகிறது: 168 NISD விண்ணப்பங்களில் 167 தாசில்தார் "
-            "நிலையை அடைகின்றன."),
+            "3. மண்டல துணை வட்டாட்சியர் — DSC பயன்படுத்தி ஒப்புதல் மற்றும் பட்டா மாற்ற "
+            "உத்தரவு"),
     },
 }
 
@@ -2184,9 +2360,9 @@ _WORKFLOW_STEPS_BRIEF_TEXT = {
                "மதிப்பாய்வு -> தாசில்தார் கையொப்பம்."),
     },
     "NISD": {
-        "en": ("NISD (0153): Application -> SIS document verification -> Zonal Level "
+        "en": ("NISD (0153): Application -> SIS document verification -> Zonal Deputy "
                "Tahsildar signs the patta order. No field visit, no SD sketch."),
-        "ta": ("NISD (0153): விண்ணப்பம் -> SIS ஆவண சரிபார்ப்பு -> மண்டல தாசில்தார் "
+        "ta": ("NISD (0153): விண்ணப்பம் -> SIS ஆவண சரிபார்ப்பு -> மண்டல துணை வட்டாட்சியர் "
                "கையொப்பம். கள ஆய்வு/SD வரைபடம் இல்லை."),
     },
 }
@@ -2223,12 +2399,12 @@ _WORKFLOW_STEPS_ALT_TEXT = {
                "application arrives through a CSC counter, the citizen portal, or a "
                "Sub-Registrar referral. The Sub Inspector Surveyor (SIS) checks the "
                "documents; there is no field visit and no SD sketch for this type. The "
-               "file then goes to the Zonal Level Tahsildar, who holds the DSC key and "
+               "file then goes to the Zonal Deputy Tahsildar, who holds the DSC key and "
                "uses it to approve the file and generate the patta transfer order."),
         "ta": ("NISD (0153) -- உட்பிரிவு இல்லாத நேரடி பட்டா மாற்றம் -- விண்ணப்பம் CSC கவுண்டர், "
                "குடிமகன் போர்ட்டல் அல்லது துணை பதிவாளர் பரிந்துரை வழியாக வருகிறது. "
                "SIS அதிகாரி ஆவணங்களை மட்டும் சரிபார்க்கிறார்; கள ஆய்வும் SD வரைபடமும் இல்லை. "
-               "பிறகு கோப்பு மண்டல அளவு தாசில்தாரிடம் செல்கிறது, அவர் DSC பயன்படுத்தி "
+               "பிறகு கோப்பு மண்டல துணை வட்டாட்சியரிடம் செல்கிறது, அவர் DSC பயன்படுத்தி "
                "ஒப்புதல் அளித்து பட்டா மாற்ற உத்தரவை உருவாக்குகிறார்."),
     },
 }
@@ -2286,16 +2462,18 @@ _ROLE_TA_RE = re.compile(
     r"(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna)?\s*[?.!]*$",
     re.IGNORECASE)
 _AFTER_RE = re.compile(
-    r"(?:what\s+happens|what\s+is\s+the\s+next\s+step|what\s+comes|next\s+step)\s+after\s+(?:the\s+)?(sis|sd|dis|tahsildar)\b", re.IGNORECASE)
+    r"(?:what\s+happens|what\s+is\s+the\s+next\s+step|what\s+comes|next\s+step)\s+after\s+(?:the\s+)?(sis|sd|dis|tahsildar|zdt)\b", re.IGNORECASE)
 _AFTER = {
-    "sis": ("After SIS: an ISD file goes to the Senior Draughtsman (SD) for the sub-division sketch; a NISD file goes straight to the Zonal Level Tahsildar.",
-            "SIS-க்குப் பிறகு: ISD கோப்பு உட்பிரிவு வரைபடத்திற்காக மூத்த வரைவாளரிடம் (SD) செல்லும்; NISD கோப்பு நேராக மண்டல நிலை தாசில்தாரிடம் செல்லும்."),
-    "sd": ("After SD: the file goes to the Deputy Inspector Surveyor (DIS) to review the sketch and field report. In this register the seeded ISD files are closed at SD (SIS -> SD -> COMPLETED/REJECTED).",
+    "sis": ("After SIS: an ISD file goes to the Senior Draughtsman (SD) for the sub-division sketch; a NISD file goes straight to the Zonal Deputy Tahsildar.",
+            "SIS-க்குப் பிறகு: ISD கோப்பு உட்பிரிவு வரைபடத்திற்காக மூத்த வரைவாளரிடம் (SD) செல்லும்; NISD கோப்பு நேராக மண்டல துணை வட்டாட்சியரிடம் செல்லும்."),
+    "sd": ("After SD: the file goes to the Deputy Inspector Surveyor (DIS) to review the sketch and field report. In this register ISD files are closed at SD (SIS -> SD -> COMPLETED/REJECTED).",
            "SD-க்குப் பிறகு: வரைபடம் மற்றும் கள அறிக்கையை சரிபார்க்க கோப்பு DIS-க்குச் செல்லும். இந்தப் பதிவேட்டில் ISD கோப்புகள் SD-இலேயே முடிகின்றன."),
     "dis": ("After DIS: the Tahsildar applies the DSC to approve and generate the patta transfer order.",
             "DIS-க்குப் பிறகு: தாசில்தார் DSC மூலம் ஒப்புதல் அளித்து பட்டா மாறுதல் ஆணையை உருவாக்குவார்."),
     "tahsildar": ("After the Tahsildar signs with the DSC the order is generated and the file is completed (or rejected).",
                   "தாசில்தார் DSC மூலம் கையொப்பமிட்ட பிறகு ஆணை உருவாகி கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்)."),
+    "zdt": ("After the Zonal Deputy Tahsildar (ZDT) approves with the DSC key, the patta transfer order is generated and the NISD file is completed (or rejected). It does not go to the Tahsildar.",
+            "மண்டல துணை வட்டாட்சியர் (ZDT) DSC மூலம் ஒப்புதல் அளித்த பிறகு, பட்டா மாறுதல் ஆணை உருவாகி NISD கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்). இது தாசில்தாருக்குச் செல்லாது."),
 }
 _GLOSSARY_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+(?:is|are|does)|who\s+is|who's|whos|what's|whats|define|explain|meaning\s+of|full\s+form\s+of|expand)\s+"
@@ -2315,9 +2493,10 @@ _GLOSSARY = {
     "dsc": ("DSC = Digital Signature Certificate -- the electronic signing key held by the Tahsildar. Applying it approves the file "
             "and generates the patta transfer order.",
             "DSC = Digital Signature Certificate (மின்னணு கையொப்பச் சான்று) — தாசில்தாரிடம் உள்ள கையொப்ப விசை; இதைப் பயன்படுத்தி கோப்பு ஒப்புதல் பெற்று பட்டா மாறுதல் ஆணை உருவாகும்."),
-    "tahsildar": ("Tahsildar -- the revenue officer who holds the DSC key and gives the final approval; the order is generated when the "
-                  "Tahsildar signs. For NISD this is the Zonal Level Tahsildar.",
-                  "தாசில்தார் — DSC விசையை வைத்திருக்கும் வருவாய் அதிகாரி; இவரது இறுதி ஒப்புதலில் ஆணை உருவாகும். NISD-க்கு இது மண்டல நிலை தாசில்தார்."),
+    "tahsildar": ("Tahsildar -- the head revenue officer of the taluk who holds the DSC key and gives final approval for sub-division (ISD) patta transfers; the order is generated when the Tahsildar signs.",
+                  "தாசில்தார் (வட்டாட்சியர்) — வட்டத்தின் முதன்மை வருவாய் அதிகாரி; ISD உட்பிரிவு பட்டா மாறுதல்களுக்கு DSC மூலம் இறுதி ஒப்புதல் அளிப்பவர். இவரது கையொப்பத்தில் ஆணை உருவாகும்."),
+    "zdt": ("ZDT = Zonal Deputy Tahsildar -- the revenue officer who reviews non-subdivision (NISD) patta transfer applications after SIS document verification, holds the DSC key, and approves and generates the patta transfer order.",
+            "ZDT = Zonal Deputy Tahsildar (மண்டல துணை வட்டாட்சியர்) — SIS ஆவண சரிபார்ப்புக்குப் பிறகு உட்பிரிவு இல்லாத (NISD) பட்டா மாறுதல் விண்ணப்பங்களை ஆய்வு செய்து, DSC மூலம் ஒப்புதல் அளித்து பட்டா மாறுதல் ஆணையை உருவாக்கும் வருவாய் அதிகாரி."),
     "patta": ("Patta = the land-ownership record for a survey number. A patta transfer (mutation) moves that record to the new owner; "
               "this assistant reads those applications, it does not change them.",
               "பட்டா = சர்வே எண்ணுக்கான நில உரிமைப் பதிவு. பட்டா மாறுதல் என்பது அந்தப் பதிவை புதிய உரிமையாளருக்கு மாற்றுவது; இந்த உதவியாளர் படிக்க மட்டுமே செய்யும்."),
@@ -2328,26 +2507,22 @@ _GLOSSARY = {
             "so I cannot say anything about it from the records.",
             "FMB (Field Measurement Book) இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை — FMB புத்தகம், பக்கம் அல்லது வரைபடம் பதிவாகவில்லை; எனவே பதிவுகளிலிருந்து எதுவும் சொல்ல முடியாது."),
 }
-_GLOSSARY["zdt"] = _GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
+_GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
 # DRO (District Revenue Officer) is not part of the ordinary ISD/NISD
 # processing chain at all -- it is named ONLY in the escalation section
 # (workflow_guide.txt's "Level 3 Escalation (45 days overdue)"), which this
 # codebase has no deterministic logic for (no escalation-level handler, no
 # `current_stage` value for it, and CLAUDE.md records that no seeded
-# application even carries "escalated" status). Asked without a deterministic
-# answer, this reached the LLM fallback and got "The Tahsildar (Zonal Level
-# Tahsildar) holds the DSC and approves the file" -- a fluent, confident
-# answer about a DIFFERENT role entirely, to a question about DRO. Grounding
-# it here the same way every other role is grounded closes that gap.
+# application even carries "escalated" status).
 _GLOSSARY["dro"] = (
     "DRO = District Revenue Officer -- named only in the escalation section of the workflow guide, notified at "
     "Level 3 Escalation (45 working days overdue): an officer performance review is triggered and the application "
     "may be reassigned. The DRO is not part of the ordinary ISD or NISD processing chain and holds no approval or "
-    "sign-off role there -- that stays with the Tahsildar / Zonal Level Tahsildar. This codebase has no "
+    "sign-off role there -- that stays with the Tahsildar / Zonal Deputy Tahsildar. This codebase has no "
     "deterministic escalation-level logic and no application in this register is marked \"escalated\".",
     "DRO = மாவட்ட வருவாய் அலுவலர் (District Revenue Officer) — பணிப்பாய்வு வழிகாட்டியின் தீவிரமடைதல் பிரிவில் மட்டுமே "
     "குறிப்பிடப்பட்டவர்; மூன்றாம் நிலை தீவிரமடைதலில் (45 வேலை நாட்கள் தாமதம்) அறிவிக்கப்படுவார். இது வழக்கமான ISD/NISD "
-    "செயல்முறையின் ஒரு பகுதி அல்ல; ஒப்புதல் அதிகாரம் தாசில்தார் / மண்டல நிலை தாசில்தாரிடமே உள்ளது.")
+    "செயல்முறையின் ஒரு பகுதி அல்ல; ஒப்புதல் அதிகாரம் தாசில்தார் / மண்டல துணை வட்டாட்சியரிடமே உள்ளது.")
 
 # More terms an officer asks the meaning of. Each is stated from the department documents (land_rules,
 # workflow_guide, faq) or CLAUDE.md -- no figure is quoted, so nothing here goes stale against the register.
@@ -2477,14 +2652,28 @@ _GLOSS_STATE_RE = re.compile(
 _GLOSS_TRAIL_RE = re.compile(
     r"^" + _GLOSS_NOUNS.replace("(fees?", "(fees?", 1) + r"\s+(?:meaning|definition|means|mean)\s*[?.!]*$"
     r"|^" + _GLOSS_STATES + r"\s+(?:meaning|definition)\s*[?.!]*$", re.IGNORECASE)
+# Tamil-script terms added 2026-10-15: every one of these already has a
+# full, reviewed English+Tamil definition in `_GLOSSARY` (patta, tahsildar,
+# subdivision, field visit, survey number, natham chitta) -- only the
+# Tamil-script TRIGGER word was missing, so "பட்டா என்றால் என்ன?" and five
+# others like it matched no glossary regex at all and fell through to the
+# LLM for a factual definition this codebase already states deterministically
+# in English and Tanglish. No new facts are added here, only the Tamil-script
+# spelling that reaches the existing entry.
 _GLOSS_TA2_RE = re.compile(
-    r"^(?:" + _GLOSS_NOUNS + r"|" + _GLOSS_STATES + r"|(கட்டணம்|காலதாமதம்|நிலுவை))\s*(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna|என்றால்|என்ன)\s*[?.!]*$", re.IGNORECASE)
-_GLOSS_TA_WORD = {"கட்டணம்": "fee", "காலதாமதம்": "overdue", "நிலுவை": "pending"}
+    r"^(?:" + _GLOSS_NOUNS + r"|" + _GLOSS_STATES
+    + r"|(கட்டணம்|காலதாமதம்|நிலுவை|பட்டா|தாசில்தார்|உட்பிரிவு|கள ஆய்வு|சர்வே எண்|நத்தம் சிட்டா))"
+    r"\s*(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna|என்றால்|என்ன)\s*[?.!]*$", re.IGNORECASE)
+_GLOSS_TA_WORD = {
+    "கட்டணம்": "fee", "காலதாமதம்": "overdue", "நிலுவை": "pending",
+    "பட்டா": "patta", "தாசில்தார்": "tahsildar", "உட்பிரிவு": "subdivision",
+    "கள ஆய்வு": "fieldvisit", "சர்வே எண்": "surveynumber", "நத்தம் சிட்டா": "nathamchitta",
+}
 _WHO_APPROVES = {
     "ISD": ("For ISD the DIS reviews the sketch and field report and approves or rejects; the Tahsildar then applies the DSC to generate the order.",
             "ISD-க்கு DIS வரைபடத்தையும் கள அறிக்கையையும் சரிபார்த்து ஒப்புதல்/நிராகரிப்பு; பின்னர் தாசில்தார் DSC மூலம் ஆணை உருவாக்குவார்."),
-    "NISD": ("For NISD there is no DIS: the SIS verifies the documents and the Zonal Level Tahsildar approves with the DSC and generates the order.",
-             "NISD-க்கு DIS இல்லை: SIS ஆவணங்களை சரிபார்க்கும்; மண்டல நிலை தாசில்தார் DSC மூலம் ஒப்புதல் அளித்து ஆணை உருவாக்குவார்."),
+    "NISD": ("For NISD there is no DIS: the SIS verifies the documents and the Zonal Deputy Tahsildar approves with the DSC and generates the order.",
+             "NISD-க்கு DIS இல்லை: SIS ஆவணங்களை சரிபார்க்கும்; மண்டல துணை வட்டாட்சியர் DSC மூலம் ஒப்புதல் அளித்து ஆணை உருவாக்குவார்."),
 }
 _WORKFLOW_ALL_RE = re.compile(
     r"^\s*(?:please\s+)?(?:explain|describe|what(?:'s|\s+is|\s+are)?|how\s+(?:does|do|is)|tell\s+me|give\s+me|walk\s+me\s+through)"
@@ -2524,6 +2713,29 @@ def _recent_app_number_in_history(chat_history) -> bool:
     for m in list(chat_history or [])[-4:]:
         if _APP_NO_HISTORY_RE.search(str(m.get("content") or "")):
             return True
+    return False
+
+
+_NEXT_STEP_DIS_RE = re.compile(r"\b(?:dis|deputy\s+inspector)\b")
+_NEXT_STEP_SD_RE = re.compile(r"\b(?:sd|draughtsman|draftsman)\b")
+_NEXT_STEP_SIS_RE = re.compile(r"\b(?:sis|sub\s+inspector|surveyor|isd|nisd|0153|0154)\b")
+# "do not go to SD", "NISD files skip DIS", "no SD sketch, no DIS", "SD
+# illa", "DIS இல்லை" -- a negation word/particle inside the same clause,
+# looked for in a short window immediately before the role mention (English
+# negation precedes; the Tamil/Tanglish negative particle follows its noun).
+_NEXT_STEP_NEG_BEFORE_RE = re.compile(
+    r"\b(?:not|no|never|none|n[o']t|doesn'?t|does\s+not|won'?t|cannot|can'?t|skip\w*|without|neither|nor)\b\s*$")
+_NEXT_STEP_NEG_AFTER_RE = re.compile(r"^\s*(?:இல்லை|இல்ல|illa|illai)\b")
+
+
+def _role_mentioned_positively(text: str, role_re: "re.Pattern") -> bool:
+    """A role name appears in `text` outside any negated clause."""
+    for m in role_re.finditer(text):
+        before = text[max(0, m.start() - 25):m.start()]
+        after = text[m.end():m.end() + 10]
+        if _NEXT_STEP_NEG_BEFORE_RE.search(before) or _NEXT_STEP_NEG_AFTER_RE.match(after):
+            continue
+        return True
     return False
 
 
@@ -2605,25 +2817,41 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
     if _after:
         return "AFTER:" + _after.group(1).lower()
     _next_step_q = bool(re.search(
-        r"^(?:please\s+|and\s+|then\s+)?(?:what\s+comes\s+next|what\s+is\s+the\s+next\s+step|what\s+is\s+next|what\s+next|next\s+step|what\s+happens\s+next|continue\s+with\s+(?:the\s+)?next\s+steps?|adutha\s+step\s+enna|அடுத்த\s+படி\s+என்ன|அடுத்த\s+கட்டம்\s+என்ன|அடுத்து\s+என்ன)\b[?.!]*$",
+        r"^(?:please\s+|and\s+|then\s+)?(?:what\s+comes\s+next|what\s+is\s+the\s+next\s+step|what\s+is\s+next|what\s+next|next\s+step"
+        r"|what\s+happens\s+next|what\s+happens\s+after\s+that|what\s+comes\s+after\s+that|and\s+after\s+that|and\s+then\s+what"
+        r"|continue\s+with\s+(?:the\s+)?next\s+steps?|adutha\s+step\s+enna|அடுத்த\s+படி\s+என்ன|அடுத்த\s+கட்டம்\s+என்ன|அடுத்து\s+என்ன)\b[?.!]*$",
         msg
     ))
     if _next_step_q:
-        _last_text = ""
-        if chat_history:
-            for _m in reversed(chat_history[-4:]):
-                if isinstance(_m, dict):
-                    _c = (_m.get("content") or "").lower()
-                    if _c:
-                        _last_text += " " + _c
-        if re.search(r"\b(?:dis|deputy\s+inspector)\b", _last_text):
-            return "AFTER:dis"
-        elif re.search(r"\b(?:sd|draughtsman|draftsman)\b", _last_text):
-            return "AFTER:sd"
-        elif re.search(r"\b(?:sis|sub\s+inspector|surveyor|isd|nisd|0153|0154)\b", _last_text):
-            return "AFTER:sis"
-        else:
-            return "CLARIFY_WORKFLOW"
+        # The immediately-preceding topic decides "next", not whichever role
+        # happens to appear ANYWHERE in the last few turns ranked DIS > SD >
+        # SIS: `_GLOSSARY["sd"]` itself says "NISD files do not go to SD.",
+        # and the NISD workflow answer says "...no SD sketch, no DIS" -- both
+        # put "sd"/"dis" in the text as a NEGATED fact, which the old blind
+        # substring scan over the whole concatenated history read the same
+        # as a genuine, positive mention, and "dis" being checked first made
+        # a question about SD's role (asked right after a NISD explanation)
+        # resolve to "AFTER:dis", a stage NISD never reaches at all.
+        #
+        # Fixed by walking the recent turns MOST-RECENT-FIRST, one turn at a
+        # time, and taking the first turn with any unambiguous, NON-NEGATED
+        # role mention -- an older turn's mention is never allowed to
+        # override what the conversation is about right now, and a negated
+        # mention ("do not go to SD", "no DIS") is skipped rather than read
+        # as a positive one.
+        for _m in reversed(list(chat_history or [])[-4:]):
+            if not isinstance(_m, dict):
+                continue
+            _c = (_m.get("content") or "").lower()
+            if not _c:
+                continue
+            if _role_mentioned_positively(_c, _NEXT_STEP_DIS_RE):
+                return "AFTER:dis"
+            if _role_mentioned_positively(_c, _NEXT_STEP_SD_RE):
+                return "AFTER:sd"
+            if _role_mentioned_positively(_c, _NEXT_STEP_SIS_RE):
+                return "AFTER:sis"
+        return "CLARIFY_WORKFLOW"
     _who = re.search(r"\bwho\s+(?:app?rov\w*|signs?|decides|gives\s+the\s+final)\b.*\b(isd|nisd)\b", msg)
     if _who:
         return "WHO:" + _who.group(1).upper()
@@ -3303,20 +3531,40 @@ def _igrs_can_rule_answer(topic: str, language: str) -> str:
     }.get(topic, "")
 
 
-def _igrs_over_list_note(message: str, applications: list) -> Optional[str]:
-    """One sentence answering "do these carry an IGRS Form 6 number?"."""
+def _igrs_over_list_note(message: str, applications: list, language: str = "en") -> Optional[str]:
+    """One sentence answering "do these carry an IGRS Form 6 number?".
+
+    `language` added 2026-10-15: `_IGRS_QUESTION_RE` already matches the
+    Tamil phrasing ("படிவம் 6"), so a Tamil/Tanglish question reached this
+    note, but the note itself was always written in English regardless --
+    a Tamil-script table answered with one English sentence stitched above
+    it, the same "two different assistants" failure CLAUDE.md documents
+    elsewhere for this exact lead-note mechanism.
+    """
     if not applications or not _IGRS_QUESTION_RE.search(message or ""):
         return None
+    is_tamil = language in ("ta", "tanglish")
     channels = [a.get("submission_channel") for a in applications]
     with_igrs = sum(1 for c in channels if c == "sub_registrar")
     total = len(channels)
     if with_igrs == total:
+        if is_tamil:
+            return (f"ஆம் — அனைத்து {total} விண்ணப்பங்களும் IGRS படிவம் 6 எண்ணைக் கொண்டுள்ளன: "
+                    f"ஒவ்வொன்றும் சார்பதிவாளர் பரிந்துரையாக வந்தவை; அந்த எண் பதிவு செய்யப்பட்ட "
+                    f"சேவை ஆணையை (deed) குறிக்கும், இதன் அடிப்படையில் மாறுதல் தொடங்கப்பட்டது.")
         return (f"Yes — all {total} carry an IGRS Form 6 number: every one came "
                 f"in as a Sub-Registrar referral, and the number names the "
                 f"registered deed the mutation was raised from.")
     if with_igrs == 0:
+        if is_tamil:
+            return (f"இல்லை — இந்த {total} விண்ணப்பங்களில் எதுவும் IGRS படிவம் 6 எண்ணைக் கொண்டில்லை. "
+                    f"சார்பதிவாளர் பரிந்துரையாக வந்தவற்றுக்கு மட்டுமே இந்த எண் கொடுக்கப்படும்.")
         return (f"No — none of these {total} carries an IGRS Form 6 number. "
                 f"Only a Sub-Registrar referral is given one.")
+    if is_tamil:
+        return (f"இந்த {total} விண்ணப்பங்களில் {with_igrs} IGRS படிவம் 6 எண்ணைக் கொண்டுள்ளன — "
+                f"சார்பதிவாளர் பரிந்துரைகள். மற்ற {total - with_igrs} ஒரு கவுண்டர் மூலம் வந்தவை, "
+                f"அவற்றுக்கு இந்த எண் கொடுக்கப்படுவதில்லை.")
     return (f"{with_igrs} of these {total} carry an IGRS Form 6 number — the "
             f"Sub-Registrar referrals. The other {total - with_igrs} came in "
             f"over a counter, which is never given one.")

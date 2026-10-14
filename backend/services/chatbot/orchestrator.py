@@ -609,7 +609,7 @@ _WHERE_FROM_RE = re.compile(
 
 _STAGE_LABELS = {
     "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
-    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Deputy Tahsildar",
     "COMPLETED": "completed", "REJECTED": "rejected",
 }
 
@@ -1852,7 +1852,7 @@ async def _process_chat_impl(
         # all -- `_followup.ambiguous` was True and the turn was answered "Which one do you
         # mean?" to a question that named no row. Must run ahead of the ambiguous branch for
         # exactly that reason.
-        _rej_widen_early = _resolve_rejected_widen(_original_message, chat_history)
+        _rej_widen_early = _resolve_rejected_widen(_original_message, chat_history, _followup_ctx)
         if _rej_widen_early:
             message = _rej_widen_early
             _already_rescoped = True
@@ -2336,7 +2336,7 @@ async def _process_chat_impl(
         if _unk_from_confirm:
             logger.info(f"Unknown-source confirmation resolved: '{message}' -> '{_unk_from_confirm}'")
             message = _unk_from_confirm
-        _rej_widen = _resolve_rejected_widen(message, chat_history)
+        _rej_widen = _resolve_rejected_widen(message, chat_history, _followup_ctx)
         if _rej_widen:
             logger.info(f"Rejected-widen follow-up resolved: '{message}' -> '{_rej_widen}'")
             message = _rej_widen
@@ -4078,7 +4078,7 @@ async def _process_chat_impl(
             # this function is rendered from the query result directly and has
             # nothing to disagree with.
             response_text, _verify_note = _verify_answer_numbers(
-                response_text, structured_data, intent)
+                response_text, structured_data, intent, language)
             if _verify_note:
                 response_text += _verify_note
 
@@ -4808,7 +4808,7 @@ async def _process_chat_stream_impl(
         # all -- `_followup.ambiguous` was True and the turn was answered "Which one do you
         # mean?" to a question that named no row. Must run ahead of the ambiguous branch for
         # exactly that reason.
-        _rej_widen_early = _resolve_rejected_widen(_original_message, chat_history)
+        _rej_widen_early = _resolve_rejected_widen(_original_message, chat_history, _followup_ctx)
         if _rej_widen_early:
             message = _rej_widen_early
             _already_rescoped = True
@@ -5167,7 +5167,7 @@ async def _process_chat_stream_impl(
         if _unk_from_confirm:
             logger.info(f"Unknown-source confirmation resolved: '{message}' -> '{_unk_from_confirm}'")
             message = _unk_from_confirm
-        _rej_widen = _resolve_rejected_widen(message, chat_history)
+        _rej_widen = _resolve_rejected_widen(message, chat_history, _followup_ctx)
         if _rej_widen:
             logger.info(f"Rejected-widen follow-up resolved: '{message}' -> '{_rej_widen}'")
             message = _rej_widen
@@ -6800,7 +6800,7 @@ async def _process_chat_stream_impl(
                     "SIS": "Sub Inspector Surveyor (SIS) — currently under field verification",
                     "SD": "Senior Draughtsman (SD) — forwarded for sketch/approval",
                     "DIS": "Deputy Inspector Surveyor (DIS) — under DIS review",
-                    "TAHSILDAR": "Zonal Level Tahsildar (ZDT) — holds the DSC; patta order pending sign-off",
+                    "TAHSILDAR": "Zonal Deputy Tahsildar (ZDT) — holds the DSC; patta order pending sign-off",
                     "COMPLETED": "Completed — patta order issued",
                     "REJECTED": "Rejected",
                 }
@@ -6809,7 +6809,7 @@ async def _process_chat_stream_impl(
                     "SIS": "துணை ஆய்வாளர் (SIS) — தற்போது கள சரிபார்ப்பில் உள்ளது",
                     "SD": "மூத்த வரைவாளர் (SD) — வரைபட அங்கீகாரத்திற்கு அனுப்பப்பட்டது",
                     "DIS": "மாவட்ட ஆய்வாளர் (DIS) — DIS மதிப்பாய்வில் உள்ளது",
-                    "TAHSILDAR": "வலய நிலை தாசில்தார் (ZDT) — DSC கையொப்பம், பட்டா ஆணை நிலுவையில்",
+                    "TAHSILDAR": "மண்டல துணை வட்டாட்சியர் (ZDT) — DSC கையொப்பம், பட்டா ஆணை நிலுவையில்",
                     "COMPLETED": "முடிந்தது — பட்டா ஆணை வழங்கப்பட்டது",
                     "REJECTED": "நிராகரிக்கப்பட்டது",
                 }
@@ -7901,7 +7901,7 @@ async def _process_chat_stream_impl(
         # is built from a transcript with no invented number in it.
         if chunk_count:
             _verified_text, _verify_note = _verify_answer_numbers(
-                full_response_text, structured_data, intent)
+                full_response_text, structured_data, intent, language)
             if _verified_text != full_response_text or _verify_note:
                 _correction = (_verify_note or "").strip()
                 # Only a stated total that was really rewritten earns this note: text that

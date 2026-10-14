@@ -1090,7 +1090,7 @@ async def build_answer(
                 "SIS": "Sub Inspector Surveyor (SIS) — currently under field verification",
                 "SD": "Senior Draughtsman (SD) — forwarded for sketch/approval",
                 "DIS": "Deputy Inspector Surveyor (DIS) — under DIS review",
-                "TAHSILDAR": "Zonal Level Tahsildar (ZDT) — holds the DSC; patta order pending sign-off",
+                "TAHSILDAR": "Zonal Deputy Tahsildar (ZDT) — holds the DSC; patta order pending sign-off",
                 "COMPLETED": "Completed — patta order issued",
                 "REJECTED": "Rejected",
             }
@@ -1099,7 +1099,7 @@ async def build_answer(
                 "SIS": "துணை ஆய்வாளர் (SIS) — தற்போது கள சரிபார்ப்பில் உள்ளது",
                 "SD": "மூத்த வரைவாளர் (SD) — வரைபட அங்கீகாரத்திற்கு அனுப்பப்பட்டது",
                 "DIS": "மாவட்ட ஆய்வாளர் (DIS) — DIS மதிப்பாய்வில் உள்ளது",
-                "TAHSILDAR": "வலய நிலை தாசில்தார் (ZDT) — DSC கையொப்பம், பட்டா ஆணை நிலுவையில்",
+                "TAHSILDAR": "மண்டல துணை வட்டாட்சியர் (ZDT) — DSC கையொப்பம், பட்டா ஆணை நிலுவையில்",
                 "COMPLETED": "முடிந்தது — பட்டா ஆணை வழங்கப்பட்டது",
                 "REJECTED": "நிராகரிக்கப்பட்டது",
             }

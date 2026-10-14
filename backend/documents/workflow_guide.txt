@@ -86,7 +86,7 @@ Step 1: Application Submission
 - No new sub-divisions are created, only ownership transfer
 
 The NISD chain is short: application (CSC / citizen / Sub-Registrar) -> SIS
--> Zonal Level Tahsildar. There is no Senior Draughtsman (SD) step and no
+-> Zonal Deputy Tahsildar. There is no Senior Draughtsman (SD) step and no
 Deputy Inspector Surveyor (DIS) step - those belong to the ISD chain only.
 
 Step 2: SIS Officer Verification
@@ -94,15 +94,15 @@ Step 2: SIS Officer Verification
 - Officer checks if survey number exists and area matches records
 - Officer verifies there are no pending disputes or litigation
 - No field visit required unless specific issues are flagged
-- Officer forwards the verified report directly to the Zonal Level Tahsildar
+- Officer forwards the verified report directly to the Zonal Deputy Tahsildar
 - Verification timeline: 5 working days
 
-Step 3: Zonal Level Tahsildar Review and Approval
-- The Zonal Level Tahsildar (ZDT) reviews the SIS officer's verification report
+Step 3: Zonal Deputy Tahsildar Review and Approval
+- The Zonal Deputy Tahsildar (ZDT) reviews the SIS officer's verification report
 - Checks for any revenue arrears or pending taxes and confirms sale deed
   registration details
-- The Zonal Level Tahsildar holds the Digital Signature Certificate (DSC) key
-- Using the DSC key the Zonal Level Tahsildar approves the request and generates
+- The Zonal Deputy Tahsildar holds the Digital Signature Certificate (DSC) key
+- Using the DSC key the Zonal Deputy Tahsildar approves the request and generates
   the patta transfer order (or rejects it with reasons)
 - Timeline: 3 working days
 

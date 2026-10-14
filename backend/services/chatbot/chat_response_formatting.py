@@ -1162,7 +1162,7 @@ def _render_status_yes_no_answer(structured_data: dict, asked_status: str, langu
 # first at the call site -- since REJECTED is also a valid stage value and the
 # officer's own word ("rejected") is the status one, not the desk name.
 _STAGE_NAME_MAP = (
-    ("TAHSILDAR", r"\btahsildar\b|\bzdt\b|\bzonal\s+(?:level\s+)?tahsildar\b"),
+    ("TAHSILDAR", r"\btahsildar\b|\bzdt\b|\bzonal\s+(?:level\s+|deputy\s+)?tahsildar\b"),
     ("DIS", r"\bdis\b|\bdeputy\s+inspector\b"),
     ("SD", r"\bsd\b|\bsenior\s+draughtsman\b|\bdraughtsman\b"),
     ("SIS", r"\bsis\b|\bsub\s+inspector\b"),
@@ -1187,8 +1187,16 @@ def _stage_yes_no_question(message: str) -> Optional[str]:
 
 _DECISION_DESK_LABEL = {
     "SIS": "the Sub Inspector Surveyor (SIS)", "SD": "the Senior Draughtsman (SD)",
-    "DIS": "the Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+    "DIS": "the Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Deputy Tahsildar",
 }
+
+
+def _get_decision_desk_label(desk: str, app_no: Optional[str] = None) -> str:
+    if desk == "TAHSILDAR":
+        if app_no and "/0154/" in app_no:
+            return "the Tahsildar"
+        return "the Zonal Deputy Tahsildar"
+    return _DECISION_DESK_LABEL.get(desk, desk)
 
 
 def _render_status_role_answer(structured_data: dict, asked_status: str, asked_role: str, language: str) -> str:
@@ -1205,7 +1213,7 @@ def _render_status_role_answer(structured_data: dict, asked_status: str, asked_r
         lead = "இல்லை" if is_tamil else "No"
         tail = f"{app_no} இன்னும் முடிவு செய்யப்படவில்லை." if is_tamil else f"{app_no} has not yet been decided."
         return f"{lead} — {tail}"
-    desk_label = _DECISION_DESK_LABEL.get(desk, desk)
+    desk_label = _get_decision_desk_label(desk, app_no)
     role_matches = desk == asked_role
     status_matches = bool(actual_status) and actual_status == asked_status
     if role_matches and status_matches:
@@ -1214,7 +1222,7 @@ def _render_status_role_answer(structured_data: dict, asked_status: str, asked_r
         lead = "No"
         tail = f"{app_no} was {actual_status or 'not recorded'} (not {asked_status}) by {desk_label}."
     else:
-        asked_label = _DECISION_DESK_LABEL.get(asked_role, asked_role)
+        asked_label = _get_decision_desk_label(asked_role, app_no)
         lead = "No"
         tail = f"{app_no} was decided by {desk_label}, not {asked_label}."
     if is_tamil:
@@ -1229,9 +1237,10 @@ def _is_stage_ever_question(message: str) -> bool:
 def _render_stage_ever_answer(hops: Optional[list], app_no: str, asked_stage: str,
                                current_stage: str, language: str) -> str:
     is_tamil = language in ("ta", "tanglish")
+    tahsildar_label = "the Tahsildar" if (app_no and "/0154/" in app_no) else "the Zonal Deputy Tahsildar"
     stage_names = {
         "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
-        "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+        "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": tahsildar_label,
         "COMPLETED": "completed", "REJECTED": "rejected",
     }
     asked_label = stage_names.get(asked_stage, asked_stage)
@@ -1249,7 +1258,7 @@ def _render_stage_ever_answer(hops: Optional[list], app_no: str, asked_stage: st
 
 _STAGE_DISPLAY_NAMES = {
     "SIS": "Sub Inspector Surveyor (SIS)", "SD": "Senior Draughtsman (SD)",
-    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Level Tahsildar",
+    "DIS": "Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Deputy Tahsildar",
     "COMPLETED": "completed", "REJECTED": "rejected",
 }
 

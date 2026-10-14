@@ -217,9 +217,9 @@ SIS_SERVICE_CODE_DETAIL = {
         "sla_days": "15-20 working days",
         "sla_days_ta": "15-20 வேலை நாட்கள்",
         "workflow": "Citizen / CSC / Sub-Registrar → SIS (document verification) "
-                    "→ Zonal Level Tahsildar (DSC signature, order generated)",
+                    "→ Zonal Deputy Tahsildar (DSC signature, order generated)",
         "workflow_ta": "குடிமகன் / CSC / சார்-பதிவாளர் → SIS (ஆவண சரிபார்ப்பு) → "
-                       "வலய நிலை தாசில்தார் (DSC கையொப்பம், ஆணை உருவாக்கம்)",
+                       "மண்டல துணை வட்டாட்சியர் (DSC கையொப்பம், ஆணை உருவாக்கம்)",
     },
     "0154": {
         "meaning": 'ISD = Involving Sub-Division. Only a part of a survey number is transferred, so the parcel is split and the new portion needs its own sub-division number',

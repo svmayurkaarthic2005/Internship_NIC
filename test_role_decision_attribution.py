@@ -68,13 +68,13 @@ check('ISD file closed by SD: "has ZDT approved it" says No and names SD, not "Y
 _nisd_closed_by_tahsildar = {"application_number": "2026/0153/02/049763", "status": "approved", "decision_desk": "TAHSILDAR"}
 _ans2 = cb._render_status_role_answer(_nisd_closed_by_tahsildar, "approved", "TAHSILDAR", "en")
 check('NISD file closed by TAHSILDAR: "has ZDT approved it" correctly says Yes',
-      _ans2.startswith("Yes") and "Zonal Level Tahsildar" in _ans2, _ans2)
+      _ans2.startswith("Yes") and "Zonal Deputy Tahsildar" in _ans2, _ans2)
 
 # Same file, asked about the WRONG status (rejected) -- TAHSILDAR did decide it, but not that way.
 _ans3 = cb._render_status_role_answer(_nisd_closed_by_tahsildar, "rejected", "TAHSILDAR", "en")
 check('NISD file closed by TAHSILDAR (approved), asked "has Tahsildar REJECTED it": '
       "says No but still correctly names Tahsildar as the decider",
-      _ans3.startswith("No") and "Zonal Level Tahsildar" in _ans3 and "approved" in _ans3, _ans3)
+      _ans3.startswith("No") and "Zonal Deputy Tahsildar" in _ans3 and "approved" in _ans3, _ans3)
 
 # A file not yet decided at all (decision_desk empty) -- no role has approved/rejected it.
 _open_file = {"application_number": "2026/0154/02/099999", "status": "pending", "decision_desk": None}

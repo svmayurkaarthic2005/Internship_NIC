@@ -67,7 +67,7 @@ class OfficerContext(BaseModel):
         if not self.designation:
             return "UNASSIGNED_STAGE"
         designation_lower = self.designation.lower()
-        if "zdt" in designation_lower or "zonal level tahsildar" in designation_lower:
+        if "zdt" in designation_lower or "zonal deputy tahsildar" in designation_lower or "zonal level tahsildar" in designation_lower:
             return "TAHSILDAR"
         if "sis" in designation_lower or "sub inspector" in designation_lower:
             return "SIS"

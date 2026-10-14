@@ -6,7 +6,7 @@ Their core duties:
 - Physical Field Inspection & Cadastral Verification for Town Survey Numbers (TSLR)
 - Verifying boundaries, sub-divisions, encroachments, and land types (Residential, Commercial, Agricultural)
 - Preparing inspection reports and measurement sketches (Colour Map) for ISD and Demarcation applications
-- Forwarding verified ISD applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS), and after DIS approval to the Tahsildar, who applies the DSC and generates the patta transfer order; forwarding verified NISD applications directly to the Zonal Level Tahsildar (ZDT), who holds the DSC key and approves
+- Forwarding verified ISD applications to the Senior Draughtsman (SD) for the sketch, then to the Deputy Inspector Surveyor (DIS), and after DIS approval to the Tahsildar, who applies the DSC and generates the patta transfer order; forwarding verified NISD applications directly to the Zonal Deputy Tahsildar (ZDT), who holds the DSC key and approves
 
 2. URBAN APPLICATION NUMBER FORMAT
    YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE

@@ -170,7 +170,7 @@ async def card(db, app: str, reg: Dict[str, Any], ta: bool) -> str:
 
 # the names the ISD / NISD workflow history uses for the same roles
 _HIST = {"1": "Submission", "44": "Sub Inspector Surveyor", "42": "Sub Inspector Surveyor", "41": "Sub Inspector Surveyor",
-         "43": "Intake", "8": "Senior Draughtsman", "12": "Deputy Inspector Surveyor", "16": "Zonal Level Tahsildar",
+         "43": "Intake", "8": "Senior Draughtsman", "12": "Deputy Inspector Surveyor", "16": "Zonal Deputy Tahsildar",
          "59": "ZDT / DRO", "53": "ZDT / DRO", "0": "Completed"}
 
 

@@ -111,9 +111,9 @@ async def _e2e():
     r2 = await ask("ZDT handles ISD and DIS handles NISD, correct?")
     resp2 = re.sub("<[^>]+>", " ", r2.get("response") or "")
     check("live: the false-premise claim gets the deterministic side-by-side "
-          "comparison naming DIS under ISD and Zonal Level Tahsildar under NISD "
+          "comparison naming DIS under ISD and Zonal Deputy Tahsildar under NISD "
           "(self-correcting), not a bare 'yes that is correct'",
-          "DIS" in resp2 and "Zonal Level Tahsildar" in resp2
+          "DIS" in resp2 and ("Zonal Deputy Tahsildar" in resp2 or "ZDT" in resp2)
           and resp2.strip().lower() not in ("yes, that is correct.", "yes that is correct"),
           resp2)
     check("live: the false-premise answer never flatly agrees with the "

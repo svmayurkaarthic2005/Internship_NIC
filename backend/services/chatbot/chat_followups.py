@@ -554,7 +554,7 @@ def _scrub_unverified_counts(text: str, structured_data):
     return " ".join(kept), removed
 
 
-def _verify_answer_numbers(text: str, structured_data, intent: str = "") -> Tuple[str, str]:
+def _verify_answer_numbers(text: str, structured_data, intent: str = "", language: str = None) -> Tuple[str, str]:
     """Check an LLM-written answer against the data it was written from.
 
     Returns the corrected text and a note for the officer -- empty when nothing
@@ -562,7 +562,7 @@ def _verify_answer_numbers(text: str, structured_data, intent: str = "") -> Tupl
     the correction being made silently: an answer that had to be corrected is
     one to read with care.
     """
-    text = _scrub_llm_answer(text)
+    text = _scrub_llm_answer(text, language)
     if not text:
         return text, ""
     corrected, changed = _reconcile_count_claims(text, structured_data)
@@ -1509,7 +1509,7 @@ _DESIGNATION_LONG = {
     "SIS": "Sub Inspector Surveyor (SIS)",
     "SD": "Senior Draughtsman (SD)",
     "DIS": "Deputy Inspector Surveyor (DIS)",
-    "TAHSILDAR": "Zonal Level Tahsildar (ZDT)",
+    "TAHSILDAR": "Zonal Deputy Tahsildar (ZDT)",
 }
 def _format_jurisdiction_line(jur: dict) -> str:
     """"Ward 002 (Block 0015), Thoothukudi town — Thoothukudi taluk, ... district (28)"."""
@@ -1787,7 +1787,18 @@ def _attachment_turn_is_not_about_a_file(message: str) -> bool:
     about an uploaded file, so the attachment planner is not even asked."""
     if attachment_qa.is_negative_correction(message) or attachment_qa.is_project_relevance_request(message):
         return False
-    return bool(_contentless_message(message) or _unknown_message_kind(message)
+    unk = _unknown_message_kind(message)
+    if unk == "vague_all":
+        # "show me all details" / "give me all the information" after an
+        # upload is the ordinary way an officer asks to see everything IN
+        # THE FILE -- it is only truly unanswerable when nothing is open, and
+        # `attachment_qa.plan_answer()` already handles that case correctly
+        # on its own (no active document -> it returns None and this falls
+        # through to the same "vague_all" reply as before). Blocking it here,
+        # before the planner even got to check whether a file is active, read
+        # a perfectly answerable post-upload request as if nothing existed.
+        unk = None
+    return bool(_contentless_message(message) or unk
                 or _is_mutation_request(message) or _is_capability_question(message)
                 or _is_out_of_scope(message))
 
