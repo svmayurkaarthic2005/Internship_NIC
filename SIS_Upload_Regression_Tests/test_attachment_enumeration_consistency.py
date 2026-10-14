@@ -69,7 +69,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from backend.services.attachment_qa import (  # noqa: E402
+from backend.services.chatbot.attachment_qa import (  # noqa: E402
     wants_enumeration, entity_occurrences, distinct_entities,
     _enumerate_entities_answer, _asked_entity)
 from backend.services.attachment_store import Evidence  # noqa: E402

@@ -1,6 +1,6 @@
 """oldowner_qa: old-owner (chitta_temp_old_owner) questions + comparison with the temp
 sub-division record -- typos, Tamil, Tanglish. No DB, no LLM.  python test_oldowner_qa.py"""
-from backend.services import oldowner_qa as q
+from backend.services.chatbot import oldowner_qa as q
 
 CASES = [
     ("Who is the old owner for applcation 2026/0154/02/015395?", [q.NAME]),

@@ -1,7 +1,7 @@
 """PDF-vs-register routing and appended-number handling. No DB, no LLM."""
 from types import SimpleNamespace
 
-from backend.services.attachment_qa import (
+from backend.services.chatbot.attachment_qa import (
     drop_appended_numbers, is_refusal, targets_attachment, _maybe_expired_notice,
 )
 

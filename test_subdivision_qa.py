@@ -1,6 +1,6 @@
 """subdivision_qa: typo / Tamil / Tanglish questions map to the right plot fields.
 No DB, no LLM.  python test_subdivision_qa.py"""
-from backend.services import subdivision_qa as q
+from backend.services.chatbot import subdivision_qa as q
 
 CASES = [
     ("what is the temp sub div no?", [q.TEMP_SUB]),

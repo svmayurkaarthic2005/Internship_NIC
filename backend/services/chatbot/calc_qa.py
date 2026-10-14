@@ -16,7 +16,7 @@ from datetime import date
 from math import gcd
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.services import neg_scope
+from . import neg_scope
 
 _APP_NO = re.compile(r"\d{4}/\d{3,4}/\d{1,3}/\d+")
 _STATUS_WORDS = (("pending", ("pending", "pnding", "pendng", "open", "outstanding", "நிலுவை", "niluvai")),

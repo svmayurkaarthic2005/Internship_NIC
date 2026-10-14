@@ -8,7 +8,7 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
-from backend.services import neg_scope
+from . import neg_scope
 from backend.utils.fuzzy import is_token_typo_match
 
 _MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -293,7 +293,7 @@ jan feb mar apr jun jul aug sep sept oct nov dec hw mny r u hav hve
 
 def _stray_words(text: str) -> bool:
     """A Latin word that is neither part of a number question nor a slip of one ("hello", "xyz", "kaattu")."""
-    from backend.services import qualifier_guard as _qg
+    from . import qualifier_guard as _qg
     for tok in re.findall(r"(?<![\dA-Za-z])[A-Za-z][A-Za-z']*", text):
         w = tok.lower()
         if w in _ALLOWED or _APP_NO.search(w) or _qg._slip_of_known(w) and w not in ("hello",):

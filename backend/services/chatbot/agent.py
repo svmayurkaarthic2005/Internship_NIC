@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.schemas import OfficerContext
 from backend.services import llm_gate, rag
-from backend.services.agent_tools import ToolContext, execute_tool, tool_schemas
+from .agent_tools import ToolContext, execute_tool, tool_schemas
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)

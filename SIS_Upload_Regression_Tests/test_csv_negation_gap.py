@@ -37,7 +37,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from backend.services import csv_ops  # noqa: E402
-from backend.services.attachment_qa import render_csv_result  # noqa: E402
+from backend.services.chatbot.attachment_qa import render_csv_result  # noqa: E402
 
 bad = []
 total = 0

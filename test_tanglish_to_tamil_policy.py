@@ -21,8 +21,8 @@ from backend.services.rag import (
     build_prompt,
     build_html_response,
 )
-from backend.services.agent import _LANGUAGE_RULES
-from backend.services.attachment_qa import _LANG_LINE
+from backend.services.chatbot.agent import _LANGUAGE_RULES
+from backend.services.chatbot.attachment_qa import _LANG_LINE
 from backend.services.chatbot import (
     _clarification_reply,
     _scope_reply,

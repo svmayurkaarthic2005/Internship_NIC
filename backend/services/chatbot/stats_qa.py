@@ -13,7 +13,7 @@ from datetime import date
 from statistics import median
 from typing import Dict, List, Optional, Tuple
 
-from backend.services import neg_scope
+from . import neg_scope
 
 _APP_NO = re.compile(r"\d{4}/\d{3,4}/\d{1,3}/\d+")
 _MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",

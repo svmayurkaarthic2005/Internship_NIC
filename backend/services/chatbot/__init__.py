@@ -24,37 +24,37 @@ from backend.config import (
 # and answered in Tamil script to an English question.
 _DC_TANGLISH_RE = re.compile(r"\b(enapa|enna|oda|sollo|kudunga)\b", re.IGNORECASE)
 from backend.schemas import OfficerContext
-from backend.services import attachment_qa
-from backend.services.agent import AgentUnavailable, run_agent, run_agent_stream
+from . import attachment_qa
+from .agent import AgentUnavailable, run_agent, run_agent_stream
 from backend.services.readonly_guard import chat_turn
-from backend.services import neg_scope as _neg_scope
-from backend.services import negq as _negq
-from backend.services import calc_qa as _calc_qa
-from backend.services import howto_qa as _howto_qa
-from backend.services import card_html as _card_html
-from backend.services import unheld_qa as _unheld_qa
-from backend.services import recheck as _recheck
-from backend.services import number_qa as _number_qa
-from backend.services import stats_qa as _stats_qa
-from backend.services import compare_followup as _compare_followup
-from backend.services import qualifier_guard as _qualifier_guard
+from . import neg_scope as _neg_scope
+from . import negq as _negq
+from . import calc_qa as _calc_qa
+from . import howto_qa as _howto_qa
+from . import card_html as _card_html
+from . import unheld_qa as _unheld_qa
+from . import recheck as _recheck
+from . import number_qa as _number_qa
+from . import stats_qa as _stats_qa
+from . import compare_followup as _compare_followup
+from . import qualifier_guard as _qualifier_guard
 from backend.services import followup_context as fctx
-from backend.services import semantic_intent
-from backend.services import subdivision_qa as _subdivision_qa
-from backend.services import oldowner_qa as _oldowner_qa
-from backend.services import cmflow_qa as _cmflow_qa
-from backend.services import appinfo_qa as _appinfo_qa
-from backend.services import fline_qa as _fline_qa
-from backend.services import merge_qa as _merge_qa
-from backend.services import crosscheck_qa as _crosscheck_qa
-from backend.services import igrs_owner_qa as _igrs_owner_qa
-from backend.services import newowner_qa as _newowner_qa
-from backend.services import fulltransfer_qa as _fulltransfer_qa
-from backend.services import sdattach_qa as _sdattach_qa
-from backend.services import tslr_qa as _tslr_qa
-from backend.services import uamod_qa as _uamod_qa
-from backend.services import natham_qa as _natham_qa
-from backend.services import othercode_detail as _othercode_detail
+from . import semantic_intent
+from . import subdivision_qa as _subdivision_qa
+from . import oldowner_qa as _oldowner_qa
+from . import cmflow_qa as _cmflow_qa
+from . import appinfo_qa as _appinfo_qa
+from . import fline_qa as _fline_qa
+from . import merge_qa as _merge_qa
+from . import crosscheck_qa as _crosscheck_qa
+from . import igrs_owner_qa as _igrs_owner_qa
+from . import newowner_qa as _newowner_qa
+from . import fulltransfer_qa as _fulltransfer_qa
+from . import sdattach_qa as _sdattach_qa
+from . import tslr_qa as _tslr_qa
+from . import uamod_qa as _uamod_qa
+from . import natham_qa as _natham_qa
+from . import othercode_detail as _othercode_detail
 from backend.services.rag import (
     detect_language,
     is_short_reply,
@@ -160,7 +160,7 @@ from backend.utils.fuzzy import (
 # monkeypatch-safety reasons) can keep calling it by its original bare name,
 # and so `from backend.services.chatbot import X` keeps working for anything
 # still imported that way elsewhere in the codebase.
-from backend.services.chat_application_queries import (
+from .chat_application_queries import (
     ASK_FOR_APP_NUMBER,
     _DURATION_RE,
     _FOLLOWUP_CONTEXT_WINDOW,
@@ -210,7 +210,7 @@ from backend.services.chat_application_queries import (
     build_sale_deed_direct_answer,
     resolve_application_reference,
 )
-from backend.services.chat_corrections import (
+from .chat_corrections import (
     _FV_COLS,
     _FV_KEEP,
     _FV_PRIOR_SORT,
@@ -257,7 +257,7 @@ from backend.services.chat_corrections import (
     _workflow_remarks_answer,
     _workload_show_followup,
 )
-from backend.services.chat_followups import (
+from .chat_followups import (
     _CURRENT_CLOCK_OVERRIDE,
     _all_word_to_english,
     _applicant_card_text,
@@ -301,7 +301,7 @@ from backend.services.chat_followups import (
     _wants_carried_list_details,
     _wants_workflow_history,
 )
-from backend.services.chat_response_formatting import (
+from .chat_response_formatting import (
     _SORT_RESET,
     _apply_followup_resolution,
     _apply_result_limit,
@@ -331,7 +331,7 @@ from backend.services.chat_response_formatting import (
     _stage_yes_no_question,
     _status_yes_no_question,
 )
-from backend.services.chat_routing import (
+from .chat_routing import (
     _ALL_STATUSES_LIST,
     _SAVE_AS,
     _answer_multi,
@@ -351,7 +351,7 @@ from backend.services.chat_routing import (
     _stats_turn,
     _timestamp_reply,
 )
-from backend.services.chat_service_codes import (
+from .chat_service_codes import (
     _all_service_code_comparison_answer,
     _build_general_negative_correction_response,
     _build_service_code_comparison_response,
@@ -366,7 +366,7 @@ from backend.services.chat_service_codes import (
     _service_code_lookup_answer_natural,
     _unsupported_service_code_answer,
 )
-from backend.services.chat_shared import (
+from .chat_shared import (
     _ADD_COLUMNS_RE,
     _ANY_APP_NUMBER_RE,
     _DISTRICT_NAME_RE,
@@ -398,7 +398,7 @@ from backend.services.chat_shared import (
     _year_match,
     extract_month_from_query,
 )
-from backend.services.chat_smalltalk import (
+from .chat_smalltalk import (
     _CHANNEL_BASIS_RE,
     _CHANNEL_NAMED_RE,
     _GLOSSARY,
@@ -439,7 +439,7 @@ from backend.services.chat_smalltalk import (
     _workflow_steps_answer_natural,
     _workflow_steps_topic,
 )
-from backend.services.chat_untracked_fields import (
+from .chat_untracked_fields import (
     _absent_parcel_field_answer,
     _area_unit_answer,
     _asked_absent_parcel_field,
@@ -479,11 +479,11 @@ from backend.services.chat_untracked_fields import (
     _untracked_transfer_field_answer,
     _untracked_wf_field_answer,
 )
-from backend.services.chat_pipeline import early_guard_reply
-from backend.services.chat_answer import build_answer
-from backend.services.chat_dispatch import dispatch_intent
-from backend.services.chat_dispatch_stream import dispatch_intent_stream
-from backend.services.chat_pipeline import _bound
+from .chat_pipeline import early_guard_reply
+from .chat_answer import build_answer
+from .chat_dispatch import dispatch_intent
+from .chat_dispatch_stream import dispatch_intent_stream
+from .chat_pipeline import _bound
 
 # This module's own logger (pipeline log records are named backend.services.chatbot).
 logger = get_logger(__name__)

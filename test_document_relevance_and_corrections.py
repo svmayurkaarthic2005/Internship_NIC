@@ -40,7 +40,8 @@ async def main():
     from backend.models import SISOfficer, ChatAttachment, ChatMessage
     from backend.schemas import OfficerContext
     from backend.services.auth_service import get_officer_jurisdiction_ids
-    from backend.services import chatbot as cb, attachment_store, attachment_qa
+    from backend.services import chatbot as cb, attachment_store
+    from backend.services.chatbot import attachment_qa
     from backend.services.doc_extract import ExtractedDocument, Segment, STATUS_OK
 
     async def get_test_officer():

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from backend.services.crosscheck_qa import _name_cmp, _v
+from .crosscheck_qa import _name_cmp, _v
 from backend.utils.fuzzy import is_token_typo_match
 from backend.utils.logger import get_logger
 

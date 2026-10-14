@@ -2,7 +2,7 @@
 No DB, no LLM:  python test_negq.py"""
 import sys
 
-from backend.services import negq
+from backend.services.chatbot import negq
 
 APP = "2026/0153/02/048323"
 H = [{"role": "assistant", "content": f"details [{APP}]"}]

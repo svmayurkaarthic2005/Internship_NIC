@@ -149,7 +149,7 @@ async def main():
     # 5. LINENO-001: Exact Line-Number Extraction
     # ---------------------------------------------------------
     print("\n--- 5. LINENO-001: Verifying Exact Line-Number Extraction ---")
-    from backend.services.attachment_qa import location_reference, location_range_reference, is_positional_only
+    from backend.services.chatbot.attachment_qa import location_reference, location_range_reference, is_positional_only
 
     loc10 = location_reference("In sis_lineposition_test.txt, what is on line 10?")
     check("LINENO-001: Location reference extracts ('lines', 10)",
@@ -164,7 +164,8 @@ async def main():
 
     # Test end-to-end line extraction using DB session
     from backend.database import AsyncSessionLocal
-    from backend.services import attachment_store, attachment_qa
+    from backend.services import attachment_store
+    from backend.services.chatbot import attachment_qa
     from backend.models import SISOfficer
     from backend.services.doc_extract import ExtractedDocument, Segment, STATUS_OK
     from sqlalchemy import select
@@ -240,7 +241,7 @@ async def main():
     # 6. ORDCLAR-001: File Disambiguation Ordinals ("the first one")
     # ---------------------------------------------------------
     print("\n--- 6. ORDCLAR-001: Verifying File Disambiguation Ordinals ---")
-    from backend.services.attachment_qa import resolve_file_ordinal_pick
+    from backend.services.chatbot.attachment_qa import resolve_file_ordinal_pick
     from backend.services import chatbot as cb
 
     async with AsyncSessionLocal() as db:
@@ -308,7 +309,7 @@ async def main():
     # 8. ARCH-001: Grounded Project Relevance Without Tech Stack Prose
     # ---------------------------------------------------------
     print("\n--- 8. ARCH-001: Verifying Grounded Project Relevance ---")
-    from backend.services.attachment_qa import _build_project_relevance_assessment
+    from backend.services.chatbot.attachment_qa import _build_project_relevance_assessment
 
     # Test that ungrounded tech stack prose is NEVER included
     pres_doc = doc_a

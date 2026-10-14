@@ -51,7 +51,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from backend.services.attachment_qa import (  # noqa: E402
+from backend.services.chatbot.attachment_qa import (  # noqa: E402
     survey_subdivision_pairs, _render_survey_pairs_answer,
     _render_survey_subdivision_table)
 from backend.services.attachment_store import Evidence  # noqa: E402
@@ -184,7 +184,7 @@ check("every data row in the table carries both a survey number and a "
 #    right question. (Covered in depth by
 #    test_attachment_enumeration_consistency.py; spot-checked here too.)
 # ---------------------------------------------------------------------
-from backend.services.attachment_qa import wants_enumeration  # noqa: E402
+from backend.services.chatbot.attachment_qa import wants_enumeration  # noqa: E402
 check('"What is the synthetic survey number?" on the multi-value document '
       "is still NOT an enumeration request (unchanged)",
       not wants_enumeration("What is the synthetic survey number?"))

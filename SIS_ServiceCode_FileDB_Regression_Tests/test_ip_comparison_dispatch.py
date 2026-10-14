@@ -43,7 +43,8 @@ def check(name, cond, detail=""):
 
 
 async def unit_cases():
-    from backend.services import chatbot, chat_application_queries, chat_untracked_fields
+    from backend.services import chatbot
+    from backend.services.chatbot import chat_application_queries, chat_untracked_fields
     officer = SimpleNamespace(officer_id="test", jurisdiction_ids=[])
 
     # 1. The name the pipelines call must accept the pipelines' 5 arguments.

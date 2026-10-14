@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.abspath("."))
 from backend.database import AsyncSessionLocal
 from sqlalchemy import select
 from backend.models import SISOfficer, ChatAttachment, ChatMessage
-from backend.services import attachment_store, doc_extract, attachment_qa
+from backend.services import attachment_store, doc_extract
+from backend.services.chatbot import attachment_qa
 from backend.services.chatbot import process_chat, create_chat_session
 
 CSV_A = b"""application_number,service_code,applicant_name

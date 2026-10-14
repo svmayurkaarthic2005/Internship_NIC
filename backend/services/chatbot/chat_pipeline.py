@@ -12,17 +12,17 @@ without changing either pipeline's ordering, frames or persisted rows.
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from backend.services import neg_scope as _neg_scope
-from backend.services.chat_corrections import (
+from . import neg_scope as _neg_scope
+from .chat_corrections import (
     _is_bare_language_instruction,
     _language_preference_reply,
 )
-from backend.services.chat_service_codes import (
+from .chat_service_codes import (
     _named_unsupported_service_code,
     _unsupported_service_code_answer,
 )
-from backend.services.chat_shared import _contentless_message, _sd_parse
-from backend.services.chat_smalltalk import (
+from .chat_shared import _contentless_message, _sd_parse
+from .chat_smalltalk import (
     _contentless_reply,
     _is_capability_question,
     _is_mutation_request,

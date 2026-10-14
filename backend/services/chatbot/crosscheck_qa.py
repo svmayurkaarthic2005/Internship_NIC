@@ -14,7 +14,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
-from backend.services import appinfo_qa, oldowner_qa
+from . import appinfo_qa, oldowner_qa
 from backend.utils.translit import script_of, tamil_to_latin
 
 _ALIAS = {

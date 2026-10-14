@@ -67,7 +67,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from backend.services import csv_ops  # noqa: E402
-from backend.services.attachment_qa import (  # noqa: E402
+from backend.services.chatbot.attachment_qa import (  # noqa: E402
     mentions_filename, render_multi_csv_result)
 
 bad = []

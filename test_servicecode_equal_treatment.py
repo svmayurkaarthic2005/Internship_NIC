@@ -138,7 +138,7 @@ from backend.models import SISOfficer, ServiceRegisterEntry, Ward
 from backend.schemas import OfficerContext
 from backend.services import chatbot
 from backend.services import rag
-from backend.services import calc_qa
+from backend.services.chatbot import calc_qa
 from backend.services import followup_context as fctx
 from backend.services.auth_service import get_officer_jurisdiction_ids
 from backend.utils.helpers import SIS_URBAN_SERVICES

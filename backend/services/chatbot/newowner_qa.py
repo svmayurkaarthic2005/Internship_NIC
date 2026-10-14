@@ -13,8 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from backend.services import igrs_owner_qa as ig
-from backend.services.crosscheck_qa import _name_cmp, _row, _v
+from . import igrs_owner_qa as ig
+from .crosscheck_qa import _name_cmp, _row, _v
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -242,7 +242,7 @@ async def load_old(db, app: str) -> List[Dict[str, Any]]:
     rows = await _rows(db, _OLD_NISD, app)
     if rows:
         return rows
-    from backend.services import oldowner_qa
+    from . import oldowner_qa
     chitta, _ = await oldowner_qa.load(db, app)
     return [{"owner_name": c.get("owner_name"), "owner_ename": c.get("owner_ename"), "relation": c.get("relation"),
              "relative_name": c.get("relative_name"), "relative_ename": c.get("relative_ename"),

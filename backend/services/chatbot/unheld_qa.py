@@ -50,7 +50,7 @@ _HELD_FIRST = re.compile(r"\b(?:fee|amount|challan|payment)\b", re.IGNORECASE)
 def context_app(chat_history) -> Optional[str]:
     """The application the conversation is about: the newest message that names one. A listing (3+ numbers) is about
     none of its rows, so if that is the newest, nothing is carried (the ordinary handlers ask which one)."""
-    from backend.services.cmflow_qa import _APP_NO
+    from .cmflow_qa import _APP_NO
     for m in reversed((chat_history or [])[-8:]):
         content = (m.get("content") or "") if isinstance(m, dict) else str(m)
         role = str(m.get("role", "")).lower() if isinstance(m, dict) else ""

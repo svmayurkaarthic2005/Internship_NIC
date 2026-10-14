@@ -3,7 +3,7 @@ Regression tests for FLINE-NEGATION-001a/b/c and NEGCORR-REGEX-GAP-001
 (SIS_Context_And_PostUpload_Failure_Cases.jsonl).
 
 Covers `backend.services.chatbot._route_negative_correction()`,
-`_recent_nonattachment_claim()`, and `backend.services.attachment_qa
+`_recent_nonattachment_claim()`, and `backend.services.chatbot.attachment_qa
 .is_negative_correction()` -- the pure, no-DB parts of the fix. The parts
 that need a real `db`/`session_id` (attachment_topic_active(),
 _get_last_assistant_attachment_context(), _handle_negative_correction()'s
@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.services import attachment_qa as aq
+from backend.services.chatbot import attachment_qa as aq
 from backend.services import chatbot
 
 

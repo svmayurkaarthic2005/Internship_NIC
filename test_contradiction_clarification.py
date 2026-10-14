@@ -24,7 +24,7 @@ original text captured at the very top of `process_chat`/`process_chat_stream`
 
 No DB or LLM needed for these checks.
 """
-import backend.services.neg_scope as ns
+import backend.services.chatbot.neg_scope as ns
 
 bad = []
 total = 0

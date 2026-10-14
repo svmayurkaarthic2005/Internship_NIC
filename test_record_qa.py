@@ -1,6 +1,6 @@
 """cmflow_qa (desk recommendations / flags) and appinfo_qa (challan, amount, proposed visit ...)
 question parsing -- typos, Tamil, Tanglish. No DB, no LLM.  python test_record_qa.py"""
-from backend.services import appinfo_qa as ai, cmflow_qa as cm, fline_qa as fl, merge_qa as mg, crosscheck_qa as xc, igrs_owner_qa as ig, newowner_qa as nw, fulltransfer_qa as ft, sdattach_qa as sa, tslr_qa as tq, uamod_qa as um, natham_qa as na
+from backend.services.chatbot import appinfo_qa as ai, cmflow_qa as cm, fline_qa as fl, merge_qa as mg, crosscheck_qa as xc, igrs_owner_qa as ig, newowner_qa as nw, fulltransfer_qa as ft, sdattach_qa as sa, tslr_qa as tq, uamod_qa as um, natham_qa as na
 
 CM = [
     ("What is the reason code for applcation 2026/0158/02/001804?", [], None, ["reason"]),
@@ -272,7 +272,7 @@ for m, want in AI:
 # case-SENSITIVE check (only lowercase "null"/"None"), so a column actually
 # storing "NULL" (all caps, as several loaders write it) passed through as a
 # truthy value and was rendered as if it were real recorded data.
-import backend.services.othercode_detail as oc
+import backend.services.chatbot.othercode_detail as oc
 for _mod, _name in ((cm, "cmflow_qa"), (fl, "fline_qa"), (oc, "othercode_detail"),
                      (sa, "sdattach_qa")):
     for _literal in ("NULL", "Null", "NONE", "None", "null", "none"):

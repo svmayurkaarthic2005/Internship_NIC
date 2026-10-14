@@ -32,9 +32,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 PY = sys.executable
 
-MODULES = ["chat_shared", "chat_smalltalk", "chat_response_formatting", "chat_untracked_fields",
-           "chat_followups", "chat_corrections", "chat_application_queries", "chat_service_codes",
-           "chat_routing", "chat_pipeline", "chatbot"]
+MODULES = ["backend.services.chatbot.chat_shared", "backend.services.chatbot.chat_smalltalk",
+           "backend.services.chatbot.chat_response_formatting", "backend.services.chatbot.chat_untracked_fields",
+           "backend.services.chatbot.chat_followups", "backend.services.chatbot.chat_corrections",
+           "backend.services.chatbot.chat_application_queries", "backend.services.chatbot.chat_service_codes",
+           "backend.services.chatbot.chat_routing", "backend.services.chatbot.chat_pipeline",
+           "backend.services.chatbot"]
 
 results = []
 
@@ -46,9 +49,9 @@ def check(name, cond, detail=""):
 
 def test_first_import_no_cycle():
     for m in MODULES:
-        p = subprocess.run([PY, "-c", f"import backend.services.{m}"], cwd=ROOT,
+        p = subprocess.run([PY, "-c", f"import {m}"], cwd=ROOT,
                            capture_output=True, text=True)
-        check(f"first-import backend.services.{m}", p.returncode == 0, p.stderr.strip()[-300:])
+        check(f"first-import {m}", p.returncode == 0, p.stderr.strip()[-300:])
 
 
 def test_legacy_import_paths():
@@ -61,14 +64,14 @@ def test_legacy_import_paths():
               "_big_plan", "_GLOSSARY", "_GLOSSARY_RE", "resolve_application_reference",
               "build_app_not_found_message", "_scrub_unverified_counts"]:
         check(f"chatbot.{n} still importable", hasattr(cb, n))
-    from backend.services import chat_service_codes
+    from backend.services.chatbot import chat_service_codes
     check("re-export is the same object, not a copy",
           cb._build_service_code_comparison_response is chat_service_codes._build_service_code_comparison_response)
 
 
 def test_patch_point_seen_by_moved_code():
     import backend.services.chatbot as cb
-    from backend.services import chat_routing
+    from backend.services.chatbot import chat_routing
     check("chat_routing reaches chatbot lazily", chat_routing._cb() is cb)
     sentinel = mock.AsyncMock()
     with mock.patch("backend.services.chatbot.save_chat_messages", sentinel):
@@ -77,7 +80,7 @@ def test_patch_point_seen_by_moved_code():
 
 
 def test_early_guard_decisions():
-    from backend.services.chat_pipeline import early_guard_reply
+    from backend.services.chatbot.chat_pipeline import early_guard_reply
     cases = [
         # message, expected intent (None = falls through), save, clear
         ("?", "clarification", True, False),

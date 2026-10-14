@@ -8,7 +8,7 @@ bare "compare", which asks what to compare -- never a guess.
 import re
 from typing import List, Optional
 
-from backend.services import neg_scope
+from . import neg_scope
 from backend.utils.fuzzy import is_token_typo_match
 
 _APP_NO = re.compile(r"\d{4}/\d{3,4}/\d{1,3}/\d+")

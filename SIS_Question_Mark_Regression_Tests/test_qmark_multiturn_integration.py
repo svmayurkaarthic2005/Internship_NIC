@@ -116,7 +116,7 @@ class QuestionMarkAuditHarness:
              mock.patch("backend.services.chatbot.call_llama", return_value="MOCK_LLM_ANSWER"), \
              mock.patch("backend.services.chatbot.run_agent", new_callable=mock.AsyncMock, return_value=mock.MagicMock(answer="MOCK_AGENT_ANSWER", used_tools=[])), \
              mock.patch("backend.services.rag.get_rag_context_async", new_callable=mock.AsyncMock, return_value=""), \
-             mock.patch("backend.services.semantic_intent.classify", new_callable=mock.AsyncMock, return_value=None), \
+             mock.patch("backend.services.chatbot.semantic_intent.classify", new_callable=mock.AsyncMock, return_value=None), \
              mock.patch("backend.services.embeddings.generate_embedding", return_value=[0.0] * 768), \
              mock.patch("backend.services.embeddings.batch_embed", return_value=[[0.0] * 768]), \
              mock.patch("backend.services.pgvector_store.similarity_search", return_value=[]), \

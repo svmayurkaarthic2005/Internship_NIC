@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
     # here means the first real request never pays that cost.
     try:
         import asyncio as _asyncio
-        from backend.services import semantic_intent
+        from backend.services.chatbot import semantic_intent
         await _asyncio.to_thread(semantic_intent._build)
         print("   ✅ Semantic intent prototypes warmed up")
     except Exception as e:

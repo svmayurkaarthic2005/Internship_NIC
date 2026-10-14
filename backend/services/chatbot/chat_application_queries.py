@@ -25,37 +25,37 @@ from backend.config import (
     DISTRICT_NAME_MAP, DISTRICT_TAMIL_NAME_MAP, DISTRICT_CODE_TO_TAMIL_NAME, settings,
 )
 from backend.schemas import OfficerContext
-from backend.services import attachment_qa
-from backend.services.agent import AgentUnavailable, run_agent, run_agent_stream
+from . import attachment_qa
+from .agent import AgentUnavailable, run_agent, run_agent_stream
 from backend.services.readonly_guard import chat_turn
-from backend.services import neg_scope as _neg_scope
-from backend.services import negq as _negq
-from backend.services import calc_qa as _calc_qa
-from backend.services import howto_qa as _howto_qa
-from backend.services import card_html as _card_html
-from backend.services import unheld_qa as _unheld_qa
-from backend.services import recheck as _recheck
-from backend.services import number_qa as _number_qa
-from backend.services import stats_qa as _stats_qa
-from backend.services import compare_followup as _compare_followup
-from backend.services import qualifier_guard as _qualifier_guard
+from . import neg_scope as _neg_scope
+from . import negq as _negq
+from . import calc_qa as _calc_qa
+from . import howto_qa as _howto_qa
+from . import card_html as _card_html
+from . import unheld_qa as _unheld_qa
+from . import recheck as _recheck
+from . import number_qa as _number_qa
+from . import stats_qa as _stats_qa
+from . import compare_followup as _compare_followup
+from . import qualifier_guard as _qualifier_guard
 from backend.services import followup_context as fctx
-from backend.services import semantic_intent
-from backend.services import subdivision_qa as _subdivision_qa
-from backend.services import oldowner_qa as _oldowner_qa
-from backend.services import cmflow_qa as _cmflow_qa
-from backend.services import appinfo_qa as _appinfo_qa
-from backend.services import fline_qa as _fline_qa
-from backend.services import merge_qa as _merge_qa
-from backend.services import crosscheck_qa as _crosscheck_qa
-from backend.services import igrs_owner_qa as _igrs_owner_qa
-from backend.services import newowner_qa as _newowner_qa
-from backend.services import fulltransfer_qa as _fulltransfer_qa
-from backend.services import sdattach_qa as _sdattach_qa
-from backend.services import tslr_qa as _tslr_qa
-from backend.services import uamod_qa as _uamod_qa
-from backend.services import natham_qa as _natham_qa
-from backend.services import othercode_detail as _othercode_detail
+from . import semantic_intent
+from . import subdivision_qa as _subdivision_qa
+from . import oldowner_qa as _oldowner_qa
+from . import cmflow_qa as _cmflow_qa
+from . import appinfo_qa as _appinfo_qa
+from . import fline_qa as _fline_qa
+from . import merge_qa as _merge_qa
+from . import crosscheck_qa as _crosscheck_qa
+from . import igrs_owner_qa as _igrs_owner_qa
+from . import newowner_qa as _newowner_qa
+from . import fulltransfer_qa as _fulltransfer_qa
+from . import sdattach_qa as _sdattach_qa
+from . import tslr_qa as _tslr_qa
+from . import uamod_qa as _uamod_qa
+from . import natham_qa as _natham_qa
+from . import othercode_detail as _othercode_detail
 from backend.services.rag import (
     detect_language,
     is_short_reply,
@@ -142,19 +142,19 @@ from backend.utils.fuzzy import (
     normalize_text,
     resolve_unique_entry,
 )
-from backend.services.chat_corrections import (
+from .chat_corrections import (
     _is_ordinal_visit_reference,
     _oo_exists_parse,
     _status_yes_no,
 )
-from backend.services.chat_followups import (
+from .chat_followups import (
     _app_numbers_from_last_listing,
     _extract_app_number_from_context,
     _geo_scope,
     _pick_from_listing,
     _wants_workflow_history,
 )
-from backend.services.chat_shared import (
+from .chat_shared import (
     _LIMITABLE_LIST_INTENTS,
     _MONTH_NAMES,
     _SORT_OVERRIDE,
@@ -181,7 +181,7 @@ from backend.services.chat_shared import (
     detect_offered_app_number_token,
     extract_month_from_query,
 )
-from backend.services.chat_smalltalk import _workflow_history_answer
+from .chat_smalltalk import _workflow_history_answer
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)

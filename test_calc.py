@@ -1,7 +1,7 @@
 """Calculation questions over register rows (every service code). No DB, no LLM:  python test_calc.py"""
 import sys
 
-from backend.services import calc_qa
+from backend.services.chatbot import calc_qa
 
 ROWS = (
     [{"service_code": "0154", "status": "pending", "submission_channel": "CSC", "ward_number": "001", "submission_date": "2026-09-01"}] * 3

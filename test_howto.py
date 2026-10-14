@@ -1,7 +1,7 @@
 """Policy / how-to questions answered from the reference documents. No DB, no LLM:  python test_howto.py"""
 import sys
 
-from backend.services import howto_qa, unheld_qa
+from backend.services.chatbot import howto_qa, unheld_qa
 
 CASES = [
     ("What documents are needed for a patta transfer?", "docs", "Sale Deed"),

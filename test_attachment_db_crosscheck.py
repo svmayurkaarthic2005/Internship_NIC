@@ -43,7 +43,7 @@ import sys
 import uuid
 
 from backend.services import csv_ops
-from backend.services import attachment_qa as aq
+from backend.services.chatbot import attachment_qa as aq
 from backend.schemas import OfficerContext
 
 bad = []

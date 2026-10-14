@@ -424,7 +424,7 @@ async def live_main():
     # because the raw areg_temp_subdivclub extract this module also reads has
     # no matching row for a newer batch of seeded applications. Fixed with an
     # ORM fallback in subdivision_qa.load_plots(). ----
-    from backend.services import subdivision_qa as _subdivision_qa_mod
+    from backend.services.chatbot import subdivision_qa as _subdivision_qa_mod
     async with AsyncSessionLocal() as db:
         plots = await _subdivision_qa_mod.load_plots(db, "2026/0154/02/015495")
     check("live DB. subdivision_qa.load_plots() ORM fallback: app with a real ORM row never reports 'no plots recorded'",

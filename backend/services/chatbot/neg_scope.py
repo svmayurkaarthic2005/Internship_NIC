@@ -338,7 +338,7 @@ def rewrite(message: str, prior: Optional[Dict[str, List[str]]] = None,
     survey = None
     sm = _SURVEY.search(message)
     if sm:                                  # "applications in survey 5": rows of that survey only
-        from backend.services import qualifier_guard
+        from . import qualifier_guard
         if qualifier_guard.listing_shaped(message):
             survey = sm.group(1)
             message = _SURVEY.sub(" ", message)

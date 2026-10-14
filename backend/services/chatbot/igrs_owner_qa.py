@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from backend.services import appinfo_qa
-from backend.services.crosscheck_qa import _name_cmp, _row, _v
+from . import appinfo_qa
+from .crosscheck_qa import _name_cmp, _row, _v
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)

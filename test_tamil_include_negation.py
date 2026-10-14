@@ -15,7 +15,7 @@ applied in `parse()` ahead of `_SUFFIX`.
 
 No DB or LLM needed for these checks.
 """
-import backend.services.neg_scope as ns
+import backend.services.chatbot.neg_scope as ns
 
 bad = []
 total = 0

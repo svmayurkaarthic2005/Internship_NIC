@@ -81,7 +81,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from backend.services.attachment_qa import (  # noqa: E402
+from backend.services.chatbot.attachment_qa import (  # noqa: E402
     _asked_entity, distinct_entities, _single_entity_answer)
 from backend.services.attachment_store import (  # noqa: E402
     Evidence, _content_terms, _ALIASES)

@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.abspath("."))
 from backend.database import AsyncSessionLocal
 from sqlalchemy import select
 from backend.models import SISOfficer, ChatAttachment
-from backend.services import attachment_store, doc_extract, attachment_qa
+from backend.services import attachment_store, doc_extract
+from backend.services.chatbot import attachment_qa
 from backend.services.chatbot import process_chat, process_chat_stream, create_chat_session
 from backend.schemas import OfficerContext
 
