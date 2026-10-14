@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     
+    # Frontend-only: the backend URL serve_frontend.py writes into
+    # frontend/js/config.js. The backend itself never reads this value.
+    API_BASE_URL: str = "http://localhost:8000"
+
     # Ollama / LLM
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "llama3.1:8b"

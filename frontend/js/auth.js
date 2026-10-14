@@ -3,9 +3,10 @@
  * Handles login, session management, and authentication state
  */
 
-// Configuration
-const API_BASE_URL = 'http://localhost:8000';
-window.API_BASE_URL = API_BASE_URL; // Make it globally available
+// Configuration -- set by js/config.js (generated from .env's API_BASE_URL at
+// frontend-server startup); this fallback only covers config.js failing to load.
+const API_BASE_URL = window.API_BASE_URL || 'http://localhost:8000';
+window.API_BASE_URL = API_BASE_URL;
 
 // DOM Elements
 const loginForm = document.getElementById('loginForm');

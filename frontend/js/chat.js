@@ -325,6 +325,14 @@ async function restoreHistoryFromServer(sessionId) {
 }
 
 /**
+ * Empty the message area back to how the page first renders it -- the
+ * "Today" divider stays; only the messages go.
+ */
+function resetChatMessages() {
+    chatMessages.innerHTML = '<div class="date-separator-new"><span>Today</span></div>';
+}
+
+/**
  * Render messages from history stored in sessionStorage
  */
 function renderMessagesFromHistory() {
@@ -332,9 +340,8 @@ function renderMessagesFromHistory() {
         renderWelcomeMessage();
         return;
     }
-    
-    // Clear chat
-    chatMessages.innerHTML = '';
+
+    resetChatMessages();
     
     // Render each message
     messageHistory.forEach(msg => {
@@ -396,21 +403,10 @@ function setupEventListeners() {
         }
     });
 
-    // Quick chips
-    const quickChipsContainer = document.getElementById('quickChips');
-    if (quickChipsContainer) {
-        quickChipsContainer.addEventListener('click', (e) => {
-            const chip = e.target.closest('.quick-chip');
-            if (!chip) return;
-            const q = chip.getAttribute('data-q') || chip.textContent.trim();
-            if (q) {
-                messageInput.value = q;
-                handleInputChange();
-                sendMessage();
-            }
-        });
-    }
-    
+    // Quick chips are wired once, by the inline script in chatbot.html. A
+    // second listener here sent every chip twice: the duplicate was rejected
+    // ("Please wait...") after re-filling the box, so the text stayed behind.
+
     // Quick suggestions
     if (quickSuggestions) {
         const chips = quickSuggestions.querySelectorAll('.suggestion-chip');
@@ -1537,7 +1533,7 @@ async function startNewChat(options) {
     currentSessionId = null;
     setSendButtonState(false);
 
-    chatMessages.innerHTML = '';
+    resetChatMessages();
     messageHistory = [];
     inputHistoryIndex = -1;
     inputHistoryDraft = '';

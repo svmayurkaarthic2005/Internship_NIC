@@ -27,6 +27,7 @@ wheels/
 # Environment
 .env
 .env.local
+frontend/js/config.js
 
 # IDEs
 .vscode/
