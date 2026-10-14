@@ -497,6 +497,7 @@ _NEGATIVE_CORRECTION_RE = re.compile(
     r"|\bi\s+(?:still\s+)?don'?t\s+think\s+(?:[\w'-]+\s+){0,6}?(?:is|are|was|were|have|has|matches?|match)\b"
     r"|\b(?:no,?\s+that'?s\s+wrong|that'?s\s+wrong|no\s+thats\s+wrong|that'?s\s+incorrect)\b"
     r"|\b(?:not\s+that\s+one)\b"
+    r"|\bnot\s+exactly\b"
     r"|\b(?:i\s+meant\s+the\s+other(?:\s+service\s+code)?)\b"
     r"|\b(?:check\s+the\s+database(?:\s+again)?)\b"
     r"|\b(?:check\s+the\s+(?:uploaded\s+)?file(?:\s+again)?)\b"

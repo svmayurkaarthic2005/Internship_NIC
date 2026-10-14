@@ -1056,6 +1056,15 @@ def _build_general_negative_correction_response(message: str, chat_history: Sequ
 
     is_ta = language in ("ta", "tanglish")
     combined = (prev_user_q + " " + prev_asst_a).lower()
+    # An application number embeds a service code as its second segment
+    # ("2026/0154/28/001167" carries "0154"), so testing the service-code cue
+    # regex against the raw `combined` text reads a question entirely ABOUT
+    # one application ("Are you looking for application 2026/0154/28/001167?")
+    # as a service-code dispute instead -- the same false-match CLAUDE.md
+    # documents for the comparison parser (an application number is stripped
+    # before the message is read for codes). Stripped here, before the cue
+    # check below; `app_m` below still searches the un-stripped `combined`.
+    combined_for_code_cue = re.sub(r"\b\d{4}/\d{3,4}/\d{1,3}/\d+\b", " ", combined)
 
     msg_low = (message or "").lower()
     if (("f-line" in msg_low or "fline" in msg_low) and "appeal" in msg_low) or ("0178" in msg_low and "0185" in msg_low) or re.search(r"\b(?:f[- ]?line\s+(?:and|&)\s+f[- ]?line\s+appeal|0178\s+(?:and|&)\s+0185)\b", msg_low):
@@ -1071,7 +1080,7 @@ def _build_general_negative_correction_response(message: str, chat_history: Sequ
                     "These are distinct statutory procedures: 0178 is the primary demarcation survey, whereas 0185 is the formal appeal against a previous demarcation decision.")
         return {"response": resp, "intent": "service_code_lookup"}
 
-    if re.search(r"\b(015[1-9]|0178|0185|f-line|fline|isd|nisd|service\s+code)\b", combined):
+    if re.search(r"\b(015[1-9]|0178|0185|f-line|fline|isd|nisd|service\s+code)\b", combined_for_code_cue):
         if is_ta:
             resp = ("புரிந்தது — எனது முந்தைய பதிலில் முரண்பாடு இருக்கலாம். "
                     "நீங்கள் குறிப்பிட்டது மற்றொரு சேவை குறியீடா (எ.கா. 0178 F-Line அல்லது 0185 F-Line Appeal), "
@@ -1101,6 +1110,20 @@ def _build_general_negative_correction_response(message: str, chat_history: Sequ
         else:
             resp = ("Understood. Please let me know which specific field visit or inspection detail you would like me to re-check.")
         return {"response": resp, "intent": "field_visit_query"}
+
+    # A rejected CAN-number guess ("Did you mean the CAN number?" -> "illa
+    # athu illa" / "no, not that") names no application, service code or
+    # field visit, so none of the branches above claim it and it fell to the
+    # generic catch-all, which never asks WHICH number the officer actually
+    # meant -- the one question this rejection raises.
+    if re.search(r"\b(can\s*number|citizen\s+access\s+number|கேன்\s*எண்)\b", combined):
+        if is_ta:
+            resp = ("புரிந்தது, அது சரியில்லை என்றால் -- நீங்கள் எந்த விண்ணப்பத்தின் அல்லது பதிவின் CAN எண்ணைக் "
+                    "கேட்கிறீர்கள் என்று குறிப்பிடவும்.")
+        else:
+            resp = ("Understood, if that CAN number guess was wrong -- tell me which application or record's "
+                    "CAN number you are actually asking about.")
+        return {"response": resp, "intent": "general_negative_correction"}
 
     if is_ta:
         resp = ("புரிந்தது — முந்தைய கேள்விக்கான பதிலில் ஏதேனும் தவறு அல்லது குறைபாடு இருந்திருக்கலாம். "

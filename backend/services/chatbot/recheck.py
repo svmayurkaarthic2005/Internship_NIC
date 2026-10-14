@@ -31,6 +31,15 @@ _ASSERT = re.compile(
 _FIX = {"rong": "wrong", "wrng": "wrong", "wrog": "wrong", "wron": "wrong", "chek": "check", "chk": "check",
         "agn": "again", "agan": "again", "agin": "again", "aagain": "again", "cheque": "check"}
 
+# "correct illa" / "seri illa" -- a trailing "illa"/"illai" negates the
+# affirmative word in front of it ("not correct"), the same meaning as
+# "wrong" in _PUSH above, just phrased as a negated agreement instead of a
+# direct dispute word. Without this, "correct illa" matched neither _PUSH
+# nor _ASSERT (its only word outside "illa" is "correct", which is the
+# opposite polarity of everything _PUSH looks for) and was not recognised
+# as a pushback at all.
+_NEG_AFFIRM = re.compile(r"\b(?:correct|right|seri|sari|aama|ama)\s+(?:illa|illai)\b", re.IGNORECASE)
+
 
 def _fix(text: str) -> str:
     out = []
@@ -51,7 +60,7 @@ def is_pushback(message: str) -> bool:
     if not text or len(text.split()) > 14 or _ASK.search(text):
         return False
     fixed = _fix(text)
-    return bool(_PUSH.search(fixed) or _ASSERT.search(fixed))
+    return bool(_PUSH.search(fixed) or _ASSERT.search(fixed) or _NEG_AFFIRM.search(fixed))
 
 
 def asserted_figure(message: str) -> Optional[str]:

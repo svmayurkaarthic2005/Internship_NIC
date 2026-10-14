@@ -1050,6 +1050,39 @@ _SINGULAR_FIELD_CUES = (
     "paalinam", "uravu", "uravumurai", "kanavan", "manaivi", "thanthai", "pangu",
 )
 
+# Short, plain-English cues above that are whole field names, not truncated
+# stems -- unlike "schedul" (scheduled/schedule), "cultivab" (cultivable),
+# "alienat" (alienation/alienated) etc., which must stay substrings to catch
+# their own inflections. A bare substring match let these six collide with
+# an unrelated longer word: "can" inside "cancel"/"candidate"/"scan", "date"
+# inside "candidate"/"mandate", "tax" inside "syntax", "door" inside
+# "outdoor", "order" inside "border", "govern" inside "government" with no
+# sentence context at all asking about a government-land flag. Matched as
+# whole words instead (optional trailing "s" for the plural) -- "the CAN
+# number", "door number", "the order remarks", "the dates" still match;
+# "cancel", "outdoor", "government", "candidate" alone do not.
+_EXACT_WORD_CUES = frozenset({"can", "tax", "door", "order", "govern", "date"})
+
+
+def _cue_present(cue: str, lowered: str) -> bool:
+    # "can" as a whole word is still ambiguous even after the exact-word fix
+    # above: it is also the ordinary English modal verb ("can you help me",
+    # "I can see it", "you can check it"), which carries no field meaning at
+    # all -- "can you help me" used to be read as a bare CAN-number
+    # follow-up and answered "Which one do you mean?" to a sentence that
+    # named no field. `_strip_can_modal` (below) already exists for exactly
+    # this collision in `field_projection`'s needle matching; reused here
+    # rather than duplicated. A genuine CAN-number question phrased with a
+    # modal opener ("can you tell me the CAN number") still matches, because
+    # stripping "can you" leaves "tell me the CAN number" behind, which
+    # still contains the word "can".
+    if cue == "can":
+        lowered = _strip_can_modal(lowered)
+    if cue in _EXACT_WORD_CUES:
+        return bool(re.search(r"\b" + re.escape(cue) + r"s?\b", lowered))
+    return cue in lowered
+
+
 _AGGREGATE_RE = re.compile(
     r"\bhow\s+many\b|\bcount\b|\btotal\b|\bsum\b|\baverage\b|\bmean\b|\bcompar\w*\b"
     r"|\bwhich\s+(?:one|ones|is|are|of)\b|\boldest\b|\bnewest\b|\blatest\b"
@@ -1519,7 +1552,7 @@ def names_a_field(message: str) -> bool:
         return False
     message = _correct_typos(message)
     lowered = message.lower()
-    if not any(cue in lowered or cue in message for cue in _SINGULAR_FIELD_CUES):
+    if not any(_cue_present(cue, lowered) or _cue_present(cue, message) for cue in _SINGULAR_FIELD_CUES):
         return False
     words = message.split()
     # "show"/"list"/"give"/"display" are LISTING verbs, not field-lookup
@@ -2282,7 +2315,12 @@ def is_column_reorder_fragment(message: str) -> bool:
 # officer wants to know; the others carry a field of their own.
 _BARE_DEICTIC_RE = re.compile(
     r"(?:and\s+|then\s+|so\s+|ok\s+)?(?:(?:what|how)\s+(?:about|abt)\s+)?(?:this|that|it)(?:\s+one)?"
-    r"|(?:இது|அது|idhu|adhu|idhuku|adhuku)(?:\s+(?:பற்றி|pathi|enna|என்ன))?")
+    # "adhu"/"idhu" (dh) and "athu"/"ithu" (th) are both common Tanglish
+    # romanisations of அது/இது -- "athu" alone fell through every branch of
+    # classify() (it is in neither this regex nor _BACKREF_RE), so a bare
+    # "athu" after a multi-application listing never triggered a follow-up
+    # at all and fell straight to the LLM fallback.
+    r"|(?:இது|அது|idhu|adhu|ithu|athu|idhuku|adhuku|ithuku|athuku)(?:\s+(?:பற்றி|pathi|enna|என்ன))?")
 _DEICTIC_FIELD_RE = re.compile(
     r"(?:and\s+)?(?:(?:show|display|give|check)\s+(?:me\s+)?)?(?:the\s+)?(?:field\s+)?visit"
     r"(?:\s+(?:details?|status|info))?\s+(?:of|for|on)\s+(?:this|that|it)(?:\s+one)?"
@@ -2657,7 +2695,7 @@ def classify(message: str) -> str:
     # phrasing ("Show X and Y of the second overdue visit.") exposed it --
     # every other officer-typed sentence starting with a capital letter and
     # ending without "?" hits the same gap, not only the multi-field ones.
-    if any(cue in lowered for cue in _SINGULAR_FIELD_CUES):
+    if any(_cue_present(cue, lowered) for cue in _SINGULAR_FIELD_CUES):
         # The "?" and FRAGMENT_OPENERS disjuncts below carry no length cap of
         # their own, unlike every other branch in this function -- a genuine
         # multi-field imperative ("Show the survey number and subdivision

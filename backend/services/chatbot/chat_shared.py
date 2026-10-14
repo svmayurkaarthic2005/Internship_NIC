@@ -877,6 +877,17 @@ def _contentless_message(message: str) -> Optional[str]:
         return "session_command"
     if text in _DISMISS_WORDS:
         return "dismiss"
+    # "correct illa" / "seri illa" -- a trailing "illa"/"illai" NEGATES the
+    # word before it ("not correct"), the same way English "not" does. Tested
+    # token-by-token, "correct" and "illa" are each individually an ack word
+    # (the bare "yes" sense of "correct", the bare "no" sense of "illa"), so
+    # `_is_ack_message` read the pair as "all ack" and answered with the
+    # generic contentless reply to what is actually a rejection, the opposite
+    # polarity of "correct" alone. Left unclassified here (None), it falls
+    # through to the ordinary pipeline, where it reads as the negated
+    # correction it is.
+    if re.match(r"^(?:yes|yeah|yep|yup|ya|correct|right|seri|sari|aama|ama|ok|okay)\s+(?:illa|illai)\b", text):
+        return None
     if _is_ack_word(text) or _is_ack_message(text):
         return "ack"
     if _looks_like_unclear_clear_attempt(text):

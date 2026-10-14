@@ -1721,7 +1721,17 @@ async def _type_swap_followup(db, session_id, chat_history, message: str) -> str
             prev = ""
     prev = prev.strip()
     if prev and _bare_type_word(prev) is None and len(prev.split()) <= 16:
-        if _TYPE_TOKEN_RE.search(prev):
+        _prev_type_match = _TYPE_TOKEN_RE.search(prev)
+        if _prev_type_match and _bare_type_word(_prev_type_match.group(0)) == canon:
+            # The prior question already named THIS type -- "tell me about ISD"
+            # then bare "ISD" again is not a swap to the other type, it is the
+            # same question re-typed. Substituting canon for canon reproduces
+            # "tell me about ISD" verbatim, and that phrasing does not reach
+            # service_code_lookup the way "what is ISD" does, so a genuine
+            # repeat silently fell to the LLM fallback instead of the
+            # deterministic definition. Asked directly instead.
+            return f"what is {canon}"
+        if _prev_type_match:
             return _TYPE_TOKEN_RE.sub(canon, prev)
         if re.search(r"\b(?:show|list|how\s+many|count|pending|approved|rejected|applications?|apps?|my)\b", prev, re.IGNORECASE):
             return f"{prev} {canon}"

@@ -728,13 +728,30 @@ def _contentless_reply(kind: str, language: str, message: str = "", chat_history
                 "விண்ணப்ப எண், நில அளவை எண் அல்லது கள ஆய்வு." if is_tamil
                 else "Sorry about that. If I got something wrong, tell me what you were looking for -- an "
                      "application number, a survey number or your field visits -- and I'll try again.")
-    # A yes / no is an answer to a question -- but nothing is left pending
-    # here, so agreeing ("Right.") would pretend it was understood.
+    # A yes / no is an answer to a question -- but if nothing is left pending
+    # (no FollowupContext, and the last turn wasn't itself a question), there
+    # is nothing to agree with, so the generic prompts below apply. When the
+    # assistant's own last turn DID end in a question, though, those same
+    # generic prompts actively contradict the history: a bare "yes" reads as
+    # confirming something, and replying "What would you like to know?"
+    # pretends nothing was asked -- the officer just answered it. There is no
+    # stored record of what that pending question was for (no FollowupContext
+    # exists here), so the honest reply says so and asks them to repeat it,
+    # rather than either inventing an answer or denying the question existed.
     word = (message or "").strip().strip(_TRIM_CHARS).strip().lower()
+    last_was_question = bool(chat_history) and isinstance(chat_history[-1], dict) \
+        and str(chat_history[-1].get("role", "")).lower() in ("assistant", "ai", "bot") \
+        and str(chat_history[-1].get("content", "")).strip().endswith("?")
     if word in _NO_WORDS:
+        if last_was_question:
+            return ("பதிவு செய்யப்பட்டது, ஆனால் முந்தைய கேள்வி என் கைவசம் இல்லை. எதை விரும்புகிறீர்கள் என்று மீண்டும் தெளிவாகக் கேளுங்கள்." if is_tamil
+                    else "Noted, but I don't have the earlier question in view to act on a plain \"no\" -- please ask again, naming what you'd like me to check.")
         return ("சரி, பரவாயில்லை. தேவைப்படும்போது விண்ணப்ப எண், நில அளவை எண் அல்லது கள ஆய்வு பற்றி கேளுங்கள்." if is_tamil
                 else "No problem. Ask me whenever you need an application, a survey number or your field visits.")
     if word in _YES_WORDS:
+        if last_was_question:
+            return ("பதிவு செய்யப்பட்டது, ஆனால் முந்தைய கேள்வி என் கைவசம் இல்லை. எதை உறுதிசெய்கிறீர்கள் என்று மீண்டும் தெளிவாகக் கேளுங்கள்." if is_tamil
+                    else "Noted, but I don't have the earlier question in view to act on a plain \"yes\" -- please ask again, naming what you'd like me to confirm or check.")
         return ("எதைப் பற்றி என்று சொல்லுங்கள் -- விண்ணப்ப எண், நில அளவை எண் அல்லது கள ஆய்வு?" if is_tamil
                 else "What would you like to know? Give me an application number, a survey number, or ask about your field visits.")
     if is_tamil:
@@ -1560,7 +1577,13 @@ def _unknown_from_reply(word: str, language: str) -> str:
 # parsing ever sees it.
 _AFFIRMATIVE_RE = re.compile(
     r"^\s*(?:yes|yeah|yep|yup|ya|sure|correct|right|ok|okay|that'?s\s+right|that\s+one|confirm(?:ed)?)\s*[.!]*\s*$|"
-    r"^\s*(?:ஆம்|ஆமாம்|சரி|அது\s*தான்)\s*[.!]*\s*$",
+    r"^\s*(?:ஆம்|ஆமாம்|சரி|அது\s*தான்)\s*[.!]*\s*$|"
+    # Tanglish (Latin-script) affirmatives -- "aama"/"ama" are how officers
+    # actually type ஆம்/ஆமாம் on a phone keyboard. Missing here, a confirmed
+    # CAN-number guess ("Did you mean the CAN number?") answered "aama" fell
+    # straight to the generic contentless reply, the same gap this function
+    # exists to close for the Tamil-script and English spellings.
+    r"^\s*(?:aama|ama|seri)\s*[.!]*\s*$",
     re.IGNORECASE)
 _UNKNOWN_FROM_GUESS_RE = re.compile(
     r"Did you mean (Sub-Registrar \(SRO\)|CSC)\?|(Sub-Registrar \(SRO\)|CSC)\s*என்று சொல்ல வந்தீர்களா",
