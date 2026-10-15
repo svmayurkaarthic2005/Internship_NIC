@@ -1657,6 +1657,12 @@ _PLURAL_BACKREF_RE = re.compile(
 _LIST_FOLLOWUP_CUE_RE = re.compile(
     r"\bhow\s+many\b|\bwhich\s+(?:one|ones|of|are)\b|\bany\s+of\b|\bwhat\s+about\b"
     r"|\bthe\s+two\b|\bboth\b"
+    # "display/show/list all" with no referent of its own ("the record(s)",
+    # "them", or nothing at all) asks to see the thing the previous answer was
+    # ABOUT, not the officer's whole unscoped register -- "total nisd
+    # application count" -> "display all the record" used to drop the NISD
+    # scope entirely and show all 57 ISD+NISD applications instead of the 28.
+    r"|\b(?:display|show|list)\s+all\b"
     r"|எத்தனை|எந்தது|எவை",
     re.IGNORECASE,
 )

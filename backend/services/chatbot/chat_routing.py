@@ -382,6 +382,7 @@ async def _calc_turn(message, session_id, officer, db, chat_history):
     text = _fragment_typo_fix(text) or text
     lang = detect_language(text)
     ta = lang in ("ta", "tanglish")
+    calc_structured_context = None
     from backend.utils.helpers import code_for_name
     reply = code_for_name(text, ta) or _calc_qa.arithmetic(text)
     if not reply and re.match(r"\s*what\s+(?:type\s+of\s+|kind\s+of\s+)?serv\w*\s+is\s+(?:code\s+)?0?1[5-9]\d\s*\??\s*$", text, re.IGNORECASE):
@@ -423,8 +424,21 @@ async def _calc_turn(message, session_id, officer, db, chat_history):
                     _override_codes = _c_hist
                     break
         reply = (_calc_qa.compare_codes(text, _ccrows, ta, codes_override=_override_codes) or _calc_qa.channel_breakdown(text, _ccrows, ta)
-                or _calc_qa.blocks_in_ward(text, _ccrows, ta) or _calc_qa.codes_with_applications(text, _ccrows, ta)
-                or _calc_qa.code_counts(text, _ccrows, ta))
+                or _calc_qa.blocks_in_ward(text, _ccrows, ta) or _calc_qa.codes_with_applications(text, _ccrows, ta))
+        if not reply:
+            reply = _calc_qa.code_counts(text, _ccrows, ta)
+            # A single-code count ("total NISD application count") leaves no
+            # referent behind by default (structured_context=None below), so a
+            # bare follow-up ("display all the record") had no scope to
+            # inherit and fell through to the officer's WHOLE register instead
+            # of the 28 NISD files just discussed. Same shape _service_code_
+            # lookup_answer already leaves for "what is 0154?" -> "explain in
+            # detail": ENTITY_SERVICE_CODE in followup_context.py picks this
+            # dict up on the next turn (gated on "applications" being absent).
+            if reply:
+                _cc_code = _calc_qa._cc_code(text)
+                if _cc_code:
+                    calc_structured_context = {"service_code_filter": _cc_code, "query_type": "Service Code Count"}
     if not reply:
         if not _calc_qa.looks_like_calc(text):
             return None
@@ -436,7 +450,7 @@ async def _calc_turn(message, session_id, officer, db, chat_history):
     if db:
         await _cb().save_chat_messages(db=db, session_id=session_id, user_message=message, assistant_message=reply, language=lang,
                                  response_time_ms=0, officer_id=getattr(officer, "officer_id", None),
-                                 structured_context=None)
+                                 structured_context=calc_structured_context)
     return {"response": reply, "language": lang, "intent": "calc_answer", "sources": [],
             "timestamp": datetime.now(timezone.utc).isoformat(), "context_used": False,
             "response_time_ms": 0, "table_data": None}

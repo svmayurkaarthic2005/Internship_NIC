@@ -285,3 +285,68 @@ async def test_case_e_multiturn_correction_stops_listing():
         assert "Understood. I won't display the application list." in res.get("response", "")
         assert res.get("intent") == "prohibit_listing"
         assert res.get("table_data") is None
+
+
+# =============================================================================
+# Case F: Negative Pending Queries Include Rejected Applications
+# =============================================================================
+@pytest.mark.asyncio
+async def test_case_f_not_pending_includes_rejected_applications():
+    """When an officer requests non-pending applications ('show not pending applications',
+    'other than pending', 'நிலுவையில் இல்லாத'), rejected applications are part of the
+    completed/non-pending set and must be included in the results (count and table rows)
+    rather than hidden with a notice that rejected applications are left out."""
+    officer = _make_officer()
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = None
+    db.execute.return_value = mock_res
+
+    mock_apps = [
+        {"application_number": "2026/0153/02/000001", "service_code": "0153", "status": "approved", "submission_channel": "CSC"},
+        {"application_number": "2026/0153/02/000002", "service_code": "0153", "status": "pending", "submission_channel": "CSC"},
+        {"application_number": "2026/0153/02/000003", "service_code": "0153", "status": "rejected", "submission_channel": "CSC"},
+        {"application_number": "2026/0154/02/000004", "service_code": "0154", "status": "approved", "submission_channel": "citizen"},
+        {"application_number": "2026/0154/02/000005", "service_code": "0154", "status": "rejected", "submission_channel": "sub_registrar"},
+    ]
+
+    async def mock_get_all(db, officer, **kwargs):
+        hide_rej = kwargs.get("hide_rejected", False)
+        apps = [a for a in mock_apps if not hide_rej or a["status"] != "rejected"]
+        return {
+            "applications": apps,
+            "count": len(apps),
+            "rejected_hidden": len([a for a in mock_apps if a["status"] == "rejected"]) if hide_rej else 0,
+            "status_filter": kwargs.get("status"),
+        }
+
+    with patch("backend.services.chatbot.chat_application_queries.get_all_service_code_applications", side_effect=mock_get_all) as mock_queries_all, \
+         patch("backend.services.postgres.get_all_service_code_applications", side_effect=mock_get_all) as mock_all, \
+         patch("backend.services.chatbot.chat_application_queries._geo_scope", new_callable=AsyncMock, return_value=(None, None)), \
+         patch("backend.services.chatbot.orchestrator.attachment_qa.attachment_topic_active", new_callable=AsyncMock, return_value=False), \
+         patch("backend.services.chatbot.orchestrator.save_chat_messages", new_callable=AsyncMock):
+
+        for phrase in [
+            "show not pending applications",
+            "not pending applications",
+            "show applications excluding pending",
+            "show applications other than pending",
+        ]:
+            res = await process_chat(
+                message=phrase,
+                session_id=str(uuid.uuid4()),
+                officer=officer,
+                db=db
+            )
+            # Verify hide_rejected was False
+            called_mock = mock_queries_all if mock_queries_all.called else mock_all
+            assert called_mock.called, f"Expected get_all_service_code_applications called for '{phrase}'"
+            last_call_kwargs = called_mock.call_args[1]
+            assert last_call_kwargs.get("hide_rejected") is False, f"Expected hide_rejected=False for '{phrase}', got {last_call_kwargs.get('hide_rejected')}"
+
+            # Verify response text does not state that rejected applications are left out
+            resp_text = res.get("response", "")
+            assert "rejected application(s) matching this are left out" not in resp_text
+            # Expected 4 rows (2 approved + 2 rejected; 1 pending excluded)
+            assert "Found <strong>4</strong> application(s)" in resp_text or "Found 4 application(s)" in resp_text
+

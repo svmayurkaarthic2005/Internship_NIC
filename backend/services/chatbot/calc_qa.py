@@ -285,7 +285,7 @@ def answer(message: str, rows: List[dict]) -> Optional[str]:
 # list on screen ("9 of those 9 are rejected"), or to the LLM. Every figure is counted from the register rows.
 _CC_COUNT = re.compile(r"\bhow\s+many\b|\btot(?:al|l)\b|\bnumbe?r?\s+of\b|\bcounts?\b|\bsize\b|\bpercent\w*|\bpercntage\b|"
                        r"\bethana\b|\bevalo\b|\bevlo\b|எத்தனை|எவ்வளவு|டோட்டல்", re.IGNORECASE)
-_CC_NOUN = re.compile(r"\bfiles?\b|\bregister\b|\bregiste\b|\bappl?i?c?a?tions?\b|\bapplcations?\b|\baplications?\b|"
+_CC_NOUN = re.compile(r"\bfiles?\b|\brecords?\b|\bregister\b|\bregiste\b|\bappl?i?c?a?tions?\b|\bapplcations?\b|\baplications?\b|"
                       r"அப்ளிகேஷன்|அப்ளிகேசன்|விண்ணப்ப", re.IGNORECASE)
 _CC_SCOPE = re.compile(r"\bward\b|\bwarrd\b|\bblock\b|\bblook\b|\bsurvey\b|\bcsc\b|\bcitizen\b|\bsro\b|sub[\s-]?regist|"
                        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b20\d\d\b|\bthis\s+(?:month|week|year)\b|"
@@ -456,6 +456,8 @@ def code_counts(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
     pool = rows if not code else [r for r in rows if (str(r.get("service_code")) != code) == out_q]
     n = len(pool)
     r_ = sum(1 for r in pool if st(r) == "rejected")
+    a_ = sum(1 for r in pool if st(r) == "approved")
+    p_ = sum(1 for r in pool if st(r) in ("pending", "in_progress", "escalated"))
     name = (SIS_URBAN_SERVICES.get(code, {}) or {}).get("name") if code else None
     what = (f"outside {code} ({name})" if out_q else f"{code} ({name})") if code else "in your register"
     if ta:
@@ -466,7 +468,8 @@ def code_counts(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
             return f"{what_ta}: நிராகரிக்கப்படாதவை {n - r_} (மொத்தம் {n}, நிராகரிக்கப்பட்டவை {r_})."
         if rej and not (tot or incl):
             return f"{what_ta}: நிராகரிக்கப்பட்டவை {r_} (மொத்தம் {n})."
-        return f"{what_ta}: மொத்தம் {n} (நிராகரிக்கப்பட்டவை உட்பட) — நிராகரிக்கப்பட்டவை {r_}, நிராகரிக்கப்படாதவை {n - r_}."
+        return (f"{what_ta}: மொத்தம் {n} கோப்புகள் — அங்கீகரிக்கப்பட்டவை {a_}, "
+                f"நிலுவையில் உள்ளவை {p_}, நிராகரிக்கப்பட்டவை {r_}.")
     lab = what[0].upper() + what[1:] if code else "Your register"
     if pct and rej:
         return f"{lab}: {r_} of {n} files are rejected ({(100 * r_ / n if n else 0):.1f}%)."
@@ -474,7 +477,7 @@ def code_counts(text: str, rows: List[dict], ta: bool = False) -> Optional[str]:
         return f"{lab}: {n - r_} not rejected (of {n} files in total; {r_} rejected)."
     if rej and not (tot or incl):
         return f"{lab}: {r_} rejected (of {n} files in total)."
-    return f"{lab}: {n} files in total, including rejected — {r_} rejected, {n - r_} not rejected."
+    return (f"{lab}: {n} files in total — {a_} approved, {p_} pending, {r_} rejected.")
 
 
 

@@ -3381,8 +3381,16 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
     # decision reads the officer's own typed words instead of the rewritten ones.
     wants_rejected_too = wants_everything
     if _neg_scope.EXCLUDE.get():
-        wants_rejected_too = bool(re.search(
-            r"\b(?:all|every|total|new|recent|latest)\b|அனைத்து|மொத்த", (_RAW_MESSAGE.get() or "").lower()))
+        ex_data = _neg_scope.EXCLUDE.get() or {}
+        ex_status = ex_data.get("status") or set()
+        if ("pending" in ex_status or "approved" in ex_status) and "rejected" not in ex_status:
+            # The officer explicitly excluded pending applications ("show not pending applications",
+            # "other than pending", "நிலுவையில் இல்லாத"). Rejected applications are part of the
+            # non-pending set (completed/closed), so they must be included in the results rather than hidden.
+            wants_rejected_too = True
+        else:
+            wants_rejected_too = bool(re.search(
+                r"\b(?:all|every|total|new|recent|latest)\b|அனைத்து|மொத்த", (_RAW_MESSAGE.get() or "").lower()))
     if named is None:
         if re.search(r"\bhistory\b", ml):
             status = ["approved", "rejected"]
@@ -3410,7 +3418,7 @@ async def _register_listing(db, officer, message: str, session_id, chat_history,
                     and not channels and not service_code and not excluded_service_code
                     and followup_ctx is not None and followup_ctx.intent == "all_service_code_applications"):
                 _carried_status = (followup_ctx.filters or {}).get("base_query_filters", {}).get("status")
-                if _carried_status:
+                if _carried_status and _carried_status not in (_neg_scope.EXCLUDE.get() or {}).get("status", ()):
                     status = _carried_status
         else:
             status = "pending"
