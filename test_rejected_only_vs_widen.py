@@ -23,12 +23,14 @@ import sys
 
 sys.path.insert(0, r"C:\proj\nic_internship")
 from backend.services.chatbot.chat_smalltalk import _resolve_rejected_widen
+from backend.services import followup_context as fctx
 
 
 class _Ctx:
     def __init__(self, filters):
         self.filters = filters
         self.intent = "all_service_code_applications"
+        self.entity = fctx.ENTITY_APPLICATION_LIST
 
 
 def test_narrow_phrasings_narrow():
@@ -60,9 +62,34 @@ def test_non_rejected_message_untouched():
     assert _resolve_rejected_widen("show my pending applications", [], None) is None
 
 
+class _SingleAppCtx:
+    """A single application's own followup context -- its 'filters' are that
+    FILE's own field values (ward/block/channel/code), not a scope the
+    officer asked for. Must not be read as a listing scope to narrow within."""
+    def __init__(self, filters):
+        self.filters = filters
+        self.intent = "application_status"
+        self.entity = fctx.ENTITY_APPLICATION
+
+
+def test_single_app_context_not_used_as_scope():
+    ctx = _SingleAppCtx({"ward_number": "001", "block_number": "0055", "submission_channel": "CSC"})
+    out = _resolve_rejected_widen("show rejected applications", [], ctx)
+    assert out == "all pending approved rejected applications", out
+
+
+def test_bare_no_context_still_widens():
+    # Pre-existing invariant (test_sequence_d_context.py's "D1 regression
+    # guard"): with NO context at all, "show rejected applications" still
+    # widens to the literal old string -- there is nothing to narrow within.
+    assert _resolve_rejected_widen("show rejected applications", []) == "all pending approved rejected applications"
+
+
 if __name__ == "__main__":
     test_narrow_phrasings_narrow()
     test_widen_phrasings_still_widen()
     test_self_contained_request_not_rewritten()
     test_non_rejected_message_untouched()
-    print("4/4 checks passed")
+    test_single_app_context_not_used_as_scope()
+    test_bare_no_context_still_widens()
+    print("6/6 checks passed")

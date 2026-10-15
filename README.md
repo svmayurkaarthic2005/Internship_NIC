@@ -101,22 +101,6 @@ nic_internship/
 │   │   ├── pgvector_store.py, embeddings.py                  # knowledge_embeddings (RAG corpus)
 │   │   └── readonly_guard.py # enforces that a chat turn can read the register but never write it
 │   │                         # See CLAUDE.md's Project Structure for the current full breakdown.
-│   ├── sample_db/            # SISchatbot build pipeline — see backend/sample_db/README.md
-│   │   ├── seed_sample_db.py      # Creates the DB, applies DDL, generates + inserts rows
-│   │   ├── verify_sample_db.py    # Structure/refs/population/signature/non-leakage checks
-│   │   ├── build_app_tables.py    # Projects sample tables → the app's ISD/NISD ORM tables
-│   │   ├── verify_identifiers.py  # Checks every Aadhaar / CAN against identifiers.py
-│   │   ├── identifiers.py         # Aadhaar + CAN rules, shared by seed and projection
-│   │   ├── check_app_wiring.py    # Smoke test: app queries + chatbot answer from this DB
-│   │   ├── question_bank.py       # Shared question set for the suites
-│   │   └── README.md              # Source of truth for the DB layout
-│   ├── sample_db_new/        # The pipeline that actually built the LIVE SISchatbot DB:
-│   │   │                     #   adds the other ~27 service codes (F-Line, TSLR, correction/
-│   │   │                     #   modification, …) sample_db/'s own seed never covered, and
-│   │   │                     #   populates service_register_entries. Live table names drop
-│   │   │                     #   the sample_db/ "_demo" suffix.
-│   │   ├── build_app_tables_new.py   # Projects sample_db_new's CSVs → the live DB tables
-│   │   └── column_map.py             # CSV-column → DB-column mapping for that projection
 │   ├── documents/            # RAG corpus: workflow_guide.txt, faq_*.txt, survey_manual.txt
 │   └── utils/
 │       ├── fuzzy.py          # Fuzzy month/token matching for typo tolerance
@@ -182,9 +166,7 @@ Run `python -m backend.sample_db.test_intent_coverage` to verify routing without
 ### 3. Database Architecture — `SISchatbot`
 
 One PostgreSQL database (52 tables, live). Table names here are the names as they
-actually exist in the running database (`backend/sample_db_new/` built it — the
-older `backend/sample_db/` pipeline's own tables carry a `_demo` suffix the live
-ones don't).
+actually exist in the running database.
 
 **Register — every service code, one flat table.** `service_register_entries`
 (176 rows across the 11 service codes currently populated: ISD `0154`, NISD

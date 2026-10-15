@@ -2136,24 +2136,25 @@ def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None)
     if re.search(r"\bward\s*\d|\bblock\s*\d|\b(?:service\s*code\s*)?0\d{3}\b|\b(?:19|20)\d{2}\b",
                  message or "", re.IGNORECASE):
         return None
-    if _is_widen:
-        # "include rejected too" asks to ADD rejected back to whatever was
-        # already being shown, not to narrow down to ONLY rejected -- this used
-        # to rewrite straight to "rejected applications", so an officer who had
-        # just excluded rejected files was shown 24 rejected-only applications
-        # for a question that meant "show me everything, rejected included" (the
-        # whole register). Naming every register status together collapses to
-        # "no filter" in `_requested_status_filter_for_register`, the correct
-        # effect of un-excluding one of them.
-        base = "all pending approved rejected applications"
-    else:
-        # "show rejected applications" / "ask for rejected applications" is the
-        # register's own hint text after a count that hid rejected files, and it
-        # means ONLY the rejected ones -- this used to fall into the widen branch
-        # above and answer with every status (pending + approved + rejected)
-        # instead of the 2 actually rejected, because the two phrasings share the
-        # same "reject(ed) ... applications" shape and were read as one request.
-        base = "rejected applications"
+    # "include rejected too" asks to ADD rejected back to whatever was
+    # already being shown, not to narrow down to ONLY rejected -- this used
+    # to rewrite straight to "rejected applications", so an officer who had
+    # just excluded rejected files was shown 24 rejected-only applications
+    # for a question that meant "show me everything, rejected included" (the
+    # whole register). Naming every register status together collapses to
+    # "no filter" in `_requested_status_filter_for_register`, the correct
+    # effect of un-excluding one of them.
+    widen_base = "all pending approved rejected applications"
+    # "show rejected applications" / "ask for rejected applications" is the
+    # register's own hint text after a count that hid rejected files, and it
+    # means ONLY the rejected ones -- this used to fall into the widen branch
+    # above and answer with every status (pending + approved + rejected)
+    # instead of the 2 actually rejected, because the two phrasings share the
+    # same "reject(ed) ... applications" shape and were read as one request.
+    # Narrowing only makes sense when there is an actual prior scope to narrow
+    # WITHIN -- see the `_is_list_ctx` gate below; with no such scope (cold
+    # start, or a non-listing context) this still widens, same as before.
+    base = widen_base if _is_widen else "rejected applications"
     # Prefer the PREVIOUS listing's own validated filters (set alongside its
     # query_type in chat_dispatch.py / chat_dispatch_stream.py) over scraping
     # them back out of the rendered answer text -- the scrape only ever
@@ -2161,7 +2162,18 @@ def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None)
     # "include rejected too" silently widened to the WHOLE register (every
     # type, every ward) instead of keeping ISD + ward 102 and only adding
     # rejected back.
-    filters = getattr(followup_ctx, "filters", None) if followup_ctx is not None else None
+    #
+    # Only trust `filters` when the carried context is itself a LISTING
+    # (`ENTITY_APPLICATION_LIST`) -- a single application's own followup
+    # context also carries a "filters" dict, but those are THAT FILE'S field
+    # values (its own ward/block/channel/service code), not a scope the
+    # officer asked for. "<file> details" -> "show rejected applications"
+    # used to read that one file's own ward/block/channel as a filter and
+    # answer "No rejected applications ... in Ward 001 / Block 0055" --
+    # nothing to do with the register-wide rejected list the officer asked
+    # for.
+    _is_list_ctx = followup_ctx is not None and getattr(followup_ctx, "entity", None) == fctx.ENTITY_APPLICATION_LIST
+    filters = getattr(followup_ctx, "filters", None) if _is_list_ctx else None
     if filters:
         bits = []
         app_type = filters.get("application_type")
@@ -2185,9 +2197,12 @@ def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None)
         if bits:
             return f"{base} {' '.join(bits)}"
         return base
-    # No structured context (an older saved turn, or a non-listing context) --
-    # fall back to scraping the channel out of the rendered text, the only
-    # signal this ever had before the structured filters existed.
+    # No structured list context (a cold start, an older saved turn, or a
+    # non-listing context like a single application's own card) -- there is
+    # no scope to narrow WITHIN, so this always widens (adds rejected to
+    # whatever vague notion of "everything" applies), regardless of which
+    # phrasing matched. Only scrape the channel out of the rendered text, the
+    # only signal this ever had before the structured filters existed.
     last_assistant = next((
         (m.get("content") or "") if isinstance(m, dict) else str(m)
         for m in reversed(chat_history or [])
@@ -2195,9 +2210,9 @@ def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None)
     ), "")
     m = _LISTING_CHANNEL_TEXT_RE.search(last_assistant)
     if not m:
-        return base
+        return widen_base
     code = _CHANNEL_TEXT_TO_CODE.get(m.group(1).strip().lower())
-    return f"{base} from {code}" if code else base
+    return f"{widen_base} from {code}" if code else widen_base
 
 
 _QUALIFIER_LIST_INTENTS = frozenset({"pending_applications", "isd_applications", "nisd_applications",
