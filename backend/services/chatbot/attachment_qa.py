@@ -1439,6 +1439,12 @@ def targets_attachment(message: str, intent: str,
         return True
     if resolve_file_ordinal_pick(message, docs) is not None:
         return True
+    for d in docs:
+        if getattr(d, "file_ext", "") == ".csv" and getattr(d, "csv_headers", None):
+            for h in d.csv_headers:
+                h_clean = str(h).replace("_", " ").lower().strip()
+                if h_clean and (h_clean in low or re.search(rf"\b{re.escape(str(h).lower())}\b", low)):
+                    return True
     # Nothing else claimed it: `general_query` is where the pipeline would
     # otherwise hand llama3.1:8b an ungrounded prompt, which is exactly the
     # turn an attachment should take.
@@ -2420,8 +2426,8 @@ async def plan_answer(
     # the file just because a file is attached. Explicit signals -- the file's name,
     # a document word, an overview request, or a conversation already about the
     # file -- keep the grounded refusal.
-    explicit = (not topic_active) and (explicit_attachment_signal(message, docs)
-                                       or await attachment_topic_active(db, session_id))
+    explicit = bool(topic_active or explicit_attachment_signal(message, docs)
+                    or await attachment_topic_active(db, session_id))
 
     named = mentions_filename(message, docs)
     typed = typed_filenames(message)

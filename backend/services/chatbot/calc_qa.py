@@ -54,7 +54,7 @@ def _eval(node):
 def arithmetic(text: str) -> Optional[str]:
     """"47 plus 17", "78/152*100", "20 percent of 150": a sum over numbers only. None when words other than operators remain."""
     t = (text or "").lower().replace(",", "").strip(" ?=.")
-    t = re.sub(r"^(?:what\s+is|what's|whats|calculate|compute|find|tell\s+me|how\s+much\s+is|solve)\s+", "", t)
+    t = re.sub(r"^(?:what\s+(?:is|about)|what's|whats|how\s+(?:about|much\s+is)|is\s+it|calculate|compute|find|tell\s+me|can\s+you\s+(?:calculate|compute|solve|find)|solve)\s+", "", t)
     m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:%|percent|percentage)\s+of\s+(\d+(?:\.\d+)?)", t)
     if m:
         a, b = float(m.group(1)), float(m.group(2))

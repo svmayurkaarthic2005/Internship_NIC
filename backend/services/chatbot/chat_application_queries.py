@@ -3611,10 +3611,17 @@ def _asks_distinct_service_count(message: str) -> bool:
     service codes have pending files?" counts SERVICES, not applications -- a
     different question from "how many applications are pending", which
     `_is_count_only_query` already answers correctly with the application
-    total. The counted noun right after "how many" is "service(s)" / "service
-    code(s)", never "application(s)", so this never claims a genuine
-    application-count question such as "how many applications does 0158
-    have"."""
+    total.
+
+    "How many service code 0158 applications do I have?" names ONE actual
+    code right after "service code" -- that is a single-code application
+    count, not a count of codes, even though the regex alone matches it
+    (word boundary right before the digits). `find_service_codes` catches
+    that case and stands aside, leaving it to `_is_count_only_query`.
+    """
+    from backend.utils.helpers import find_service_codes
+    if find_service_codes(message):
+        return False
     return bool(_DISTINCT_SERVICE_COUNT_RE.search(message or ""))
 
 

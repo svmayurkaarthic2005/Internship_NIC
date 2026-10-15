@@ -47,9 +47,9 @@ class OfficerContext(BaseModel):
         SIS Officer -> SIS stage
         DIS Officer -> DIS stage
         SD Officer -> SD stage
-        Tahsildar / Zonal Level Tahsildar (ZDT) -> TAHSILDAR stage (CLAUDE.md's
+        Tahsildar / Zonal Deputy Tahsildar (ZDT) -> TAHSILDAR stage (CLAUDE.md's
             documented workflow-role table maps ZDT to the TAHSILDAR stage,
-            the same desk the NISD chain's Zonal Level Tahsildar sits at --
+            the same desk the NISD chain's Zonal Deputy Tahsildar sits at --
             there is no separate ZDT value in `current_stage`)
 
         An unrecognised designation (a typo, a future role this mapping has

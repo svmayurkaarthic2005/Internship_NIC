@@ -21,8 +21,10 @@ _PUSH = re.compile(
     r"that\s+can'?t\s+be\s+(?:right|true)|doesn'?t\s+look\s+right|"
     r"thapp?u|thavar?u|thappa|sariyilla|sariyalla|thirumba\s+(?:paa?r\w*|check)|marubadiyum|marupadiyum|"
     r"mari\s+check|mendum\s+check|urudhi(?:yaa|ya)?)\b"
+    r"|\b(?:(?:illa|illai)[,\s]+)?(?:apdi|appadi)\s+(?:illa|illai)\b"
     r"|\b(?:really|sure)\s*\?"
-    r"|தவறு|தப்பு|சரியில்லை|சரியல்ல|மீண்டும்\s*(?:சரி\s*பார்|பார்|சோதி)|உறுதி(?:யா)?|திரும்ப\s*(?:பார்|சரி)",
+    r"|தவறு|தப்பு|சரியில்லை|சரியல்ல|மீண்டும்\s*(?:சரி\s*பார்|பார்|சோதி)|உறுதி(?:யா)?|திரும்ப\s*(?:பார்|சரி)"
+    r"|அப்படி\s*இல்லை|இல்லை\s*அப்படி\s*இல்லை",
     re.IGNORECASE)
 _ASSERT = re.compile(
     r"\b(?:there\s+should\s+be|i\s+think\s+there\s+(?:are|is)|i\s+thought\s+there|it\s+should\s+be|must\s+be|"

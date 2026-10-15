@@ -45,6 +45,7 @@ _TANGLISH_WORDS = frozenset("""
     panichumai velaichumai kaalathaamadham niluvai niluvaiyil utpirivu kanakku
     innaiku innaikku inniki inniku innaiki innakki inraiku netru naal nal kizhamai kilamai thethi
     panradhu pannradhu seiradhu seyyarathu
+    panna thirumba kedaikkum kedaikuma kidaikkum poidum poiduma poyidum azhiyum aagum aagumaa
 """.split())
 
 # Only these distinctive words may trigger typo-based Tanglish recognition.

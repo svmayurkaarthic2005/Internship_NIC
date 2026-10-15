@@ -51,6 +51,7 @@ one ones both can code codes row rows second third fourth fifth sixth seventh ei
 ftom frm fom fro hav hve hv per r u hw mny
 aana ana en enoda ennoda enaku enakku iruku irukku irukka iruka evalo pathi patri la irunthu irundhu oda ku kku ellam ella elam vandha vantha venum pannu panni sollunga kaattunga thevai mattum ah um
 igrs tahsildar dsc zdt patta chitta deed sketch remarks litigation encroachment
+csv pdf docx doc txt upload uploaded attachment attachments document documents sheet sheets spreadsheet spreadsheets deeds sketches
 here kaattu kaami kaatu sollu enna evlo evvalavu edhu ethu yaar eppo epdi
 """.split())
 _TA = re.compile(r"[஀-௿]")

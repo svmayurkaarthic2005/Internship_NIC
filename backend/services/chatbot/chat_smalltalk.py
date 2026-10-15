@@ -135,6 +135,7 @@ from backend.utils import translit
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
 from backend.utils.fuzzy import (
+    damerau_levenshtein_distance,
     extract_month_from_text,
     extract_tokens,
     is_token_typo_match,
@@ -172,6 +173,11 @@ from .chat_shared import (
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _cb():
+    from backend.services import chatbot
+    return chatbot
 
 
 
@@ -217,7 +223,7 @@ _MUTATION_VERBS = (
 # word "application", so the object test below missed it entirely and the turn
 # fell through to the ordinary read path.
 _MUTATION_OBJECT_RE = re.compile(
-    r"\b\d{4}\s*/\s*0?\d{3,4}\s*/\s*\d{1,3}\s*/\s*\d{4,6}\b"
+    r"(?:\b|(?<=[\s_(\[]))\d{4}\s*[/_]\s*0?\d{3,4}\s*[/_]\s*\d{1,3}\s*[/_]\s*\d{4,6}(?:\b|(?=[\s_.)\]]))"
     r"|\bsurvey\s*(?:no\.?|number)?\s*\d+", re.IGNORECASE)
 
 # Things in the department's record. A mutation verb aimed at anything else
@@ -247,10 +253,23 @@ _MUTATION_OBJECTS = (
 )
 
 _POLITE_PREFIX = re.compile(
-    r"^(?:please\s+|pls\s+|kindly\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|"
-    r"i\s+want\s+you\s+to\s+|i\s+need\s+you\s+to\s+|you\s+should\s+|"
-    r"go\s+ahead\s+and\s+|now\s+)+",
+    r"^(?:(?:please|pls|plz|kindly|just|now)[,\s]+\s*"
+    r"|(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+|pls\s+|plz\s+|kindly\s+)?"
+    r"|i\s+(?:want|need)\s+you\s+to\s+"
+    r"|you\s+should\s+"
+    r"|go\s+ahead\s+and\s+)+",
     re.IGNORECASE,
+)
+
+_MUTATION_OBJ_ASCII = [obj for obj in _MUTATION_OBJECTS if all(ord(c) < 128 for c in obj)]
+_MUTATION_OBJ_TA = [obj for obj in _MUTATION_OBJECTS if any(ord(c) >= 128 for c in obj)]
+_MUTATION_OBJ_ASCII_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(o) for o in sorted(_MUTATION_OBJ_ASCII, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE
+)
+_MUTATION_OBJ_TA_RE = re.compile(
+    r"(?<![஀-௿])(?:" + "|".join(re.escape(o) for o in sorted(_MUTATION_OBJ_TA, key=len, reverse=True)) + r")",
+    re.IGNORECASE
 )
 
 
@@ -331,9 +350,12 @@ def _is_mutation_request(message: str) -> bool:
     # they change no record.
     if re.search(r"\bcolumns?\b", text):
         return False
-    # "add ward and taluk" -- column names only, no number or name of a record --
-    # is the same request without the word "column".
-    if _ADD_COLUMNS_RE.fullmatch(text):
+    # "add ward and taluk" / "remove ward" -- column names only, no number or name of a record --
+    # are presentation changes, not database mutations.
+    clean_text = text.rstrip(".!? \t")
+    if _COL_DROP_RE.fullmatch(clean_text) or _COL_DROP_RE.fullmatch(text):
+        return False
+    if _ADD_COLUMNS_RE.fullmatch(text) or _ADD_COLUMNS_RE.fullmatch(clean_text):
         return False
     if _ADD_REORDER_COLUMN_RE.match(text):
         return False
@@ -347,8 +369,9 @@ def _is_mutation_request(message: str) -> bool:
     if first in _MUTATION_VERBS and re.fullmatch(
             rf"{first}\s+(?:it|this|that|them|these|those|the\s+same|this\s+one|that\s+one)\s*[.!?]*", text):
         return True
-    return (any(obj in text for obj in _MUTATION_OBJECTS)
-            or bool(_MUTATION_OBJECT_RE.search(text)))
+    return bool(_MUTATION_OBJ_ASCII_RE.search(text)
+                or _MUTATION_OBJ_TA_RE.search(text)
+                or _MUTATION_OBJECT_RE.search(text))
 
 
 def _mutation_refusal(language: str) -> str:
@@ -404,6 +427,7 @@ _GREETING_LLM_TIMEOUT = 6.0   # a greeting never holds the officer: slower than 
 _GREETING_KIND_DESC = {
     "greeting": "greeting",
     "morning": "good-morning greeting",
+    "afternoon": "good-afternoon greeting",
     "evening": "good-evening greeting",
     "smalltalk": "friendly small-talk question",
     "thanks": "message of thanks",
@@ -416,9 +440,11 @@ def _greeting_kind(msg_lower: str, semantic_kind=None) -> str:
         return "farewell"
     if _greeting_is_thanks(msg_lower):
         return "thanks"
-    if "காலை" in msg_lower or "morning" in msg_lower:
+    if re.search(r"\b(?:good\s+)?morning\b|(?<![஀-௿])காலை(?![஀-௿])", msg_lower):
         return "morning"
-    if "மாலை" in msg_lower or "evening" in msg_lower:
+    if re.search(r"\b(?:good\s+)?afternoon\b|(?<![஀-௿])(?:மதிய(?:ம்)?|பிற்பகல்)(?![஀-௿])", msg_lower):
+        return "afternoon"
+    if re.search(r"\b(?:good\s+)?evening\b|(?<![஀-௿])மாலை(?![஀-௿])", msg_lower):
         return "evening"
     return semantic_kind or "greeting"
 
@@ -556,7 +582,7 @@ def _unidentified_number_answer(message: str, is_tamil: bool = False) -> str:
     not recognised, with the shapes it could have been. Guessing "service code"
     here is the same failure as letting the LLM answer it.
     """
-    m = re.search(r'\d{1,6}', message or "")
+    m = re.search(r'\d+', message or "")
     num = m.group(0) if m else (message or "").strip()
     from backend.utils.helpers import SIS_URBAN_SERVICES as _SUS
     _lo, _hi = min(_SUS), max(_SUS)
@@ -587,25 +613,43 @@ async def _fee_lookup_data(db, officer, message: str, is_tamil: bool = False) ->
         types.append("NISD")
     if re.search(r"(?<![a-z])isd\b|\b0154\b", low):
         types.append("ISD")
-    chans = extract_submission_channels(message)
+    chan_fn = getattr(_cb(), "extract_submission_channels", extract_submission_channels)
+    chans = chan_fn(message)
     channel = chans[0] if len(chans) == 1 else None
-    groups = []
-    for t in (types or ["ISD", "NISD"]):
-        d = (await get_recent_fees(db, officer, application_type=t, channel=channel))["fee_lookup"]
-        if d.get("total_applications"):
-            groups.append(d)
+    target_channels = chans if chans else [None]
 
     # Specific service code fee lookup from live service_fees table
-    code_match = re.search(r"\b01[5-9]\d\b", low)
-    code_fee_info = None
-    if code_match and db:
-        c_code = code_match.group(0)
-        c_fees = await get_service_code_fees(db, [c_code])
-        if c_code in c_fees:
-            code_fee_info = c_fees[c_code]
+    specific_codes = re.findall(r"\b01[5-9]\d\b", low)
+    if "f-line" in low or "f line" in low:
+        if "0178" not in specific_codes:
+            specific_codes.append("0178")
+    if "tslr" in low:
+        if "0156" not in specific_codes:
+            specific_codes.append("0156")
 
-    data = {"fee_lookup": {"groups": groups, "channel": channel,
-                           "asked_types": types, "code_fee_info": code_fee_info}, "query_type": "Recorded Fee"}
+    # If specific service codes were asked (e.g. 0158, 0167, 0178):
+    # Only query ISD/NISD application groups if the officer explicitly asked for them,
+    # or if NO specific service code was named at all.
+    target_types = types if (types or specific_codes) else ["ISD", "NISD"]
+    groups = []
+    fees_fn = getattr(_cb(), "get_recent_fees", get_recent_fees)
+    for t in target_types:
+        for ch in target_channels:
+            d = (await fees_fn(db, officer, application_type=t, channel=ch))["fee_lookup"]
+            if d.get("total_applications"):
+                groups.append(d)
+
+    code_fee_infos = []
+    if specific_codes and db:
+        c_fees = await getattr(_cb(), "get_service_code_fees", get_service_code_fees)(db, specific_codes)
+        for sc in specific_codes:
+            if sc in c_fees:
+                code_fee_infos.append(c_fees[sc])
+
+    code_fee_info = code_fee_infos[0] if len(code_fee_infos) == 1 else None
+    data = {"fee_lookup": {"groups": groups, "channel": channel, "channels": chans,
+                           "asked_types": types, "code_fee_info": code_fee_info,
+                           "code_fee_infos": code_fee_infos}, "query_type": "Recorded Fee"}
     data["fee_lookup"]["summary"] = _fee_lookup_text(data, is_tamil)
     return data
 
@@ -615,33 +659,40 @@ def _fee_lookup_text(structured_data, is_tamil: bool = False) -> str:
     fl = (structured_data or {}).get("fee_lookup", {})
     groups = fl.get("groups", [])
     who = fl.get("channel")
-    code_fee = fl.get("code_fee_info")
+    code_fees = fl.get("code_fee_infos") or ([fl["code_fee_info"]] if fl.get("code_fee_info") else [])
     lines = []
 
-    if code_fee:
+    for code_fee in code_fees:
         c_name = code_fee.get("service_name", "")
         c_sc = code_fee.get("service_code", "")
         c_disp = code_fee.get("fee_display", "")
         c_total = code_fee.get("total_fee", "")
         c_sla = code_fee.get("sla_days_ta" if is_tamil else "sla_days", "")
         if is_tamil:
-            lines.append(f"சேவை {c_sc} ({c_name}): தரவுத்தளத்தின்படி சட்டப்பூர்வ கட்டணம் {c_disp} (மொத்தம் {c_total}), SLA கால அளவு {c_sla}.")
+            lines.append(f"சேவை {c_sc} ({c_name}): சட்டப்பூர்வ கட்டண அட்டவணையின்படி கட்டணம் {c_disp} (மொத்தம் {c_total}), SLA கால அளவு {c_sla}.")
         else:
-            lines.append(f"Service {c_sc} ({c_name}): Statutory fee as recorded in database (`service_fees` table) is {c_disp} (Total {c_total}), SLA {c_sla}.")
+            lines.append(f"Service {c_sc} ({c_name}): Statutory fee as recorded in departmental rules is {c_disp} (Total {c_total}), SLA {c_sla}.")
 
-    if not groups and not code_fee:
+    if not groups and not code_fees:
         return ("உங்கள் அதிகார எல்லையில் பொருந்தும் விண்ணப்பங்கள் இல்லை, எனவே பதிவான கட்டணம் இல்லை."
                 if is_tamil else
                 "No matching applications in your jurisdiction, so no fee is on record.")
 
     for g in groups:
-        name = g["application_type"] + (f" ({who})" if who else "")
-        if not g["latest"]:
+        g_chan = g.get("channel") or who
+        name = g["application_type"] + (f" ({g_chan})" if g_chan else "")
+        if not g.get("latest"):
             lines.append(
                 (f"{name}: எந்த விண்ணப்பத்திலும் கட்டணம் பதிவாகவில்லை." if is_tamil
-                 else f"{name}: none of the {g['total_applications']} application(s) has a fee recorded."))
+                 else f"{name}: none of the {g.get('total_applications', 0)} application(s) has a fee recorded."))
             continue
-        vals = sorted({x["fee_amount"] for x in g["latest"]})
+        valid_amts = [x["fee_amount"] for x in g["latest"] if x.get("fee_amount") is not None]
+        if not valid_amts:
+            lines.append(
+                (f"{name}: பதிவேட்டில் கட்டண விவரம் கிடைக்கவில்லை." if is_tamil
+                 else f"{name}: fee amount is not available in the records."))
+            continue
+        vals = sorted(set(valid_amts))
         amt = ", ".join(f"\u20b9{v:,.2f}" for v in vals)
         newest = g["latest"][0]
         if is_tamil:
@@ -825,10 +876,29 @@ def _contentless_reply(kind: str, language: str, message: str = "", chat_history
     # exists here), so the honest reply says so and asks them to repeat it,
     # rather than either inventing an answer or denying the question existed.
     word = (message or "").strip().strip(_TRIM_CHARS).strip().lower()
+    norm_word = re.sub(r"\s+", " ", re.sub(r"[^\w\s\u0B80-\u0BFF]", " ", (message or "").lower())).strip()
+    _DISPUTE_WORDS = frozenset({
+        "apdi illa", "appadi illa", "illa apdi illa", "illai appadi illa",
+        "அப்படி இல்லை", "இல்லை அப்படி இல்லை"
+    })
+    is_dispute = (norm_word in _DISPUTE_WORDS or word in _DISPUTE_WORDS
+                  or bool(re.search(r"\b(?:apdi|appadi)\s+(?:illa|illai)\b|அப்படி\s*இல்லை", norm_word)))
     last_was_question = bool(chat_history) and isinstance(chat_history[-1], dict) \
         and str(chat_history[-1].get("role", "")).lower() in ("assistant", "ai", "bot") \
         and _ends_with_question(chat_history[-1].get("content", ""))
-    if word in _NO_WORDS:
+
+    if is_dispute:
+        has_assistant_msg = bool(chat_history and any(
+            isinstance(m, dict) and str(m.get("role", "")).lower() in ("assistant", "ai", "bot")
+            for m in chat_history
+        ))
+        if has_assistant_msg:
+            return ("மன்னிக்கவும். முந்தைய பதிலில் எது தவறு அல்லது எதை மாற்ற வேண்டும் என்று சொல்லுங்கள் — சரிபார்க்கிறேன்." if is_tamil
+                    else "Sorry about that. Please specify what was incorrect or what you'd like me to check, and I will re-verify.")
+        return ("எந்த விவரத்தை சரிபார்க்க வேண்டும் என்று சொல்லுங்கள் (விண்ணப்ப எண் அல்லது கேள்வி) — பதிவேட்டில் பார்க்கிறேன்." if is_tamil
+                else "Please tell me which detail or application number you would like me to check.")
+
+    if word in _NO_WORDS or norm_word in _NO_WORDS:
         if last_was_question:
             return ("பதிவு செய்யப்பட்டது, ஆனால் முந்தைய கேள்வி என் கைவசம் இல்லை. எதை விரும்புகிறீர்கள் என்று மீண்டும் தெளிவாகக் கேளுங்கள்." if is_tamil
                     else "Noted, but I don't have the earlier question in view to act on a plain \"no\" -- please ask again, naming what you'd like me to check.")
@@ -868,7 +938,7 @@ _OUT_OF_SCOPE_CUES = (
     "carry an umbrella", "will it be sunny", "is it cold today",
     "weather update", "weather report",
     # Sports & entertainment results
-    "cricket", "football", "match score", "who won", "ipl", "world cup",
+    "cricket", "football", "match score", "who won", "world cup",
     "which team won", "who scored the most runs", "football match result",
     "ipl season", "cricket schedule", "match score now",
     # Food & cooking
@@ -939,7 +1009,26 @@ _OUT_OF_SCOPE_CUES = (
 _BARE_ARITHMETIC_RE = re.compile(r'\d+\s*\+\s*\d+|\d+\s*(?:x|\*|times|plus|minus|multiplied\s+by|divided\s+by)\s*\d+', re.IGNORECASE)
 
 
-def _is_out_of_scope(message: str) -> bool:
+_PLOT_CALC_WORDS = frozenset({
+    "plot", "area", "dimension", "dimensions", "extent", "sqft", "sq ft", "sq m", "sqm",
+    "meter", "metre", "cent", "cents", "acre", "acres", "fmb", "survey", "subdivision",
+    "breadth", "length", "width", "boundary", "நிலம்", "பரப்பளவு", "அளவு", "கணக்கீடு", "நீளம்", "அகலம்"
+})
+
+
+def _has_plot_calculation_context(chat_history: Optional[List[dict]]) -> bool:
+    if not chat_history:
+        return False
+    for turn in reversed(chat_history[-4:]):
+        for text in (turn.get("user_message", ""), turn.get("assistant_message", ""),
+                     turn.get("content", ""), turn.get("message", "")):
+            low = (text or "").lower()
+            if any(w in low for w in _PLOT_CALC_WORDS):
+                return True
+    return False
+
+
+def _is_out_of_scope(message: str, chat_history: Optional[List[dict]] = None) -> bool:
     m = (message or "").lower()
     if not m.strip():
         return False
@@ -949,6 +1038,10 @@ def _is_out_of_scope(message: str) -> bool:
     # literal cues above require. Only "+" -- "-" and "/" collide with survey
     # references (5/4A) and date ranges too often to trust as arithmetic.
     if _BARE_ARITHMETIC_RE.search(m):
+        if chat_history and _has_plot_calculation_context(chat_history):
+            return False
+        return True
+    if re.search(r"\bipl\b", m):
         return True
     return any(c in m for c in _OUT_OF_SCOPE_CUES)
 
@@ -1032,7 +1125,7 @@ _KEYBOARD_MASH = ("asdf", "sdfg", "dfgh", "fghj", "ghjk", "hjkl", "qwer", "wert"
                   "jhgf", "lkjh", "poiu", "mnbv")
 _FORECAST_RE = re.compile(
     r"\b(?:predict|predicted|prediction|forecast|projection|projected)\b"
-    r"|\bwill\s+(?:come|arrive|be\s+(?:received|filed|submitted|approved|rejected|completed|decided|overdue|pending))\b"
+    r"|\bwill\s+(?:(?:[\w\s]{1,30}?\s+)?be\s+(?:received|filed|submitted|approved|rejected|completed|decided|overdue|pending)|come|arrive)\b"
     r"|\bgoing\s+to\s+(?:come|arrive)\b|\bexpected\s+(?:applications|workload|load)\b",
     re.IGNORECASE)
 _VAGUE_ALL_RE = re.compile(
@@ -1043,17 +1136,26 @@ _HELP_WORDS = frozenset({"help", "help me", "help please", "please help", "menu"
                          "commands", "what now", "start", "?", "hi help", "need help"})
 
 
+_DOMAIN_ACRONYMS = frozenset({
+    "tslr", "dtcp", "hqdt", "zdt", "dro", "dis", "sis", "fmb", "dsc", "sro", "csc", "igrs", "isd", "nisd", "can"
+})
+
+
 def _is_gibberish(message: str) -> bool:
     text = message or ""
     if re.search(r"\d|[^\x00-\x7F]", text):
         return False
     words = re.findall(r"[A-Za-z]+", text)
+    if any(w.lower() in _DOMAIN_ACRONYMS for w in words):
+        return False
     long_words = [w for w in words if len(w) >= 3]
     if not long_words or not any(len(w) >= 4 for w in long_words):
         return False
 
     def mash(w: str) -> bool:
         lw = w.lower()
+        if lw in _DOMAIN_ACRONYMS:
+            return False
         if len(lw) < 4:
             return False
         if any(k in lw for k in _KEYBOARD_MASH):
@@ -1070,7 +1172,8 @@ def _unknown_message_kind(message: str):
     if not text:
         return None
     low = text.lower()
-    if _UNSUPPORTED_SCRIPT_RE.search(text):
+    text_no_danda = re.sub(r"[\u0964\u0965]", "", text)
+    if _UNSUPPORTED_SCRIPT_RE.search(text_no_danda):
         return "script"
     if low.rstrip("?!. ") in _HELP_WORDS:
         return "help"
@@ -1086,7 +1189,14 @@ def _unknown_message_kind(message: str):
                           r"work\s+aagala|process\s+aagala|enna\s+panradhu|enna\s+pannalam)\b", low)):
         return "bare_ref"
     if _FORECAST_RE.search(text) and not re.search(r"\d{4}/\d{3,4}/", text):
-        return "forecast"
+        # Technical land survey map projections (Cassini, polyconic, etc.) are not forecasts
+        if re.search(r"\b(?:map|survey|land|cadastral|cassini|polyconic|mercator|coordinate)\s+projection\b|\bprojection\s+(?:system|method|type|formula)\b", low):
+            pass
+        # Questions asking how/when applications are approved or completed as general process/SLA are not predictions
+        elif re.search(r"^\s*(?:how|when)\s+will\b", low) and re.search(r"\b(?:approved|completed|decided)\b", low):
+            pass
+        else:
+            return "forecast"
     return None
 
 
@@ -1144,31 +1254,73 @@ _OTHER_OFFICER_RE = re.compile(
     r"\b(?:all|other|every|another|different|both)\s+(?:the\s+)?(?:sis\s+)?officers?\b"
     r"|\bcompare\s+(?:me|my\s+\w+)\s+(?:with|to|against)\b"
     r"|\bofficer[\s-]*wise\b|\bofficers?\s+comparison\b|\b(?:other|another)\s+sis\b"
-    r"|\bby\s+(?:mr|mrs|ms|dr|shri|thiru|smt|sri)\.?\s+\w+"
+    r"|\b(?:by|for|of|handled\s+by)\s+(?:officer|surveyor|sis)\s+\w+"
     r"|மற்ற\s+அதிகாரி|எல்லா\s+அதிகாரி|மற்ற\s+ஊழியர்",
     re.IGNORECASE)
 
 
 def _is_other_officer_request(message: str) -> bool:
-    return bool(_OTHER_OFFICER_RE.search(message or ""))
+    text = message or ""
+    # Citizen, applicant, owner, or deed party actions are not other officer requests
+    if re.search(r"\b(?:submitted|filed|applied|executed|signed|sold|bought|owned)\s+by\b|\b(?:applicant|citizen|owner|vendor|buyer|deed|patta)\b", text, re.IGNORECASE):
+        return False
+    if re.search(r"\b(?:thiru|smt|sri|mr|mrs|miss|dr)\s+[a-z]+", text, re.IGNORECASE) and not re.search(r"\b(?:officer|surveyor|sis)\b", text, re.IGNORECASE):
+        return False
+    return bool(_OTHER_OFFICER_RE.search(text))
 
 
 _DAY_MONTH_RE = re.compile(
     r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s*,?\s*((?:19|20)\d{2}))?\b",
     re.IGNORECASE)
+_MONTH_DAY_RE = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*((?:19|20)\d{2}))?\b",
+    re.IGNORECASE)
+_ISO_DATE_RE = re.compile(
+    r"\b((?:19|20)\d{2})[-/](\d{1,2})[-/](\d{1,2})\b")
 _DAYS_IN_MONTH = {"jan": 31, "feb": 29, "mar": 31, "apr": 30, "may": 31, "jun": 30,
                   "jul": 31, "aug": 31, "sep": 30, "oct": 31, "nov": 30, "dec": 31}
 
 
 def _invalid_calendar_date(message: str):
     """("31", "February") for a day that month never has, else None."""
-    for m in _DAY_MONTH_RE.finditer(message or ""):
-        day, mon, year = int(m.group(1)), m.group(2).lower(), m.group(3)
-        limit = _DAYS_IN_MONTH[mon]
-        if mon == "feb" and year and calendar.monthrange(int(year), 2)[1] == 28:
-            limit = 28
+    msg = message or ""
+    # Day-Month: "31st February 2025", "31 Feb"
+    for m in _DAY_MONTH_RE.finditer(msg):
+        day, mon, year = int(m.group(1)), m.group(2).lower()[:3], m.group(3)
+        limit = _DAYS_IN_MONTH.get(mon, 31)
+        if mon == "feb" and year:
+            limit = calendar.monthrange(int(year), 2)[1]
+        elif mon == "feb" and not year:
+            limit = 29
         if day < 1 or day > limit:
-            return m.group(1), calendar.month_name[list(_DAYS_IN_MONTH).index(mon) + 1]
+            month_idx = list(_DAYS_IN_MONTH).index(mon) + 1
+            return m.group(1), calendar.month_name[month_idx]
+
+    # Month-Day: "February 31, 2025" or "April 31"
+    for m in _MONTH_DAY_RE.finditer(msg):
+        mon, day, year = m.group(1).lower()[:3], int(m.group(2)), m.group(3)
+        limit = _DAYS_IN_MONTH.get(mon, 31)
+        if mon == "feb" and year:
+            limit = calendar.monthrange(int(year), 2)[1]
+        elif mon == "feb" and not year:
+            limit = 29
+        if day < 1 or day > limit:
+            month_idx = list(_DAYS_IN_MONTH).index(mon) + 1
+            return str(day), calendar.month_name[month_idx]
+
+    # ISO date: "2026-02-29" or "2025/04/31"
+    for m in _ISO_DATE_RE.finditer(msg):
+        span = m.span()
+        if span[0] > 0 and msg[span[0]-1] == '/':
+            continue
+        if span[1] < len(msg) and msg[span[1]] == '/':
+            continue
+        year, month_num, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= month_num <= 12:
+            limit = calendar.monthrange(year, month_num)[1]
+            if day < 1 or day > limit:
+                return str(day), calendar.month_name[month_num]
+
     return None
 
 
@@ -1227,7 +1379,7 @@ async def _dc_special(db, officer, message: str, matched_dist, language: str):
         d_code = matched_dist[1] if matched_dist else None
         if not d_code:
             m = _DISTRICT_NAME_RE.search((getattr(officer, "jurisdiction_name", "") or "").lower())
-            d_code = DISTRICT_NAME_MAP[m.group(1).lower()] if m else None
+            d_code = DISTRICT_NAME_MAP.get(m.group(1).lower()) if m else None
         if not d_code:
             from backend.models import Ward, Town, Taluk, District
             d_code = (await db.execute(
@@ -1237,8 +1389,16 @@ async def _dc_special(db, officer, message: str, matched_dist, language: str):
                 .where(Ward.id.in_(officer.jurisdiction_ids)).limit(1))).scalar()
         if not d_code:
             return None
-        rows = (await db.execute(text("SELECT taluk_code, taluk_ename FROM taluk WHERE district_code = :d ORDER BY taluk_code"),
-                                 {"d": d_code})).all()
+        try:
+            rows = (await db.execute(text("SELECT taluk_code, taluk_ename FROM taluk WHERE district_code = :d ORDER BY taluk_code"),
+                                     {"d": d_code})).all()
+        except Exception:
+            from backend.models import Taluk, District
+            res = (await db.execute(
+                select(Taluk.taluk_code, Taluk.taluk_name).join(District, Taluk.district_id == District.id)
+                .where(District.district_code == d_code).order_by(Taluk.taluk_code)
+            )).all()
+            rows = [(r[0], r[1]) for r in res]
         if not rows:
             return None
         listing = "; ".join(f"{c} = {re.sub(r'--.*$', '', n or '').strip()}" for c, n in rows)
@@ -1251,7 +1411,7 @@ async def _dc_special(db, officer, message: str, matched_dist, language: str):
         return ("மாவட்ட குறியீடுகள்: " if is_ta else "District codes: ") + listing + "."
     if re.search(r"\bdistrict\s+code\b|மாவட்ட\s*குறியீடு", low):
         m = _DISTRICT_NAME_RE.search((getattr(officer, "jurisdiction_name", "") or "").lower())
-        code = DISTRICT_NAME_MAP[m.group(1).lower()] if m else None
+        code = DISTRICT_NAME_MAP.get(m.group(1).lower()) if m else None
         if not code:
             from backend.models import Ward, Town, Taluk, District
             code = (await db.execute(
@@ -1277,12 +1437,14 @@ def _opinion_reply(language: str) -> str:
 
 _ASSISTANT_IDENTITY_RE = re.compile(
     r"\b(?:what(?:'s|\s+is|s)?\s+(?:your|ur|yr)\s+(?:name|role|job|purpose|function|work|use|task)"
+    r"|who\s+(?:are|r)\s+(?:you|u)(?!\s+(?:showing|comparing|counting|reading|doing|filtering|listing|calculating|using|referring))\b"
     r"|who\s+(?:made|created|built|developed|trained|designed|owns|programmed)\s+(?:you|u)\b"
     r"|who\s+(?:is|are)\s+(?:your|ur)\s+(?:creator|developer|owner|maker)"
     r"|(?:which|what)\s+(?:(?:llm|ai|language)\s+)?(?:model|llm|ai|gpt|engine|technology|company)\s+(?:are|r|is|does|do)\s+(?:you|u|this|used|using|powers?|behind|running)"
     r"|(?:which|what)\s+(?:llm|ai)\b.*\b(?:use|using|used|powers?|behind)\b|\bwhat\s+(?:powers|runs)\s+you\b"
     r"|(?:are|r)\s+(?:you|u)\s+(?:chat\s*gpt|gpt|gemini|claude|llama|openai|real|human|a\s+human|a\s+person|a\s+robot)"
-    r"|what\s+(?:are|r)\s+(?:you|u)\b|(?:tell\s+me\s+)?about\s+(?:yourself|urself)|introduce\s+yourself"
+    r"|what\s+(?:are|r)\s+(?:you|u)(?!\s+(?:showing|comparing|counting|reading|doing|filtering|listing|calculating|using|referring))\b"
+    r"|(?:tell\s+me\s+)?about\s+(?:yourself|urself)|introduce\s+yourself"
     r"|what\s+should\s+i\s+call\s+you|உன்\s+பெயர்|உங்கள்\s+பெயர்|நீ\s+யார்|உன்\s+வேலை|உங்கள்\s+வேலை"
     r"|\b(?:un|unga|ungal|onn?oda)\s+(?:peyar|per|name|role|velai)\b|\bnee\s+(?:yaaru|yaru|enna\s+panra)\b)",
     re.IGNORECASE)
@@ -1320,12 +1482,25 @@ def _age_sla_answer(app_no: str, sd: dict, today, is_tamil: bool) -> str:
     """How long a file has been open, against the field-visit deadline and the
     type's own service SLA -- each named as what it is (see backend/utils/sla.py)."""
     from backend.utils import sla
-    sub = date.fromisoformat(str(sd.get("submission_date"))[:10])
-    fv = sd.get("field_visit") or {}
+    sub_raw = (sd or {}).get("submission_date")
+    sub = None
+    if sub_raw:
+        try:
+            sub = date.fromisoformat(str(sub_raw)[:10])
+        except (ValueError, TypeError):
+            sub = None
+    if not sub:
+        return (f"{app_no}-ன் சமர்ப்பிப்பு தேதி பதிவேட்டில் இல்லை, எனவே வயது மற்றும் SLA கணக்கிட முடியாது."
+                if is_tamil else
+                f"{app_no} has no submission date recorded, so its age and SLA status cannot be calculated.")
+    fv = (sd or {}).get("field_visit") or {}
     done = None
     if str(fv.get("status", "")).lower() == "completed" and fv.get("scheduled_date"):
-        done = date.fromisoformat(str(fv["scheduled_date"])[:10])
-    return sla.age_statement(app_no, sd.get("type"), str(sd.get("status", "")).lower(), sub, today, done, is_tamil)
+        try:
+            done = date.fromisoformat(str(fv["scheduled_date"])[:10])
+        except (ValueError, TypeError):
+            done = None
+    return sla.age_statement(app_no, (sd or {}).get("type"), str((sd or {}).get("status", "")).lower(), sub, today, done, is_tamil)
 
 
 # The canonical workflow_history answer for an ISD/NISD application -- the register-only path
@@ -1336,58 +1511,134 @@ def _age_sla_answer(app_no: str, sd: dict, today, is_tamil: bool) -> str:
 _WFH_STAGE_LABELS = {"SIS": "SIS (Sub Inspector Surveyor)", "SD": "SD (Senior Draughtsman)",
                       "DIS": "DIS (Deputy Inspector Surveyor)", "TAHSILDAR": "Tahsildar",
                       "COMPLETED": "Completed", "REJECTED": "Rejected"}
-_WFH_STAGE_ALIASES = {"sis": "SIS", "sub inspector": "SIS", "surveyor": "SIS", "sd": "SD",
-                       "senior draughtsman": "SD", "draughtsman": "SD", "dis": "DIS",
-                       "deputy inspector": "DIS", "tahsildar": "TAHSILDAR", "zdt": "TAHSILDAR",
-                       "zonal deputy tahsildar": "TAHSILDAR", "zonal level tahsildar": "TAHSILDAR",
-                       "deputy tahsildar": "TAHSILDAR",
-                       "completed": "COMPLETED", "complete": "COMPLETED",
-                       "rejected": "REJECTED", "reject": "REJECTED"}
+_WFH_STAGE_ALIASES = {
+    # Full titles and specific multi-word names first
+    "deputy inspector surveyor": "DIS",
+    "sub inspector surveyor": "SIS",
+    "zonal deputy tahsildar": "TAHSILDAR",
+    "zonal level tahsildar": "TAHSILDAR",
+    "senior draughtsman": "SD",
+    "deputy tahsildar": "TAHSILDAR",
+    "sub inspector": "SIS",
+    "deputy inspector": "DIS",
+    "draughtsman": "SD",
+    "tahsildar": "TAHSILDAR",
+    "surveyor": "SIS",
+    "dis": "DIS",
+    "sis": "SIS",
+    "zdt": "TAHSILDAR",
+    "sd": "SD",
+    "completed": "COMPLETED", "complete": "COMPLETED",
+    "rejected": "REJECTED", "reject": "REJECTED",
+    # Tamil variants
+    "துணை ஆய்வாளர்": "DIS",
+    "துணை ஆய்வு சர்வேயர்": "DIS",
+    "உதவி ஆய்வாளர்": "SIS",
+    "நில அளவையர்": "SIS",
+    "மூத்த வரைவாளர்": "SD",
+    "வரைவாளர்": "SD",
+    "வலய தாசில்தார்": "TAHSILDAR",
+    "மண்டல துணை வட்டாட்சியர்": "TAHSILDAR",
+    "துணை வட்டாட்சியர்": "TAHSILDAR",
+    "வட்டாட்சியர்": "TAHSILDAR",
+    "தாசில்தார்": "TAHSILDAR",
+    "இசட்டிடி": "TAHSILDAR",
+    "எஸ்ஐஎஸ்": "SIS",
+    "டிஐஎஸ்": "DIS",
+    "எஸ்டி": "SD",
+}
 # Ordered narrowest-first so "final workflow transition" isn't swallowed by a looser cue, and so
 # this gate only opens for genuinely workflow-shaped questions -- a bare "transition" or
 # "verification" elsewhere in the message must never land here or in an unrelated service handler.
-_WFH_COUNT_RE = re.compile(r"\bhow\s+many\s+workflow\s+(?:entr\w+|events?|actions?|steps?)\b|"
-                           r"\bworkflow\s+(?:entr\w+|events?|actions?|steps?)\s+(?:exist|are\s+there)\b|"
-                           r"\bnumber\s+of\s+workflow\s+(?:entr\w+|events?|actions?|steps?)\b|"
-                           r"\bworkflow\s+(?:entr\w+|events?|actions?|steps?)\s+count\b", re.I)
-_WFH_FIRST_RE = re.compile(r"\bfirst\s+workflow\s+(?:action|transition)\b|\bfirst\s+transition\b", re.I)
-_WFH_WHO_RE = re.compile(r"\bwho\s+(?:performed|did|made|took|handled)\b.{0,25}\b(?:action|workflow)\b|"
-                         r"\bwhich\s+desk\s+(?:performed|did|handled)\b", re.I)
-_WFH_REMARK_RE = re.compile(r"\b(?:latest|last)\s+workflow\s+remark\b|\bworkflow\s+remark\b", re.I)
+_WFH_COUNT_RE = re.compile(
+    r"\bhow\s+many\s+workflow\s+(?:entr\w+|events?|actions?|steps?)\b|"
+    r"\bworkflow\s+(?:entr\w+|events?|actions?|steps?)\s+(?:exist|are\s+there)\b|"
+    r"\bnumber\s+of\s+workflow\s+(?:entr\w+|events?|actions?|steps?)\b|"
+    r"\bworkflow\s+(?:entr\w+|events?|actions?|steps?)\s+count\b|"
+    r"\bethan[a-z]*\s+(?:workflow\s+)?(?:actions?|entries|events?|steps?)\b|"
+    r"எத்தனை\s+பணிப்பாய்வு\s*(?:பதிவ\w*|நடவடிக்கை\w*)|பணிப்பாய்வு\s*பதிவுகளின்\s*எண்ணிக்கை",
+    re.I)
+_WFH_FIRST_WHO_RE = re.compile(
+    r"\bwho\s+(?:performed|did|made|took|handled)\b.{0,30}\bfirst\b|"
+    r"\bwhich\s+desk\s+(?:performed|did|handled)\b.{0,30}\bfirst\b|"
+    r"\bmudhal\s+action\s+(?:yaaru|yaar|ethu)\b|"
+    r"முதல்\s+நடவடிக்கை[^\s]*\s+யார்|யார்\s+முதல்\s+நடவடிக்கை",
+    re.I)
+_WFH_FIRST_WHEN_RE = re.compile(
+    r"\bwhen\s+(?:did\s+)?(?:the\s+)?first\s+(?:workflow\s+)?(?:action|transition)\b|"
+    r"\bwhen\s+(?:did\s+)?(?:it\s+)?first\s+(?:move|start|happen)\b|"
+    r"\bmudhal\s+action\s+eppo\b|"
+    r"முதல்\s+நடவடிக்கை\w*\s+எப்போது\s*(?:நடந்தது|தொடங்கியது)?",
+    re.I)
+_WFH_FIRST_WHAT_RE = re.compile(
+    r"\bwhat\s+(?:was\s+)?(?:the\s+)?first\s+(?:workflow\s+)?(?:action|transition)\b|"
+    r"\bwhat\s+happened\s+first\b|\bfirst\s+workflow\s+(?:action|transition)\b|\bfirst\s+transition\b|"
+    r"\bmudhal\s+(?:workflow\s+)?action\s+enna\b|\bfirst\s+action\s+enna\b|"
+    r"முதல்\s+பணிப்பாய்வு\s*நடவடிக்கை\w*|முதல்\s+நடவடிக்கை\s+என்ன",
+    re.I)
+_WFH_WHO_RE = re.compile(
+    r"\bwho\s+(?:performed|did|made|took|handled)\b.{0,25}\b(?:action|workflow)\b|"
+    r"\bwhich\s+desk\s+(?:performed|did|handled)\b|"
+    r"\b(?:yaaru|yaar)\s+(?:action\s+)?(?:pannadhu|pannanga|seithadhu)\b|"
+    r"யார்\s+(?:செய்தது|செய்தார்கள்|நடவடிக்கை\s+எடுத்தது)|எந்த\s+மேசை\s+செய்தது",
+    re.I)
+_WFH_REMARK_RE = re.compile(
+    r"\b(?:latest|last)\s+workflow\s+remark\b|\bworkflow\s+remark\b|"
+    r"\bkadaisi\s+(?:workflow\s+)?remark\b|\blatest\s+remark\b|"
+    r"கடைசி\s*(?:பணிப்பாய்வு\s*)?குறிப்பு|இறுதி\s*குறிப்பு",
+    re.I)
 _WFH_RECOMMEND_RE = re.compile(r"\bsis\s+recommendation\b|\brecommendation\s+record\w*\b|\brecommendation\s+for\b", re.I)
 _WFH_BEFORE_RE = re.compile(r"\b(?:action|stage|transition)\b.{0,15}\bimmediately\s+before\b|"
                             r"\bimmediately\s+before\s+the\s+current\s+stage\b|\bbefore\s+the\s+current\s+stage\b", re.I)
-_WFH_AFTER_RE = re.compile(r"\b(?:action|stage|transition)\b.{0,15}\bimmediately\s+after\b|\bimmediately\s+after\s+\w+\b", re.I)
-_WFH_FINAL_RE = re.compile(r"\bfinal\s+workflow\s+transition\b|\bfinal\s+transition\b|\blast\s+transition\b", re.I)
-_WFH_LATEST_RE = re.compile(r"\blatest\s+workflow\s+action\b|\bmost\s+recent\s+workflow\s+action\b|"
-                            r"\blast\s+workflow\s+action\b|\bmost\s+recent\s+workflow\s+transition\b|"
-                            # Bare "what was the latest/last/most recent action?" with no
-                            # "workflow" -- a follow-up inside a conversation that has already
-                            # opened on this file's workflow history (the only context in which
-                            # this function is reached at all; see _WFH_CUE below). Without this,
-                            # the bare follow-up form fell through to a generic "could not find
-                            # that particular detail" card.
-                            r"\b(?:latest|last|most\s+recent)\s+action\b", re.I)
-_WFH_TRANSITION_FROM_RE = re.compile(r"\bmoved?\s+from\s+\w+(?:\s+\w+)?\s+to\s+(?:another\s+stage|\w+)\b", re.I)
+_WFH_AFTER_RE = re.compile(r"\b(?:action|stage|transition|what\s+happened)\b.{0,25}\b(?:immediately\s+)?after\b|"
+                           r"\b(?:immediately\s+)?after\s+[a-z\u0B80-\u0BFF]+", re.I)
+_WFH_FINAL_RE = re.compile(
+    r"\bfinal\s+workflow\s+transition\b|\bfinal\s+transition\b|\blast\s+transition\b|"
+    r"\bkadaisi\s+transition\b|\birudhi\s+transition\b|"
+    r"இறுதி\s*பணிப்பாய்வு\s*மாற்றம்|கடைசி\s*மாற்றம்",
+    re.I)
+_WFH_LATEST_RE = re.compile(
+    r"\blatest\s+workflow\s+action\b|\bmost\s+recent\s+workflow\s+action\b|"
+    r"\blast\s+workflow\s+action\b|\bmost\s+recent\s+workflow\s+transition\b|"
+    r"\b(?:latest|last|most\s+recent)\s+action\b|"
+    r"\bkadaisi\s+(?:workflow\s+)?action\b|\blatest\s+action\b|"
+    r"கடைசி\s*(?:பணிப்பாய்வு\s*)?நடவடிக்கை|இறுதி\s*நடவடிக்கை",
+    re.I)
+_WFH_TRANSITION_FROM_RE = re.compile(r"\bmoved?\s+from\s+[a-z\s\u0B80-\u0BFF]+(?:\s+[a-z\s\u0B80-\u0BFF]+)?\s+to\s+(?:another\s+stage|[a-z\s\u0B80-\u0BFF]+)\b", re.I)
 _WFH_REACHED_DATE_RE = re.compile(r"\breach(?:ed)?\s+(?:its\s+|the\s+)?current\s+stage\b", re.I)
 _WFH_CUE = re.compile(
     r"\bworkflow\s+(?:action|entr\w+|event\w*|remark|transition|history)\b|\bfinal\s+(?:workflow\s+)?transition\b|"
-    r"\bfirst\s+(?:workflow\s+)?transition\b|\bimmediately\s+(?:before|after)\b|"
-    r"\bmoved?\s+from\s+\w+(?:\s+\w+)?\s+to\b|\bsis\s+recommendation\b|\brecommendation\s+record\w*\b|"
+    r"\bfirst\s+(?:workflow\s+)?(?:transition|action)\b|\b(?:immediately\s+)?(?:before|after)\b|"
+    r"\bmoved?\s+from\s+[a-z\s\u0B80-\u0BFF]+(?:\s+[a-z\s\u0B80-\u0BFF]+)?\s+to\b|\bsis\s+recommendation\b|\brecommendation\s+record\w*\b|"
     r"\breach(?:ed)?\s+(?:its\s+|the\s+)?current\s+stage\b|"
-    r"\bwho\s+(?:performed|did|made|took|handled)\b.{0,25}\b(?:action|workflow)\b|"
-    # Bare "latest/last/most recent action" -- see _WFH_LATEST_RE above for why this is
-    # safe to open the gate for: it is only ever reached once application_status has
-    # already resolved one file, so "action" here always means a workflow step.
-    r"\b(?:latest|last|most\s+recent)\s+action\b", re.I)
+    r"\bwho\s+(?:performed|did|made|took|handled)\b.{0,30}\b(?:action|workflow|first|last|recent)\b|"
+    r"\bwhich\s+desk\s+(?:performed|did|handled)\b|"
+    r"\bwhat\s+happened\s+(?:first|after)\b|"
+    r"\bwhen\s+(?:did\s+)?(?:the\s+)?first\b|"
+    r"\b(?:first|latest|last|most\s+recent)\s+action\b|"
+    r"\b(?:mudhal|kadaisi|irudhi)\s+action\b|"
+    r"பணிப்பாய்வு\s*(?:வரலாறு|பதிவு|நடவடிக்கை|மாற்றம்|குறிப்பு)?|"
+    r"முதல்\s*நடவடிக்கை|கடைசி\s*நடவடிக்கை|இறுதி\s*நடவடிக்கை|கடைசி\s*குறிப்பு",
+    re.I)
 
 
 def _wfh_find_stage(text: str) -> Optional[str]:
     t = (text or "").lower()
+    best_match = None  # (start_pos, -length, stage)
     for alias, stage in _WFH_STAGE_ALIASES.items():
-        if re.search(rf"\b{re.escape(alias)}\b", t):
-            return stage
-    return None
+        if re.search(r'[^\x00-\x7F]', alias):
+            idx = t.find(alias)
+            if idx != -1:
+                cand = (idx, -len(alias), stage)
+                if best_match is None or cand < best_match:
+                    best_match = cand
+        else:
+            m = re.search(rf"\b{re.escape(alias)}\b", t)
+            if m:
+                cand = (m.start(), -len(alias), stage)
+                if best_match is None or cand < best_match:
+                    best_match = cand
+    return best_match[2] if best_match else None
 
 
 def _wfh_desk_label_base(stage, app_no: Optional[str] = None) -> str:
@@ -1401,8 +1652,8 @@ def _wfh_desk_label_base(stage, app_no: Optional[str] = None) -> str:
     a Tahsildar stage in this register. Collapsing both into the bare word
     "Tahsildar" lost that distinction for the one type that actually reaches
     it, even though the chatbot's own conceptual answers elsewhere (glossary,
-    "who approves") already correctly call NISD's approver the Zonal Level
-    Tahsildar. The application number's own service-code segment (0153 =
+    "who approves") already correctly call NISD's approver the Zonal Deputy
+    Tahsildar (ZDT). The application number's own service-code segment (0153 =
     NISD, 0154 = ISD) decides which label applies -- no new query needed.
     """
     s = str(stage or "").upper()
@@ -1414,8 +1665,24 @@ def _wfh_desk_label_base(stage, app_no: Optional[str] = None) -> str:
 def _wfh_fmt_dt(dt) -> Optional[str]:
     if not dt:
         return None
-    local = dt.astimezone(_IST) if dt.tzinfo else dt
-    return local.strftime("%Y-%m-%d %H:%M")
+    if isinstance(dt, str):
+        s = dt.strip()
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            m = re.match(r"^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?", s)
+            if m:
+                dpart, tpart = m.groups()
+                return f"{dpart} {tpart}" if tpart else f"{dpart} 00:00"
+            return None
+    if isinstance(dt, datetime):
+        local = dt.astimezone(_IST) if dt.tzinfo else dt
+        return local.strftime("%Y-%m-%d %H:%M")
+    if isinstance(dt, date):
+        return dt.strftime("%Y-%m-%d 00:00")
+    return None
 
 
 async def _workflow_history_answer(db, officer, message: str, app_no: str, is_tamil: bool) -> Optional[str]:
@@ -1428,13 +1695,14 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
     if not _WFH_CUE.search(m):
         return None
     # Bound to THIS application's own number, so "TAHSILDAR" renders as the
-    # Zonal Level Tahsildar for NISD and plain Tahsildar for ISD -- see
+    # Zonal Deputy Tahsildar for NISD and plain Tahsildar for ISD -- see
     # `_wfh_desk_label_base`'s docstring. Shadows the module-level name only
     # inside this function; every call below is unchanged.
     def _wfh_desk_label(stage):
         return _wfh_desk_label_base(stage, app_no)
     from backend.services.postgres import get_workflow_history
-    hops = await get_workflow_history(db, officer, app_no)
+    wfh_fn = getattr(_cb(), "get_workflow_history", get_workflow_history)
+    hops = await wfh_fn(db, officer, app_no)
     if hops is None:
         return None
     if not hops:
@@ -1445,10 +1713,25 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
         return (f"{app_no}-க்கு {n} பணிப்பாய்வு பதிவுகள் உள்ளன." if is_tamil
                 else f"{app_no} has {n} workflow entr{'y' if n == 1 else 'ies'}.")
 
-    if _WFH_FIRST_RE.search(m):
+    if _WFH_FIRST_WHO_RE.search(m):
         h = hops[0]
-        return (f"{app_no}-ன் முதல் பணிப்பாய்வு நடவடிக்கை: {_wfh_desk_label(h['to_stage'])}, {_wfh_fmt_dt(h['performed_at'])}." if is_tamil
-                else f"{app_no}'s first workflow action: -> {_wfh_desk_label(h['to_stage'])} on {_wfh_fmt_dt(h['performed_at'])}.")
+        desk = _wfh_desk_label(h["from_stage"] or h["to_stage"])
+        return (f"{app_no}-ன் முதல் நடவடிக்கையை {desk} மேசை செய்தது ({_wfh_fmt_dt(h['performed_at'])}). பதிவேட்டில் அலுவலர் பெயர் இல்லை, மேசை மட்டும் பதிவாகியுள்ளது." if is_tamil
+                else f"The {desk} desk performed {app_no}'s first workflow action, on {_wfh_fmt_dt(h['performed_at'])}. The register records desks, not individual officer names.")
+
+    if _WFH_FIRST_WHEN_RE.search(m):
+        h = hops[0]
+        trans = (f"{_wfh_desk_label(h['from_stage'])} -> {_wfh_desk_label(h['to_stage'])}" if h['from_stage']
+                 else f"-> {_wfh_desk_label(h['to_stage'])}")
+        return (f"{app_no}-ன் முதல் பணிப்பாய்வு நடவடிக்கை {_wfh_fmt_dt(h['performed_at'])} அன்று நடந்தது ({trans})." if is_tamil
+                else f"{app_no}'s first workflow action occurred on {_wfh_fmt_dt(h['performed_at'])} ({trans}).")
+
+    if _WFH_FIRST_WHAT_RE.search(m):
+        h = hops[0]
+        trans = (f"{_wfh_desk_label(h['from_stage'])} -> {_wfh_desk_label(h['to_stage'])}" if h['from_stage']
+                 else f"-> {_wfh_desk_label(h['to_stage'])}")
+        return (f"{app_no}-ன் முதல் பணிப்பாய்வு நடவடிக்கை: {trans}, {_wfh_fmt_dt(h['performed_at'])}." if is_tamil
+                else f"{app_no}'s first workflow action: {trans} on {_wfh_fmt_dt(h['performed_at'])}.")
 
     # Checked before _WFH_FINAL_RE/_WFH_LATEST_RE: "who performed the LAST action?"
     # contains "last action", which (deliberately) also matches _WFH_LATEST_RE's bare
@@ -1494,7 +1777,18 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
                 else f"Immediately before the current stage: {_wfh_desk_label(h['to_stage'])}, on {_wfh_fmt_dt(h['performed_at'])}.")
 
     if _WFH_AFTER_RE.search(m):
-        stage = _wfh_find_stage(m)
+        stage = None
+        after_m = re.search(r"\b(?:immediately\s+)?after\s+([a-zA-Z\s\u0B80-\u0BFF]+)", m, re.I)
+        if after_m:
+            words = after_m.group(1).strip().split()
+            for k in (3, 2, 1):
+                if len(words) >= k:
+                    cand = " ".join(words[:k]).lower()
+                    if cand in _WFH_STAGE_ALIASES:
+                        stage = _WFH_STAGE_ALIASES[cand]
+                        break
+        if not stage:
+            stage = _wfh_find_stage(m)
         if stage:
             for h in hops:
                 if str(h["from_stage"] or "").upper() == stage:
@@ -1504,9 +1798,29 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
                     else f"{app_no}'s workflow history never passed through {stage}.")
 
     if _WFH_TRANSITION_FROM_RE.search(m):
-        stage = _wfh_find_stage(m) or "SIS"
+        from_st = None
+        to_st = None
+        m_from_to = re.search(r"\bmoved?\s+from\s+([a-zA-Z\s\u0B80-\u0BFF]+?)\s+to\s+([a-zA-Z\s\u0B80-\u0BFF]+)", m, re.I)
+        if m_from_to:
+            words_from = m_from_to.group(1).strip().split()
+            for k in (3, 2, 1):
+                if len(words_from) >= k:
+                    cand = " ".join(words_from[:k]).lower()
+                    if cand in _WFH_STAGE_ALIASES:
+                        from_st = _WFH_STAGE_ALIASES[cand]
+                        break
+            words_to = m_from_to.group(2).strip().split()
+            for k in (3, 2, 1):
+                if len(words_to) >= k:
+                    cand = " ".join(words_to[:k]).lower()
+                    if cand in _WFH_STAGE_ALIASES:
+                        to_st = _WFH_STAGE_ALIASES[cand]
+                        break
+        stage = from_st or _wfh_find_stage(m) or "SIS"
         for h in hops:
-            if str(h["from_stage"] or "").upper() == stage and str(h["to_stage"] or "").upper() != stage:
+            if str(h["from_stage"] or "").upper() == stage:
+                if to_st and str(h["to_stage"] or "").upper() != to_st:
+                    continue
                 return (f"{stage}-இலிருந்து {_wfh_desk_label(h['to_stage'])}-க்கு {_wfh_fmt_dt(h['performed_at'])} அன்று நகர்ந்தது." if is_tamil
                         else f"{app_no} moved from {stage} to {_wfh_desk_label(h['to_stage'])} on {_wfh_fmt_dt(h['performed_at'])}.")
         return (f"{app_no} இன்னும் {stage} கட்டத்தை விட்டு நகரவில்லை." if is_tamil
@@ -1591,12 +1905,13 @@ def _unrecognised_word_message(text: str) -> bool:
     invents a meaning (and, with a refusal earlier in the chat, its ward)."""
     if not text or re.search(r"[0-9\u0B80-\u0BFF/]", text):
         return False
-    toks = re.findall(r"[a-z]+", text.lower())
-    if not toks or len(toks) > 2 or len(" ".join(toks)) != len(text.strip()):
+    stripped = text.strip().strip(_TRIM_CHARS).strip()
+    toks = re.findall(r"[a-z]+", stripped.lower())
+    if not toks or len(toks) > 2 or len(" ".join(toks)) != len(stripped):
         return False
     try:
         known = fctx._known_words() | fctx._vocab()
-        if fctx.correct_spelling(text.lower()) != text.lower():
+        if fctx.correct_spelling(stripped.lower()) != stripped.lower():
             return False
         tri = _trigram_set()
     except Exception:
@@ -1637,12 +1952,18 @@ _FROM_WORD_RE = re.compile(
     r"^\s*(?:please\s+)?(?:display|show|list|give|get|find|see|need)\s+(?:me\s+)?(?:all\s+|my\s+)?"
     r"(?:applications?|apps?|aplications?|files?|cases)\s+(?:from|ftom|form|frm|fom|fro|by|via)\s+(?:the\s+)?([a-z][a-z\-]*)\s*[?.!]*\s*$",
     re.IGNORECASE)
+_FILE_SOURCE_TERMS = frozenset({
+    "csv", "pdf", "docx", "doc", "txt", "file", "files", "upload", "uploaded",
+    "sheet", "sheets", "spreadsheet", "spreadsheets", "report", "reports",
+    "deed", "deeds", "document", "documents", "table", "tables"
+})
 _FROM_KNOWN = frozenset({
     "csc", "cscs", "sro", "sros", "sub", "registrar", "subregistrar", "citizen", "citizens", "portal", "sevai", "esevai",
     "igrs", "common", "service", "centre", "center", "counter", "office", "me", "my", "us", "today", "yesterday",
     "tomorrow", "last", "this", "next", "week", "month", "year", "date", "now", "then", "isd", "nisd",
     "pending", "approved", "rejected", "ward", "block", "taluk", "town", "district", "survey", "sub-registrar",
-    "morning", "afternoon", "evening", "yesterdays", "todays", "tamilnilam", "thoothukudi", "tuticorin"})
+    "morning", "afternoon", "evening", "yesterdays", "todays", "tamilnilam", "thoothukudi", "tuticorin"
+}) | _FILE_SOURCE_TERMS
 
 
 def _unknown_from_word(message: str):
@@ -1650,7 +1971,7 @@ def _unknown_from_word(message: str):
     if not m:
         return None
     w = m.group(1).lower()
-    if w in _FROM_KNOWN or len(w) > 7 or w.isdigit():
+    if w in _FROM_KNOWN or w in _FILE_SOURCE_TERMS or len(w) > 7 or w.isdigit():
         return None
     try:
         if extract_month_from_text(w):
@@ -1670,11 +1991,10 @@ def _unknown_from_word(message: str):
 
 
 def _unknown_from_reply(word: str, language: str) -> str:
-    def _near(a: str, b: str) -> bool:
-        if a == b or abs(len(a) - len(b)) > 1:
-            return a == b
-        return sum(x != y for x, y in zip(a, b)) + abs(len(a) - len(b)) <= 1
-    guess = next((n for w, n in (("sro", "Sub-Registrar (SRO)"), ("csc", "CSC")) if _near(word, w)), None)
+    w_low = (word or "").strip().lower()
+    matches = [n for w, n in (("sro", "Sub-Registrar (SRO)"), ("csc", "CSC"))
+               if damerau_levenshtein_distance(w_low, w) <= 1 and w_low not in _FILE_SOURCE_TERMS]
+    guess = matches[0] if len(matches) == 1 else None
     if language in ("ta", "tanglish"):
         hint = f" {guess} என்று சொல்ல வந்தீர்களா?" if guess else ""
         return (f"\"{word}\" என்பது எந்த மூலம் / வழி என்று எனக்குத் தெரியவில்லை.{hint} விண்ணப்பங்கள் CSC, சார்-பதிவாளர் (SRO) "
@@ -1756,9 +2076,23 @@ _REJECTED_TOO_RE = re.compile(
     # "reject"/"rejects"/"rejected" all accepted -- an officer typing fast drops the
     # "-ed" ("include reject too") as often as not, and the status word itself is
     # spelled out in full ("rejected") only in the rewritten text this produces.
+    # Widening only: "add rejected back to whatever is already on screen". A
+    # phrasing with no "too"/"include"/"also"/"with" -- a plain imperative
+    # ("show rejected applications", "ask for rejected applications") -- is a
+    # NARROWING request (only the rejected ones) and belongs to
+    # `_REJECTED_ONLY_RE` below, not here; conflating the two used to answer
+    # "show rejected one" (after "ask for rejected applications to see them",
+    # this register's own hint text) with all 22 applications instead of the
+    # 2 actually rejected ones.
     r"\binclude\s+(?:the\s+)?reject(?:ed|s)?\b|\breject(?:ed|s)?\s+(?:application(?:s)?\s+)?too\b|"
-    r"\balso\s+(?:show|include)\s+(?:the\s+)?reject(?:ed|s)?\b|\bwith\s+reject(?:ed|s)?\s+(?:ones?|applications?)?\b|"
-    r"\b(?:ask\s+for|show|list|display|give)\s+(?:the\s+)?reject(?:ed|s)?\s+(?:applications?|ones?)\b",
+    r"\balso\s+(?:show|include)\s+(?:the\s+)?reject(?:ed|s)?\b|\bwith\s+reject(?:ed|s)?\s+(?:ones?|applications?)?\b",
+    re.IGNORECASE)
+
+# The narrowing counterpart: "show/list/display/give/ask for rejected
+# applications/ones" asks to see ONLY the rejected files, the same wording
+# the app's own "ask for rejected applications to see them" hint uses.
+_REJECTED_ONLY_RE = re.compile(
+    r"\b(?:ask\s+for|show|list|display|give)\s+(?:(?:the|my)\s+)?reject(?:ed|s)?\s+(?:application(?:s)?|ones?)\b",
     re.IGNORECASE)
 _LISTING_CHANNEL_TEXT_RE = re.compile(r"\bfrom\s+(Sub-Registrar|CSC|citizen portal)\b", re.IGNORECASE)
 _CHANNEL_TEXT_TO_CODE = {"sub-registrar": "sub_registrar", "csc": "csc", "citizen portal": "citizen"}
@@ -1768,10 +2102,12 @@ _WIDEN_CODE_TO_CHANNEL_WORD = {"csc": "CSC", "sub_registrar": "Sub-Registrar", "
 
 
 def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None) -> Optional[str]:
-    """"include rejected too" / "rejected applications too" -- the request it widens to,
-    carrying forward every filter the previous listing actually ran with (type, ward,
-    block, channel), not just the channel. None when this message is not that widening
-    request."""
+    """"include rejected too" / "rejected applications too" widens -- add rejected
+    back to whatever was already on screen. "show rejected applications" / "ask
+    for rejected applications" (the register's own hint text) narrows -- only the
+    rejected ones. Both carry forward every filter the previous listing actually
+    ran with (type, ward, block, channel, service code), not just the channel.
+    None when this message is neither."""
     # `followup_context.negation_normalise()` runs on `message` BEFORE this
     # function is ever reached (orchestrator.py, right after `_original_
     # message` is first captured) and already rewrites "include rejected
@@ -1783,30 +2119,41 @@ def _resolve_rejected_widen(message: str, chat_history: list, followup_ctx=None)
     # widening request closes that gap without duplicating or reordering the
     # earlier rewrite.
     _already_normalised = bool(re.fullmatch(r"all\s+pending\s+approved\s+rejected\.?", (message or "").strip(), re.IGNORECASE))
-    if not _already_normalised and not _REJECTED_TOO_RE.search(message or ""):
+    _is_widen = _already_normalised or bool(_REJECTED_TOO_RE.search(message or ""))
+    _is_narrow = (not _is_widen) and bool(_REJECTED_ONLY_RE.search(message or ""))
+    if not _is_widen and not _is_narrow:
         return None
     # "Show rejected applications in ward 005." names its OWN fresh ward --
     # a complete, self-contained listing request, not a continuation phrase
-    # asking to widen whatever was already on screen. `_REJECTED_TOO_RE`'s
-    # "show rejected applications" alternative has no end anchor, so it
-    # matched the first few words of this sentence too and the rewrite threw
-    # the rest away: "'Show rejected applications in ward 005.' -> 'all
-    # pending approved rejected applications'" -- the officer's own ward
-    # silently replaced by the PREVIOUS turn's scope (or none at all). A
-    # widen phrase never names a ward/block/service code/year of its own, so
-    # any of those is proof this is a fresh request instead.
+    # asking to widen/narrow whatever was already on screen. `_REJECTED_TOO_RE`
+    # / `_REJECTED_ONLY_RE`'s "show rejected applications" alternatives have no
+    # end anchor, so they matched the first few words of this sentence too and
+    # the rewrite threw the rest away: "'Show rejected applications in ward
+    # 005.' -> 'all pending approved rejected applications'" -- the officer's
+    # own ward silently replaced by the PREVIOUS turn's scope (or none at all).
+    # Neither phrase ever names a ward/block/service code/year of its own, so
+    # any of those is proof this is a fresh, self-contained request instead.
     if re.search(r"\bward\s*\d|\bblock\s*\d|\b(?:service\s*code\s*)?0\d{3}\b|\b(?:19|20)\d{2}\b",
                  message or "", re.IGNORECASE):
         return None
-    # "include rejected too" asks to ADD rejected back to whatever was
-    # already being shown, not to narrow down to ONLY rejected -- this used
-    # to rewrite straight to "rejected applications", so an officer who had
-    # just excluded rejected files was shown 24 rejected-only applications
-    # for a question that meant "show me everything, rejected included" (the
-    # whole register). Naming every register status together collapses to
-    # "no filter" in `_requested_status_filter_for_register`, the correct
-    # effect of un-excluding one of them.
-    base = "all pending approved rejected applications"
+    if _is_widen:
+        # "include rejected too" asks to ADD rejected back to whatever was
+        # already being shown, not to narrow down to ONLY rejected -- this used
+        # to rewrite straight to "rejected applications", so an officer who had
+        # just excluded rejected files was shown 24 rejected-only applications
+        # for a question that meant "show me everything, rejected included" (the
+        # whole register). Naming every register status together collapses to
+        # "no filter" in `_requested_status_filter_for_register`, the correct
+        # effect of un-excluding one of them.
+        base = "all pending approved rejected applications"
+    else:
+        # "show rejected applications" / "ask for rejected applications" is the
+        # register's own hint text after a count that hid rejected files, and it
+        # means ONLY the rejected ones -- this used to fall into the widen branch
+        # above and answer with every status (pending + approved + rejected)
+        # instead of the 2 actually rejected, because the two phrasings share the
+        # same "reject(ed) ... applications" shape and were read as one request.
+        base = "rejected applications"
     # Prefer the PREVIOUS listing's own validated filters (set alongside its
     # query_type in chat_dispatch.py / chat_dispatch_stream.py) over scraping
     # them back out of the rendered answer text -- the scrape only ever
@@ -1860,10 +2207,14 @@ _QUALIFIER_LIST_INTENTS = frozenset({"pending_applications", "isd_applications",
 def _unknown_qualifier(message: str):
     """The unrecognised words of a list request ("show applications in xyz"), or []."""
     words = _qualifier_guard.unknown_words(message)
-    if words and parse_intent(message) in _QUALIFIER_LIST_INTENTS:
+    if words:
+        words = [w for w in words if w.lower() not in _FILE_SOURCE_TERMS]
+    pi_fn = getattr(_cb(), "parse_intent", parse_intent)
+    intent = pi_fn(message)
+    if words and intent in _QUALIFIER_LIST_INTENTS:
         return words
     _num = _unknown_number_qualifier(message)
-    if _num and parse_intent(message) in _QUALIFIER_LIST_INTENTS:
+    if _num and intent in _QUALIFIER_LIST_INTENTS:
         return [_num]
     return []
 
@@ -1885,6 +2236,12 @@ _BARE_NUMBER_QUALIFIER_RE = re.compile(
     r"hr|hrs|hour|hours|min|mins|minute|minutes|%|percent|st|nd|rd|th))",
     re.IGNORECASE)
 
+_NUM_LOCATOR_WORDS = (
+    r"ward|block|survey|page|row|rows|line|lines|section|sections|paragraph|paragraphs|"
+    r"column|columns|item|items|point|points|step|steps|stage|stages|part|parts|"
+    r"table|tables|sheet|sheets|file|files|வார்டு|பிளாக்|தொகுதி"
+)
+
 
 def _unknown_number_qualifier(message: str) -> Optional[str]:
     text = message or ""
@@ -1897,9 +2254,23 @@ def _unknown_number_qualifier(message: str) -> Optional[str]:
     # Already resolved elsewhere (a year, a month-scoped period, a ward/block
     # named explicitly a few words earlier) -- this guard only ever fires on
     # what NOTHING already claimed.
-    if extract_date_range(text) != (None, None) or _period_from_message(text)[0] is not None:
+    dr_fn = getattr(_cb(), "extract_date_range", extract_date_range)
+    per_fn = getattr(_cb(), "_period_from_message", _period_from_message)
+    if dr_fn(text) != (None, None) or per_fn(text)[0] is not None:
         return None
-    if re.search(rf"\b(?:ward|block|survey|page|row|rows|top|first|last)\s+\D{{0,3}}{re.escape(num)}\b", text, re.IGNORECASE):
+    # Preceded by ward, block, survey, line, section, page, etc.
+    if re.search(rf"\b(?:{_NUM_LOCATOR_WORDS}|top|first|last)\s+\D{{0,3}}{re.escape(num)}\b", text, re.IGNORECASE):
+        return None
+    # Followed by ward, block, survey, line, section, page, etc. (English, Tamil, Tanglish)
+    if re.search(rf"\b{re.escape(num)}\s*(?:st|nd|rd|th)?\s*(?:{_NUM_LOCATOR_WORDS})\b", text, re.IGNORECASE):
+        return None
+    # Known service code (e.g. 154 -> 0154 ISD, 153 -> 0153 NISD)
+    from backend.utils.helpers import SIS_URBAN_SERVICES
+    if num in SIS_URBAN_SERVICES or num.zfill(4) in SIS_URBAN_SERVICES:
+        return None
+    # Known district code (e.g. 28 -> Chennai)
+    from backend.config import DISTRICT_CODE_MAP
+    if num in DISTRICT_CODE_MAP or num.zfill(2) in DISTRICT_CODE_MAP:
         return None
     return num
 
@@ -1919,9 +2290,9 @@ _CN_NUMBER_RE = re.compile(r"\bcn\s*(?:number|numbr|nmber|no\b|எண்)", re.I
 
 _TERM_ASK_RES = (
     re.compile(r"^(?:please\s+)?(?:what\s+(?:is|are|does|do)|what'?s|whats|define|explain|meaning\s+of|"
-               r"tell\s+me\s+(?:about|the\s+meaning\s+of))\s+(?:a\s+|an\s+|the\s+)?([a-z]{5,})"
+               r"tell\s+me\s+(?:about|the\s+meaning\s+of))\s+(?:a\s+|an\s+|the\s+)?([a-z]{2,})"
                r"(?:\s+(?:mean|means|meaning))?\s*[?.!]*$", re.IGNORECASE),
-    re.compile(r"^([a-z]{5,})\s+(?:meaning|means|definition|enna|endral\s+enna|na\s+enna|artham)\s*[?.!]*$",
+    re.compile(r"^([a-z]{2,})\s+(?:meaning|means|definition|enna|endral\s+enna|na\s+enna|artham)\s*[?.!]*$",
                re.IGNORECASE),
 )
 _SUPERSEDED_FAMILY = ("supersed", "supercede", "superced")
@@ -1931,7 +2302,7 @@ _CORPUS_WORDS: Optional[frozenset] = None
 def _corpus_words() -> frozenset:
     global _CORPUS_WORDS
     if _CORPUS_WORDS is None:
-        _CORPUS_WORDS = frozenset(re.findall(r"[a-z]{5,}", _corpus_blob().lower()))
+        _CORPUS_WORDS = frozenset(re.findall(r"[a-z]{2,}", _corpus_blob().lower()))
     return _CORPUS_WORDS
 
 
@@ -1945,7 +2316,21 @@ _EXPLAIN_STYLE_WORDS = frozenset((
     "briefly", "further", "again", "differently", "simply", "plainly",
     "clearly", "shortly", "quickly", "slowly", "easily", "properly",
     "simpler", "shorter", "clearer", "concisely",
+    "you", "u", "yourself", "urself", "me", "i", "we", "us", "this", "that", "it",
 ))
+
+_KNOWN_SIS_ACRONYMS = frozenset({
+    # "fmb" and "hqdt" deliberately NOT here (removed 2026-10-15): neither
+    # has a backing `_GLOSSARY` or `_FULLFORMS` entry, so being marked
+    # "known" only suppressed `_unknown_term()`'s honest refusal and let
+    # "what is HQDT?" / "what is FMB?" fall straight through to the LLM to
+    # invent an answer -- exactly the hallucination risk the refusal exists
+    # to prevent. (`_DOMAIN_ACRONYMS` / `_PLOT_CALC_WORDS` below are a
+    # separate, still-correct exemption against being misread as gibberish
+    # or off-topic; this is only about claiming a specific definition.)
+    "rera", "dtcp", "tslr", "zdt", "dro", "dis", "sis", "dsc", "sro", "csc",
+    "igrs", "isd", "nisd", "can", "sla", "patta", "chitta", "tahsildar", "subdivision"
+})
 
 
 def _unknown_term(message: str) -> Optional[str]:
@@ -1955,10 +2340,10 @@ def _unknown_term(message: str) -> Optional[str]:
     if not match:
         return None
     word = match.group(1).lower()
-    if word in _EXPLAIN_STYLE_WORDS:
+    if word in _EXPLAIN_STYLE_WORDS or word in _KNOWN_SIS_ACRONYMS:
         return None
-    known = set(_GLOSSARY) | set(_corpus_words())
-    shares_stem = any(k.startswith(word[:6]) or word.startswith(k[:6]) for k in known if len(k) >= 6)
+    known = set(_GLOSSARY) | set(_corpus_words()) | _KNOWN_SIS_ACRONYMS
+    shares_stem = any(k.startswith(word[:6]) and abs(len(k) - len(word)) <= 2 for k in known if len(k) >= 6)
     if word in known or shares_stem or difflib.get_close_matches(word, list(known), n=1, cutoff=0.8):
         return None
     if parse_intent(message) != "general_query" or _is_out_of_scope(message):
@@ -2002,10 +2387,10 @@ def _unknown_term_reply(word: str, language: str) -> str:
 # or CSV -- a real, stated limitation, not a guess at what the data is.
 _FORMAT_UNSUPPORTED_RE = re.compile(
     r"^\s*return\s+(?:valid\s+|only\s+|the\s+(?:result|data|answer)\s+(?:as|in)\s+)*json\b"
-    r"|^\s*return\s+(?:the\s+)?(?:result\s+|data\s+)?(?:as\s+|in\s+)?csv\b"
+    r"|^\s*(?:return|export)\s+(?:the\s+)?(?:result\s+|data\s+|applications?\s+)?(?:as|in)\s+csv(?!\s+(?:rows?|records?|entries?|data\b))\b"
     r"|^\s*return\s+(?:a\s+)?markdown\s+table\b"
     r"|\bformat\s+i\s+can\s+paste\s+into\s+excel\b"
-    r"|^\s*(?:convert|change)\s+(?:it|this|the\s+(?:answer|output|result))\s+(?:into|to)\s+(?:valid\s+)?json\b",
+    r"|^\s*(?:convert|change)\s+(?:it|this|that|(?:the|this|that)\s+(?:answer|output|result))\s+(?:into|to)\s+(?:valid\s+)?json\b",
     re.IGNORECASE)
 
 
@@ -2021,7 +2406,9 @@ def _special_scope_kind(message: str):
     if _cm_strong(message) or any(isinstance(k, tuple) for k in _fline_qa.parse(message)["keys"]):
         return None
     if _FORMAT_UNSUPPORTED_RE.search((message or "").strip()):
-        return "format_unsupported"
+        # Exclude questions querying rows or data from an uploaded CSV / file
+        if not re.search(r"\bcsv\s+(?:rows?|records?|entries?|data)\b|\b(?:rows?|records?|entries?|data)\s+(?:in|from)\s+csv\b|\bfrom\s+(?:the\s+)?(?:uploaded\s+)?(?:file|csv|document)\b", message or "", re.IGNORECASE):
+            return "format_unsupported"
     if _fullform_term(message):
         return "fullform"
     if _FULLFORM_BARE_RE.match((message or "").strip()):
@@ -2051,7 +2438,17 @@ def _special_scope_kind(message: str):
     if _is_other_officer_request(message):
         return "officer"
     if _UNHELD_RE.search(message or "") and not re.search(r"\d{4}/\d{3,4}/\d+/\d+", message or ""):
-        return "unheld"
+        # Exclude procedural questions about how holidays affect working days/SLA calculations
+        if re.search(r"\b(?:sla|working\s+days?|count|counted|calculate|calculated)\b", message or "", re.IGNORECASE):
+            pass
+        # Exclude address / road queries ("Collector Office Road", "Collectorate Road")
+        elif re.search(r"\b(?:collector\s+office\s+road|collectorate\s+road|road|street|nagar|colony|salai)\b", message or "", re.IGNORECASE):
+            pass
+        # Exclude procedural Collector role questions in appeals
+        elif re.search(r"\b(?:appeal|appeals|role\s+in|procedure)\b", message or "", re.IGNORECASE):
+            pass
+        else:
+            return "unheld"
     if _invalid_calendar_date(message):
         return "date"
     if _bare_date_narrative(message):
@@ -2164,7 +2561,7 @@ def _scope_reply(language: str, capability: bool = False) -> str:
                 "'approved plus rejected', 'which service code has the most', "
                 "'my field visits this week', or 'what is service code 0154'. "
                 "For an application-specific question, provide the application number you already have. "
-                "I cover every service code, not only ISD / NISD. What would you like to check?")
+                "What would you like to check?")
     return body + " I can't help with general topics outside that."
 
 
@@ -2422,7 +2819,7 @@ def _workflow_steps_alt_text(topic: str, is_tamil: bool) -> Optional[str]:
 
 
 _GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|tahshildar|tahsildr|tahsildaar|tasildar|thasildar|thasildhar"
-                   r"|zdt|dro|patta|sub[\s-]?divisions?|fmb|draughtsman|draftsman"
+                   r"|zdt|dro|patta|sub[\s-]?divisions?|draughtsman|draftsman"
                    r"|sub\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
                    r"|deputy\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
                    r"|senior\s+draughtsman|senior\s+draftsman"
@@ -2430,6 +2827,8 @@ _GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|tahshildar|tahsildr|tah
 _GLOSSARY_ALIAS = {"draughtsman": "sd", "draftsman": "sd", "seniordraughtsman": "sd", "seniordraftsman": "sd",
                    "subinspectorsurveyor": "sis", "deputyinspectorsurveyor": "dis",
                    "districtrevenueofficer": "dro",
+                   "subdivision": "subdivision", "subdivisions": "subdivision",
+                   "form6": "igrsform6", "form6number": "igrsform6", "igrsform6": "igrsform6", "igrsform6number": "igrsform6",
                    # Common misspellings of "Tahsildar" -- the task's own
                    # named examples ("Tahshildar, Tahsildr") plus the close
                    # neighbours. All resolve to the same grounded glossary
@@ -2503,9 +2902,10 @@ _GLOSSARY = {
     "subdivision": ("Sub-division = a part of a survey number that gets its own number (e.g. 24/3). While an ISD file is open it "
                     "carries a temporary number such as 24/T1; the final number is assigned on approval.",
                     "உட்பிரிவு = சர்வே எண்ணின் ஒரு பகுதிக்கு வழங்கப்படும் தனி எண் (எ.கா. 24/3). கோப்பு திறந்திருக்கும்போது 24/T1 போன்ற தற்காலிக எண்; ஒப்புதலில் இறுதி எண்."),
-    "fmb": ("FMB (Field Measurement Book) is not part of this register or workflow -- no FMB book, page or sketch is recorded here, "
-            "so I cannot say anything about it from the records.",
-            "FMB (Field Measurement Book) இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை — FMB புத்தகம், பக்கம் அல்லது வரைபடம் பதிவாகவில்லை; எனவே பதிவுகளிலிருந்து எதுவும் சொல்ல முடியாது."),
+    # "fmb" deliberately removed (2026-10-15): no longer a recognised
+    # glossary term at all, so "what is FMB?" now gets the same generic
+    # "not a term in the SIS documents" refusal as any other unrecognised
+    # word, instead of this module naming and discussing the concept.
 }
 _GLOSSARY["tahsildhar"] = _GLOSSARY["tahsildar"]
 # DRO (District Revenue Officer) is not part of the ordinary ISD/NISD
@@ -2641,16 +3041,17 @@ _GLOSSARY.update({"completed": _GLOSSARY["approved"], "complete": _GLOSSARY["app
                   "subregistrar": _GLOSSARY["sro"], "escalation": _GLOSSARY["escalated"], "pendings": _GLOSSARY["pending"],
                   "applications": _GLOSSARY["application"], "inprogres": _GLOSSARY["inprogress"], "priorities": _GLOSSARY["priority"]})
 _GLOSS_NOUNS = (r"(fees?|slas?|can|igrs|csc|sro|sub[\s-]?registrar|citizen|channels?|survey(?:\s+numbers?)?|wards?|blocks?|"
-                r"jurisdiction|mutation|sketch|natham\s+chitta|chitta|litigation|encroachment|field\s+(?:visits?|inspection)|priority|priorities)")
+                r"jurisdiction|mutation|sketch|natham\s+chitta|chitta|litigation|encroachment|field\s+(?:visits?|inspection)|priority|priorities|"
+                r"(?:igrs\s+)?form[\s-]?6(?:\s+numbers?)?|igrsform6)")
 # statuses read as a list request after a bare "what is" ("what is pending"), so only an explicit "define" / "meaning" claims them
 _GLOSS_STATES = (r"(pending|approved|rejected|completed|complete|in[\s-]?progress|escalated|escalation|overdue|stage|status|application)")
 _GLOSS_NOUN_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+(?:is|are|does)|what's|whats|define|explain|meaning\s+of|what\s+is\s+meant\s+by|full\s+form\s+of|expand)\s+"
-    r"(?:a\s+|an\s+)?" + _GLOSS_NOUNS + r"\s*(?:stand\s+for|mean|means)?\s*[?.!]*$", re.IGNORECASE)
+    r"(?:a\s+|an\s+)?" + _GLOSS_NOUNS + r"\s*(?:stand\s+for|mean|means|refer\s+to)?\s*[?.!]*$", re.IGNORECASE)
 _GLOSS_STATE_RE = re.compile(
     r"^(?:please\s+)?(?:define|explain|meaning\s+of|what\s+is\s+meant\s+by|what\s+does)\s+(?:a\s+|an\s+|the\s+)?" + _GLOSS_STATES + r"\s*(?:stand\s+for|mean|means)?\s*[?.!]*$", re.IGNORECASE)
 _GLOSS_TRAIL_RE = re.compile(
-    r"^" + _GLOSS_NOUNS.replace("(fees?", "(fees?", 1) + r"\s+(?:meaning|definition|means|mean)\s*[?.!]*$"
+    r"^" + _GLOSS_NOUNS + r"\s+(?:meaning|definition|means|mean)\s*[?.!]*$"
     r"|^" + _GLOSS_STATES + r"\s+(?:meaning|definition)\s*[?.!]*$", re.IGNORECASE)
 # Tamil-script terms added 2026-10-15: every one of these already has a
 # full, reviewed English+Tamil definition in `_GLOSSARY` (patta, tahsildar,
@@ -2662,12 +3063,13 @@ _GLOSS_TRAIL_RE = re.compile(
 # spelling that reaches the existing entry.
 _GLOSS_TA2_RE = re.compile(
     r"^(?:" + _GLOSS_NOUNS + r"|" + _GLOSS_STATES
-    + r"|(கட்டணம்|காலதாமதம்|நிலுவை|பட்டா|தாசில்தார்|உட்பிரிவு|கள ஆய்வு|சர்வே எண்|நத்தம் சிட்டா))"
+    + r"|(கட்டணம்|காலதாமதம்|நிலுவை|பட்டா|தாசில்தார்|உட்பிரிவு|கள ஆய்வு|சர்வே எண்|நத்தம் சிட்டா|படிவம்\s*6))"
     r"\s*(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna|என்றால்|என்ன)\s*[?.!]*$", re.IGNORECASE)
 _GLOSS_TA_WORD = {
     "கட்டணம்": "fee", "காலதாமதம்": "overdue", "நிலுவை": "pending",
     "பட்டா": "patta", "தாசில்தார்": "tahsildar", "உட்பிரிவு": "subdivision",
     "கள ஆய்வு": "fieldvisit", "சர்வே எண்": "surveynumber", "நத்தம் சிட்டா": "nathamchitta",
+    "படிவம் 6": "igrsform6", "படிவம்6": "igrsform6",
 }
 _WHO_APPROVES = {
     "ISD": ("For ISD the DIS reviews the sketch and field report and approves or rejects; the Tahsildar then applies the DSC to generate the order.",
@@ -2698,7 +3100,7 @@ _WORKFLOW_ALL_BLOCK_RE = re.compile(
     r"\bfield\s+visit\b|\bfee\b|\bsla\b|\bdocuments?\b|\bpending\b|\bprocessing\b|\bcsc\b|\bigrs\b|\bcan\b"
     r"|\bsurvey\b|\bwhy\b|\bhow\s+(?:do|can|should)\s+i\b", re.IGNORECASE)
 
-_APP_NO_HISTORY_RE = re.compile(r'\d{4}/\d{3,4}/\d{1,3}/\d+')
+_APP_NO_HISTORY_RE = re.compile(r'\d{4}\s*[/_]\s*\d{3,4}\s*[/_]\s*\d{1,3}\s*[/_]\s*\d+')
 
 
 def _recent_app_number_in_history(chat_history) -> bool:
@@ -2756,7 +3158,12 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
     if not message:
         return None
     msg = message.lower()
-    if re.search(r'\d{4}/\d{3,4}/\d{1,3}/\d+', msg):
+    if _APP_NO_HISTORY_RE.search(msg):
+        return None
+    # An uploaded document question ("in this document", "in the uploaded PDF",
+    # "in workflow_notes.txt", "according to this document") refers to the
+    # attachment, not general SIS workflow rules.
+    if re.search(r"\b(?:in\s+this\s+document|in\s+(?:the\s+)?uploaded\s+(?:document|pdf|file)|according\s+to\s+this\s+document|workflow_notes\.txt|\.pdf\b|\.txt\b|\.docx\b)\b", msg):
         return None
     # "what is ITS latest recorded workflow event?" right after narrowing to one
     # application (e.g. "the second one" from a listing) names no ISD/NISD word
@@ -2804,15 +3211,21 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
           or _ROLE_RE.match(msg.strip()) or _ROLE_TA_RE.match(msg.strip()))
     if _g:
         _k = re.sub(r"[\s-]", "", _g.group(1).lower())
-        return "GLOSS:" + _GLOSSARY_ALIAS.get(_k, _k)
+        _canon = _GLOSSARY_ALIAS.get(_k) or (_k.endswith("s") and _GLOSSARY_ALIAS.get(_k[:-1])) or _k
+        if _canon.endswith("s") and _canon[:-1] in _GLOSSARY:
+            _canon = _canon[:-1]
+        return "GLOSS:" + _canon
     _g2 = (_GLOSS_NOUN_RE.match(msg.strip()) or _GLOSS_STATE_RE.match(msg.strip()) or _GLOSS_TRAIL_RE.match(msg.strip())
            or _GLOSS_TA2_RE.match(msg.strip()))
     if _g2:
         _raw = next((g for g in _g2.groups() if g), "") or ""
         _raw = _GLOSS_TA_WORD.get(_raw, _raw)
         _k = re.sub(r"[\s-]", "", _raw.lower())
-        if _k in _GLOSSARY:
-            return "GLOSS:" + _k
+        _canon = _GLOSSARY_ALIAS.get(_k) or (_k.endswith("s") and _GLOSSARY_ALIAS.get(_k[:-1])) or _k
+        if _canon.endswith("s") and _canon[:-1] in _GLOSSARY:
+            _canon = _canon[:-1]
+        if _canon in _GLOSSARY:
+            return "GLOSS:" + _canon
     _after = _AFTER_RE.search(msg)
     if _after:
         return "AFTER:" + _after.group(1).lower()
@@ -2916,10 +3329,29 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
     # states both chains' real roles in one answer, which is self-correcting
     # (DIS appears only under ISD, ZDT only under NISD) without this
     # function having to parse out and negate the specific claim made.
-    if (re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$',
-                 msg.strip(), re.IGNORECASE)
-            and _WORKFLOW_STEP_ROLE_RE.search(msg) and re.search(r'\bzdt\b', msg)):
-        return "ALL"
+    _is_verif_tag = bool(re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$|'
+                                   r'சரிதானா|சரியா|இல்லையா|சரிதானே', msg.strip(), re.IGNORECASE))
+    if _is_verif_tag:
+        has_isd_ref = bool(re.search(r'\b(isd|0154)\b', msg))
+        has_nisd_ref = bool(re.search(r'\b(nisd|0153)\b', msg))
+        has_sd_ref = bool(re.search(r'\b(sd|senior\s+draughtsman|draughtsman|sketch|வரைபடம்)\b', msg))
+        has_dis_ref = bool(re.search(r'\b(dis|deputy\s+inspector|துணை\s+ஆய்வாளர்)\b', msg))
+        has_zdt_ref = bool(re.search(r'\b(zdt|zonal\s+deputy\s+tahsildar|மண்டல\s+துணை\s+வட்டாட்சியர்)\b', msg))
+        has_tah_ref = bool(re.search(r'\b(tahsildar|tahsildhar|தாசில்தார்|வட்டாட்சியர்)\b', msg))
+
+        # 1. SD/sketch falsely claimed for NISD
+        if has_sd_ref and has_nisd_ref and not has_isd_ref:
+            return "PREMISE_CORRECTION:SD_NISD"
+        # 2. DIS falsely claimed for NISD
+        if has_dis_ref and has_nisd_ref and not has_isd_ref:
+            return "PREMISE_CORRECTION:DIS_NISD"
+        # 3. ZDT falsely claimed for ISD
+        if has_zdt_ref and has_isd_ref and not has_nisd_ref:
+            return "PREMISE_CORRECTION:ZDT_ISD"
+        # 4. Tahsildar claimed for NISD while DIS claimed for ISD, or cross-chain claims
+        if ((has_isd_ref and has_nisd_ref) or (has_zdt_ref and (has_dis_ref or has_sd_ref))
+                or (has_tah_ref and has_nisd_ref and (has_dis_ref or has_sd_ref))):
+            return "ALL"
 
     if not _WORKFLOW_STEPS_WORD_RE.search(msg):
         return None
@@ -2941,16 +3373,47 @@ def _workflow_steps_topic(message: str, chat_history=None) -> Optional[str]:
 
 def _workflow_steps_answer(topic: str, is_tamil: bool, brief: bool = False) -> str:
     lang = "ta" if is_tamil else "en"
+    if topic.startswith("PREMISE_CORRECTION:"):
+        sub = topic.split(":", 1)[1]
+        if sub == "SD_NISD":
+            return ("இல்லை, அந்த தகவல் தவறானது. மூத்த வரைவாளர் (SD) உட்பிரிவு வரைபடத்தை ISD (0154) விண்ணப்பங்களுக்கு மட்டுமே தயாரிப்பார். NISD (0153) விண்ணப்பங்களில் உட்பிரிவு இல்லாததால் வரைபடம், கள ஆய்வு மற்றும் SD நடவடிக்கை எதுவும் இல்லை."
+                    if is_tamil else
+                    "No, that premise is incorrect. The Senior Draughtsman (SD) prepares the sub-division sketch only for ISD (0154) applications. NISD (0153) applications do not involve sub-division, so they have no sketch, no field inspection, and do not go to SD.")
+        if sub == "DIS_NISD":
+            return ("இல்லை, அந்த தகவல் தவறானது. துணை ஆய்வாளர் (DIS) ISD (0154) விண்ணப்பங்களை மட்டுமே ஆய்வு செய்கிறார். NISD (0153) விண்ணப்பங்கள் DIS-க்கு செல்வதில்லை; SIS ஆவண சரிபார்ப்புக்குப் பிறகு நேரடியாக மண்டல துணை வட்டாட்சியருக்கு (ZDT) செல்லும்."
+                    if is_tamil else
+                    "No, that premise is incorrect. The Deputy Inspector Surveyor (DIS) reviews and scrutinizes only ISD (0154) applications. NISD (0153) applications do not go to DIS; after SIS document verification, they proceed directly to the Zonal Deputy Tahsildar (ZDT).")
+        if sub == "ZDT_ISD":
+            return ("இல்லை, அந்த தகவல் தவறானது. மண்டல துணை வட்டாட்சியர் (ZDT) உட்பிரிவு இல்லாத (NISD, 0153) விண்ணப்பங்களை மட்டுமே ஆய்வு செய்து ஒப்புதல் அளிப்பார். உட்பிரிவு உள்ள (ISD, 0154) விண்ணப்பங்களை வட்டாட்சியர் (Tahsildar) DSC மூலம் ஒப்புதல் அளிப்பார்."
+                    if is_tamil else
+                    "No, that premise is incorrect. The Zonal Deputy Tahsildar (ZDT) handles and approves only non-subdivision (NISD, 0153) applications. Sub-division (ISD, 0154) applications are approved with DSC by the Tahsildar.")
     if topic == "CLARIFY_WORKFLOW":
         return ("Do you mean the ISD (0154) workflow (Involving Sub-Division) or NISD (0153) workflow (Not Involving Sub-Division)? Please specify which procedure you would like to know the next steps for."
                 if not is_tamil else
                 "ISD (0154) பணிப்பாய்வா அல்லது NISD (0153) பணிப்பாய்வா? எந்த நடைமுறையின் அடுத்த கட்டத்தை அறிய விரும்புகிறீர்கள் என்று குறிப்பிடவும்.")
     if topic.startswith("GLOSS:"):
-        return _GLOSSARY[topic[6:]][1 if is_tamil else 0]
+        term_key = topic[6:]
+        entry = (_GLOSSARY.get(term_key)
+                 or _GLOSSARY.get(_GLOSSARY_ALIAS.get(term_key, ""))
+                 or (term_key.endswith("s") and _GLOSSARY.get(term_key[:-1])))
+        if entry:
+            return entry[1 if is_tamil else 0]
+        return ("இந்த சொல் பற்றிய வரையறை பதிவேட்டில் இல்லை." if is_tamil
+                else f"I do not have a specific glossary definition for '{term_key}' in the survey rules.")
     if topic.startswith("AFTER:"):
-        return _AFTER[topic[6:]][1 if is_tamil else 0]
+        after_key = topic[6:]
+        entry = _AFTER.get(after_key)
+        if entry:
+            return entry[1 if is_tamil else 0]
+        return ("அடுத்த கட்டம் பற்றிய விவரம் கிடைக்கவில்லை." if is_tamil
+                else f"No subsequent workflow step is recorded for '{after_key}'.")
     if topic.startswith("WHO:"):
-        return _WHO_APPROVES[topic[4:]][1 if is_tamil else 0]
+        who_key = topic[4:]
+        entry = _WHO_APPROVES.get(who_key)
+        if entry:
+            return entry[1 if is_tamil else 0]
+        return ("ஒப்புதல் அளிக்கும் அலுவலர் பற்றிய விவரம் கிடைக்கவில்லை." if is_tamil
+                else f"No approval authority is recorded for '{who_key}'.")
     # `topic == "ALL"` never matched a key of `_WORKFLOW_STEPS_BRIEF_TEXT`
     # itself (only "ISD"/"NISD" are keys there), so `brief` was silently
     # ignored for the combined ISD+NISD answer: "explain the workflow step by
@@ -2961,8 +3424,14 @@ def _workflow_steps_answer(topic: str, is_tamil: bool, brief: bool = False) -> s
     if topic == "ALL":
         head = ("ஒவ்வொரு விண்ணப்ப வகைக்கும் பணிப்பாய்வு வேறு:\n\n" if is_tamil
                 else "The workflow depends on the application type:\n\n")
-        return head + "\n\n".join(_src[t][lang] for t in ("ISD", "NISD"))
-    return _src.get(topic, _WORKFLOW_STEPS_TEXT.get(topic, {}))[lang]
+        return head + "\n\n".join(_src.get(t, {}).get(lang, "") for t in ("ISD", "NISD"))
+    topic_dict = _src.get(topic) or _WORKFLOW_STEPS_TEXT.get(topic)
+    if not topic_dict:
+        return ("பணிப்பாய்வு விவரம் கிடைக்கவில்லை." if is_tamil
+                else f"No workflow steps are recorded for '{topic}'.")
+    if lang not in topic_dict:
+        lang = "en" if "en" in topic_dict else next(iter(topic_dict.keys()), "en")
+    return topic_dict.get(lang, "")
 
 
 def _last_assistant_message(chat_history) -> str:
@@ -3140,6 +3609,13 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     if not re.search(rf"{_FV_VISIT_WORD}|{_FV_TA_WORDS}", msg) or re.search(
             r"\b(?:my|mine|i|me|list|show|display|how\s+many|count|scheduled|pending|overdue|completed|today|tomorrow|week|month)\b|\d", msg):
         return None
+    # Questions referencing an attached report or specific inspection event
+    if re.search(r"\b(?:this\s+report|in\s+(?:this|the)\s+report|in\s+this\s+document|uploaded\s+report|field_inspection_report)\b", msg):
+        return None
+    if re.search(r"\b(?:what\s+happened\s+during|does\s+this\s+report\s+say|required\s+here)\b", msg):
+        return None
+    if re.search(r"\b(?:who\s+did|who\s+conducted|was\s+conducted|took\s+place)\b", msg):
+        return None
     # This whole topic only ever has an ISD/NISD answer baked in (_FV_RULE_ANSWERS).
     # "does TSLR Owner Name Correction need a field visit" matched the generic
     # "does ... need ... field visit" shape below and got the blanket ISD/NISD
@@ -3153,6 +3629,9 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     if _fvr_codes and any(c not in ("0153", "0154") for c in _fvr_codes):
         return None
     need = r"(?:need\w*|requir\w*|necessar\w*|mandatory|compulsory|venum|vendum|vendam|thevai\w*|தேவை\w*|வேண்டும்|கட்டாயம்|kattayam)"
+    # General procedural rules query: "what are the general field-visit rules for NISD"
+    if re.search(r"\b(?:rules?|policy|guidelines?)\b", msg) and re.search(r"\b(?:field\s*[- ]?visits?|field\s*[- ]?inspections?)\b", msg):
+        return "fv_not_needed" if re.search(r"\bnisd\b", msg) else "fv_needed"
     # Tamil / Tanglish: "எந்த சேவைக்கு கள ஆய்வு தேவை", "evlo service ku field visit venum"
     if re.search(r"(?:எந்த|எது|evlo|edhu|ethu|yentha|entha)\s*(?:சேவை|வகை|விண்ணப்ப|service|type|application)", msg) and re.search(need, msg):
         return "fv_not_needed" if re.search(r"(?:தேவையில்லை|வேண்டாம்|vendam|thevai\s*illa|venda)", msg) else "fv_needed"
@@ -3175,7 +3654,7 @@ def _field_visit_rule_topic(msg: str) -> Optional[str]:
     kind = r"(?:services?|types?|application\s+types?|applications?\s+types?|kinds?\s+of\s+applications?|categor\w+)"
     if re.search(rf"\b(?:which|what)\s+{kind}\b", msg):
         return "fv_not_needed" if _FV_NEG_NEED_RE.search(msg) else "fv_needed"
-    if re.search(r"\bwho\b.*\b(?:does|do|did|conducts?|carr(?:y|ies)\s+out|performs?|makes?|goes?)\b", msg):
+    if re.search(r"\bwho\b.*\b(?:does|do|conducts?|carr(?:y|ies)\s+out|performs?|makes?|goes?)\b", msg):
         return "fv_who"
     _neg = _FV_NEG_NEED_RE.search(msg)
     if re.search(r"\bwhy\b.*\b(?:need\w*|required|require\w*|necessary|mandatory|must|compulsory)\b", msg):
@@ -3195,7 +3674,12 @@ def _igrs_can_rule_topic(message: str, allow_bare_tamil_what: bool = True) -> Op
     msg = (message or "").lower()
     if not msg:
         return None
-    if re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg):
+    if _APP_NO_HISTORY_RE.search(msg):
+        return None
+    # Listing, counting, and masked/partial value questions are data queries, not format rules
+    if re.search(r"\b(?:show|list|display|how\s+many|count|applications?|apps?|விண்ணப்ப)\b", msg):
+        return None
+    if re.search(r"\b(?:last|first)\s+\d+\s+digits?\b", msg):
         return None
     _fv = _field_visit_rule_topic(msg)
     if _fv:
@@ -3257,7 +3741,7 @@ def _igrs_can_rule_topic(message: str, allow_bare_tamil_what: bool = True) -> Op
     # out, or beside a digit-length phrase ("does a 15 digit CAN mean...").
     # "CAN எண்" is how the identifier is written in Tamil -- the field map had
     # the same gap (CLAUDE.md, "Tamil needs a bare `igrs` keyword").
-    has_can = bool(re.search(r"\bcan\s+(?:number|no|num)\b|citizen\s+access"
+    has_can = bool(re.search(r"\bcan\s+(?:number|no|num|format|pattern|structure|length)\b|citizen\s+access"
                              r"|\bcan\s*எண்|குடிமகன்\s*அணுகல்", msg))
     _len_phrase = re.search(r"\b1[25]\s*-?\s*digits?\b", msg)
     if not has_can and _len_phrase and re.search(r"\bcan\b", msg):

@@ -203,6 +203,8 @@ async def _recheck_turn(message, session_id, officer, db, chat_history):
                 "timestamp": datetime.now(timezone.utc).isoformat(), "context_used": False,
                 "response_time_ms": 0, "table_data": None}
     prev_q = hist[idx].get("content") or ""
+    if _is_mutation_request(prev_q):
+        return None
     old = hist[idx + 1].get("content") if idx + 1 < len(hist) and hist[idx + 1].get("role") == "assistant" else None
     _SAVE_AS.set(message)
     try:

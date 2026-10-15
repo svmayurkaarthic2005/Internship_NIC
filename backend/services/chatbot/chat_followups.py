@@ -1873,6 +1873,9 @@ def _rescope_list_followup(message: str, chat_history: list) -> str:
     """
     if not message or not chat_history:
         return message
+    from .chat_shared import is_prohibit_listing
+    if is_prohibit_listing(message):
+        return message
     if _names_a_file(message):
         # The message names an attached file, so it is about that file and not
         # a continuation of the previous listing. See `_names_a_file`.

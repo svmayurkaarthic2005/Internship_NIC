@@ -57,6 +57,7 @@ from . import uamod_qa as _uamod_qa
 from . import natham_qa as _natham_qa
 from . import othercode_detail as _othercode_detail
 from .chat_smalltalk import _wfh_fmt_dt
+from .chat_shared import token_with_tamil_suffix_pattern
 from backend.services.rag import (
     detect_language,
     is_short_reply,
@@ -176,9 +177,9 @@ logger = get_logger(__name__)
 # subdivision" as a literal substring, so without it every NISD-by-name
 # question would ALSO match ISD.
 _SERVICE_CODE_NISD_RE = re.compile(
-    r'\bnisd\b|(?<!\d)0153(?!\d)|\bnot\s+involving\s+sub[\s-]?division\b')
+    rf'{token_with_tamil_suffix_pattern("nisd")}|(?<!\d)0153(?!\d)|\bnot\s+involving\s+sub[\s-]?division\b', re.IGNORECASE)
 _SERVICE_CODE_ISD_RE = re.compile(
-    r'\bisd\b|(?<!\d)0154(?!\d)|(?<!not\s)\binvolving\s+sub[\s-]?division\b')
+    rf'{token_with_tamil_suffix_pattern("isd")}|(?<!\d)0154(?!\d)|(?<!not\s)\binvolving\s+sub[\s-]?division\b', re.IGNORECASE)
 _SORT_RESET = contextvars.ContextVar("sort_reset", default=False)
 
 

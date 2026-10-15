@@ -173,6 +173,19 @@ _MONTH_NAMES = ["", "January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"]
 
 
+def token_with_tamil_suffix_pattern(token: str, disallow_slash: bool = False) -> str:
+    """Build a regex pattern matching `token` optionally followed by a Tamil case suffix or hyphen.
+
+    Handles Tamil case suffixes like -க்கு, -ற்கு, -யில், -இல், -வில், -ல், -ஐ, -ஆல்,
+    -உடன், -இன், -ஆக, -தானா, -ஆ, -வது, -ஓடு, -களின், -கள், -உடைய.
+    Because Python regex \\b treats Tamil characters as \\w, \\bTOKEN\\b never matches TOKENக்கு.
+    Lookarounds ensure word boundaries across both Latin/ASCII and Tamil scripts.
+    """
+    pre = r"(?<![/A-Za-z0-9\u0B80-\u0BFA])" if disallow_slash else r"(?<![A-Za-z0-9\u0B80-\u0BFA])"
+    post = r"(?![/A-Za-z0-9\u0B82-\u0BD7])" if disallow_slash else r"(?![A-Za-z0-9\u0B82-\u0BD7])"
+    return rf"{pre}{re.escape(token)}(?:-)?(?:க்கு|ற்கு|யில்|இல்|வில்|ல்|ஐ|ஆல்|உடன்|இன்|ஆக|தானா|ஆ|வது|ஓடு|களின்|கள்|உடைய)?{post}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Messages that ask nothing
 #
@@ -895,6 +908,85 @@ def _contentless_message(message: str) -> Optional[str]:
     return None
 
 
+# ── Negative listing prohibition ("dont show applications", etc.) ─────────────
+_PROHIBIT_LISTING_EN_RE = re.compile(
+    r'(?<!\w)(?:(?:actually|wait|please|pls)\s*,?\s*)?'
+    r'(?:'
+    r'(?:don\'?t|dont|do\s+not|never|stop|please\s+(?:don\'?t|dont|do\s+not))\s+'
+    r'(?:show|showing|list|listing|display|displaying|fetch|fetching|view|viewing|open|give\s+me)\s+'
+    r'(?:any\s+|the\s+)?(?:applications?|apps?|records?|files?|cases?|list\s+of\s+applications?|application\s+list)(?:\s+list)?'
+    r'|no\s+(?:applications?|apps?|records?|files?)\s+(?:list|table|details)'
+    r'|(?:applications?|apps?|records?|files?)\s*(?:[-:,]|\s+)\s*(?:don\'?t|dont|do\s+not|never|stop)\s+(?:show|showing|list|listing|display|displaying|fetch|view)'
+    r')(?!\w)',
+    re.IGNORECASE
+)
+
+_PROHIBIT_LISTING_TA_RE = re.compile(
+    r'(?:'
+    r'(?:விண்ணப்ப(?:ங்கள்|ங்களை|ப்\s*பட்டியல்|ப்\s*பட்டியலை|\s+பட்டியல்)?|கோப்பு(?:கள்|களை)?|பட்டியல்)'
+    r'[\s\w஀-௿]*?'
+    r'(?:காட்ட\s*வேண்டாம்|காட்டாதீர்கள்|காட்டாதே|காண்பிக்க\s*வேண்டாம்|காண்பிக்காதீர்கள்|பட்டியலிட\s*வேண்டாம்|பட்டியலிடாதீர்கள்|வேண்டாம்)'
+    r'|(?:காட்ட\s*வேண்டாம்|காட்டாதீர்கள்|காட்டாதே|காண்பிக்க\s*வேண்டாம்|காண்பிக்காதீர்கள்|பட்டியலிட\s*வேண்டாம்|பட்டியலிடாதீர்கள்|வேண்டாம்)'
+    r'[\s\w஀-௿]*?'
+    r'(?:விண்ணப்ப(?:ங்கள்|ங்களை|ப்\s*பட்டியல்|ப்\s*பட்டியலை|\s+பட்டியல்)?|கோப்பு(?:கள்|களை)?|பட்டியல்)'
+    r')',
+    re.IGNORECASE
+)
+
+_PROHIBIT_LISTING_TL_RE = re.compile(
+    r'(?:'
+    r'\b(?:applications?|apps?|files?)\b'
+    r'[\s\w]*?'
+    r'(?:(?:kaatta|kaata|katta|kaami|kami|show|display|list)(?:\s+panna)?\s*(?:vendam|venda|vendaam|pannadhe|pannathe|pannatha|koodadhu|koodathu|maatten|maatren)|kaattadhe|kaatadhe|kattadhe|kaattathe|kaatathe|show\s*pannadhe|show\s*pannathe)'
+    r'|(?:(?:kaatta|kaata|katta|kaami|kami|show|display|list)(?:\s+panna)?\s*(?:vendam|venda|vendaam|pannadhe|pannathe|pannatha|koodadhu|koodathu|maatten|maatren)|kaattadhe|kaatadhe|kattadhe|kaattathe|kaatathe|show\s*pannadhe|show\s*pannathe)'
+    r'[\s\w]*?'
+    r'\b(?:applications?|apps?|files?)\b'
+    r')',
+    re.IGNORECASE
+)
+
+
+def is_prohibit_listing(message: str) -> bool:
+    """Returns True if the message is an explicit instruction prohibiting
+    the display or listing of applications (Case A).
+
+    Must distinguish:
+    - Case A (Prohibit listing): "dont show applications", "no application list", "விண்ணப்பங்களைக் காட்ட வேண்டாம்", etc. -> True
+    - Case B (Count only): "Don't show applications, only tell me the count." -> False (wants count data)
+    - Case C (Positive list): "Show pending applications." -> False
+    - Case D (Filter negation): "Show applications that are not rejected.", "Don't show rejected applications; show pending ones." -> False
+    """
+    if not message:
+        return False
+    msg = message.strip()
+
+    # Check Case B: Count requests must not be treated as a pure prohibition.
+    from .chat_response_formatting import _is_count_only_query
+    if _is_count_only_query(msg):
+        return False
+
+    # Check Case D: If there is an explicit positive listing clause for a category,
+    # it is a filter / selective listing request, not a total prohibition.
+    if re.search(r'\b(?:show|list|display)\s+(?:pending|approved|isd|nisd|csc|citizen|active|overdue)\b', msg, re.IGNORECASE):
+        return False
+
+    return bool(
+        _PROHIBIT_LISTING_EN_RE.search(msg)
+        or _PROHIBIT_LISTING_TA_RE.search(msg)
+        or _PROHIBIT_LISTING_TL_RE.search(msg)
+    )
+
+
+def _prohibit_listing_reply(language: str) -> str:
+    """Short acknowledgment acknowledging the instruction not to list applications."""
+    if language in ("ta",):
+        return "புரிந்தது. விண்ணப்பப் பட்டியல் காட்டப்படாது."
+    elif language in ("tanglish",):
+        return "Purinjadhu. Application list kaatta maatten."
+    return "Understood. I won't display the application list."
+
+
+
 # ── No evidence, no factual LLM answer ─────────────────────────────────────
 # Everything the deterministic layer did not claim lands in `general_query`, and
 # from there in the agent / plain-prompt fallback. That is right for a real SIS
@@ -1049,8 +1141,8 @@ def _parse_negation(text: str):
 
 # ── Columns of a field-visit table accumulate ───────────────────────────────
 # "along with district" then "add ward" then "no type": the table keeps every column asked for so far.
-_COLW = (r"(?:ward|block|district|taluk|town|status|stage|type|survey(?:\s+number)?|fee|name|applicant(?:\s+name)?|"
-         r"mobile|phone|address|date|channel|can|patta|sub[\s-]?divisions?)")
+_COLW = (r"\b(?:ward|block|district|taluk|town|status|stage|type|survey(?:\s+number)?|fee|name|applicant(?:\s+name)?|"
+         r"owner|mobile|phone|address|date|channel|can|patta|sub[\s-]?divisions?)\b")
 _COL_LIST = rf"{_COLW}(?:\s*(?:,|and|&)\s*(?:the\s+)?{_COLW})*"
 _COL_ADD_RE = re.compile(rf"(?:also\s+)?(?:along\s+with|along|with|add|include|show)\s+(?:the\s+)?({_COL_LIST})"
                          rf"(?:\s+(?:also|too|columns?))?", re.IGNORECASE)
@@ -1450,11 +1542,13 @@ _FULLFORMS = {
     "zdt": ("ZDT = Zonal Deputy Tahsildar.", "ZDT = மண்டல துணை வட்டாட்சியர் (Zonal Deputy Tahsildar)."),
     "isd": ("ISD = Involving Sub-Division (service code 0154).", "ISD = Involving Sub-Division (சேவைக் குறியீடு 0154)."),
     "nisd": ("NISD = Not Involving Sub-Division (service code 0153).", "NISD = Not Involving Sub-Division (சேவைக் குறியீடு 0153)."),
-    "fmb": ("FMB = Field Measurement Book -- not part of this register or workflow.",
-            "FMB = Field Measurement Book — இந்தப் பதிவேட்டிலோ பணிப்பாய்விலோ இல்லை."),
+    # "fmb" deliberately removed (2026-10-15): no backing full-form entry
+    # any more, so "full form of FMB" now gets the honest "I do not have
+    # the full form of FMB" refusal via `_unknown_fullform`, instead of a
+    # specific expansion for a concept this register does not track.
 }
 _KNOWN_ACRONYMS = frozenset({"igrs", "sro", "csc", "can", "sla", "sis", "sd", "dis", "dsc", "zdt", "isd", "nisd",
-                             "fmb", "tahsildar", "cin", "ec", "fee"})
+                             "tahsildar", "cin", "ec", "fee"})
 
 
 def _fullform_term(message: str):

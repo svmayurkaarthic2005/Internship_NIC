@@ -260,7 +260,12 @@ async def dispatch_intent(
         del msg_lower
     if res_txt is _UNSET:
         del res_txt
-    if intent == "compare_applications":
+    if intent == "prohibit_listing":
+        from .chat_shared import _prohibit_listing_reply
+        response_text = _prohibit_listing_reply(language)
+        structured_data = None
+
+    elif intent == "compare_applications":
         # Both sides come from the register and the verdict is computed
         # here -- a comparison whose numbers came from the LLM is worse
         # than no comparison at all.

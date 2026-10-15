@@ -1160,6 +1160,28 @@ async def process_chat(
     """
     with chat_turn():
         _RAW_MESSAGE.set(message)
+        from .chat_shared import is_prohibit_listing, _prohibit_listing_reply
+        if is_prohibit_listing(message):
+            lang = detect_language(message)
+            reply_text = _prohibit_listing_reply(lang)
+            logger.info("Explicit negative instruction not to show applications; acknowledged without query")
+            await _cb().save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=reply_text,
+                language=lang, response_time_ms=0,
+                officer_id=officer.officer_id if officer else None
+            )
+            return {
+                "response": reply_text,
+                "language": lang,
+                "intent": "prohibit_listing",
+                "action": None,
+                "sources": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": False,
+                "response_time_ms": 0,
+                "table_data": None
+            }
         _bp = _big_plan(message)
         if _bp:
             return await _answer_big(_bp, message, session_id, officer, db, chat_history)
@@ -4214,6 +4236,20 @@ async def process_chat_stream(
     """
     with chat_turn():
         _RAW_MESSAGE.set(message)
+        from .chat_shared import is_prohibit_listing, _prohibit_listing_reply
+        if is_prohibit_listing(message):
+            import json as _json_prohibit
+            lang = detect_language(message)
+            reply_text = _prohibit_listing_reply(lang)
+            logger.info("Explicit negative instruction not to show applications; acknowledged without query (stream)")
+            yield f"data: {_json_prohibit.dumps({'content': reply_text})}\n\n".encode('utf-8')
+            await _cb().save_chat_messages(
+                db=db, session_id=session_id,
+                user_message=message, assistant_message=reply_text,
+                language=lang, response_time_ms=0,
+                officer_id=officer.officer_id if officer else None
+            )
+            return
         plan = _plan_requests(message)
         import json as _json_plan
         _bp = _big_plan(message)
@@ -8296,6 +8332,10 @@ def _build_table_data_raw(intent: str, message: str, user_id: str, structured_da
         return None
         
     intent_lower = intent.lower()
+
+    from .chat_shared import is_prohibit_listing
+    if intent_lower == "prohibit_listing" or _is_count_only_query(message) or is_prohibit_listing(message):
+        return None
 
     # "is this from citizen or CSC?" wants one word back. The 21-field
     # application table buried that answer under fields nobody asked about, so

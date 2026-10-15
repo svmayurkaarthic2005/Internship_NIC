@@ -3730,6 +3730,9 @@ def parse_intent(message: str, prev_intent: str = None, app_scoped: bool = False
     if (re.search(r"\bwho\s+(?:gets?|is|are)\s+notified\b", message or "", re.IGNORECASE)
             and not extract_application_number(message)):
         return "general_query"
+    from backend.services.chatbot.chat_shared import is_prohibit_listing
+    if is_prohibit_listing(message):
+        return "prohibit_listing"
     intent = _parse_intent_core(message, prev_intent, app_scoped)
     if intent == "pending_applications" and _is_register_wide_listing(message, prev_intent):
         return "all_service_code_applications"
@@ -4198,11 +4201,16 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             and not re.search(r"விண்ணப்ப|எனது|எனக்கு|எத்தனை", msg)):
         return "service_code_guide"
 
+    if parse_comparison_query(message):
+        return "compare_applications"
+
     from backend.utils.helpers import find_service_codes as _sc_find_codes
     _sc_in_msg = _sc_find_codes(msg)
     if (len(_sc_in_msg) >= 2
             and not re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", msg)
-            and not re.search(r"\b(?:application\s+counts?|how\s+many\s+applications|more\s+applications)\b", msg)):
+            and not re.search(r'\b(?:correct|right|isn\'?t\s+it|is\s+that\s+(?:so|right|correct))\s*\??\s*$', msg.strip(), re.IGNORECASE)
+            and not (re.search(r"\b(?:applications?|aplications?|apps?|files?|cases?)\b|விண்ணப்ப", msg, re.IGNORECASE)
+                     and re.search(r"\b(?:show|list|display|view|how\s+many|count|number\s+of|both)\b|காட்டு|காண்பி|எத்தனை", msg, re.IGNORECASE))):
         return "service_code_lookup"
 
     if (prev_intent in ("service_code_lookup", "service_code_guide")
@@ -4232,9 +4240,6 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
                               r"schedule|overdue|when|which|applications?|apps?|"
                               r"today|tomorrow|week)\b|விண்ணப்ப|எனது|எனக்கு", msg)):
         return "service_code_lookup"
-
-    if parse_comparison_query(message):
-        return "compare_applications"
 
     # "what is ISD?" / "what is NISD?" — the plainest domain question there is,
     # and it fell all the way to general_query, where llama3.1:8b answered
@@ -7275,9 +7280,13 @@ def extract_submission_channel(message: str) -> Optional[str]:
 
 
 def extract_application_number(message: str) -> Optional[str]:
-    """Extract application number (e.g. 2026/0153/31/000001, 2026/31/0153/000001, ISD/W1/2024/0001, APP-2024-000015,
-    or any YYYY/A/B/N format the user typed)."""
+    """Extract application number (e.g. 2026/0153/31/000001, 2026 / 0154 / 28 / 001280, 2026_0154_28_001280,
+    ISD/W1/2024/0001, APP-2024-000015, or any YYYY/A/B/N format the user typed)."""
     cleaned = clean_message(message)
+    # 0. Spaced slash or underscore format normalization: 2026 / 0154 / 28 / 001280 or 2026_0154_28_001280
+    alt_sep = re.search(r'(?:\b|(?<=[\s_(\[]))(20\d{2})\s*[/_]\s*(0?\d{3,4})\s*[/_]\s*(\d{1,3})\s*[/_]\s*(\d{4,6})(?:\b|(?=[\s_.)\]]))', cleaned)
+    if alt_sep:
+        return f"{alt_sep.group(1)}/{alt_sep.group(2)}/{alt_sep.group(3)}/{alt_sep.group(4)}".upper()
     # 1. Strict known-format match (known service codes)
     app_match = re.search(
         r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
@@ -7296,7 +7305,15 @@ def extract_application_numbers(message: str) -> List[str]:
     """Extract ALL application numbers from a message (supports multi-app queries like 'show details for A and B').
     Returns a list of unique application numbers in the order they appear."""
     cleaned = clean_message(message)
-    # Strict known-format matches first
+    seen = set()
+    result = []
+    # 0. Check spaced slash or underscore formats
+    for m in re.finditer(r'(?:\b|(?<=[\s_(\[]))(20\d{2})\s*[/_]\s*(0?\d{3,4})\s*[/_]\s*(\d{1,3})\s*[/_]\s*(\d{4,6})(?:\b|(?=[\s_.)\]]))', cleaned):
+        canon = f"{m.group(1)}/{m.group(2)}/{m.group(3)}/{m.group(4)}".upper()
+        if canon not in seen:
+            seen.add(canon)
+            result.append(canon)
+    # Strict known-format matches
     matches = re.findall(
         r'\b\d{4}/(?:0153|0154)/\d{1,3}/\d+\b|\b\d{4}/\d{1,3}/(?:0153|0154)/\d+\b|\b(?:ISD|NISD)/\w+/\d+/\d+\b|\bAPP-\d+-\d+\b',
         cleaned, re.IGNORECASE
@@ -7304,8 +7321,6 @@ def extract_application_numbers(message: str) -> List[str]:
     # Broader fallback: any YYYY/A/B/NNNN not already captured
     if not matches:
         matches = re.findall(r'\b20\d{2}/[\w]+/[\w]+/\d+\b', cleaned)
-    seen = set()
-    result = []
     for m in matches:
         upper = m.upper()
         if upper not in seen:

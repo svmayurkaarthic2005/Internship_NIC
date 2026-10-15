@@ -21,7 +21,12 @@ from .chat_service_codes import (
     _named_unsupported_service_code,
     _unsupported_service_code_answer,
 )
-from .chat_shared import _contentless_message, _sd_parse
+from .chat_shared import (
+    _contentless_message,
+    _sd_parse,
+    is_prohibit_listing,
+    _prohibit_listing_reply,
+)
 from .chat_smalltalk import (
     _contentless_reply,
     _is_capability_question,
@@ -141,6 +146,14 @@ def early_guard_reply(message: str, language: str, chat_history: Optional[List[d
             intent="service_code_lookup",
             log="Named an unsupported service code '%s'; answered deterministically",
             log_args=(unsupported_code,),
+        ), None
+
+    if is_prohibit_listing(message):
+        return EarlyReply(
+            text=_prohibit_listing_reply(language),
+            intent="prohibit_listing",
+            log="Explicit negative instruction not to show applications; acknowledged without query",
+            stream_log_suffix=False,
         ), None
 
     unk_kind = _unknown_message_kind(message)

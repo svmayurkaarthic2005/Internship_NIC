@@ -695,6 +695,8 @@ def _fv_followup(original: str, ctx, resolution):
             and (re.search(r"\bbetween\b|\b20\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", _clean))):
         return _ret(f"show field visits {_clean}")
     _adds, _drops = _fv_cols_parse(_clean)
+    if not (_adds or _drops):
+        _adds, _drops = _fv_cols_parse_loose(_clean)
     if _adds or _drops:
         _state = _fv_cols_merge(_prior_cols, _adds, _drops)
         _FV_COLS.set(_state)

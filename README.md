@@ -2,10 +2,12 @@
 
 A bilingual (Tamil/English/Tanglish) AI-powered chatbot for Sub Inspector Surveyor officers in Tamil Nadu, India. Officers interact via natural language chat to manage survey applications, track status, check documents, and query field visits.
 
+**Covers every TAMILNILAM urban service code, not just ISD/NISD.** ISD (`0154`) and NISD (`0153`) are the two codes with a full multi-desk workflow machine (`applications` / `workflow_history` / `field_visits`), but an officer's jurisdiction sees applications under ~27 other codes too — Modification (`0158`), Addition (`0159`), Deletion (`0160`), ULC Subdivision (`0164`), F-Line (`0178`), TSLR (`0156`), and more. Every one of them is answered equally: listings, counts, status filters, comparisons and per-file detail all read from the flat `service_register_entries` register (see "Database Architecture" below), with no code singled out or silently dropped.
+
 ## Tech Stack
 
 - **Backend**: FastAPI + SQLAlchemy (async) + PostgreSQL + pgvector
-- **Database**: `sis_chatbot_db` and the `knowledge_embeddings` vector store
+- **Database**: `SISchatbot` and the `knowledge_embeddings` vector store
 - **LLM**: Ollama (`llama3.1:8b`) running locally
 - **Embeddings**: `nomic-embed-text` via Ollama
 - **Frontend**: Vanilla HTML/CSS/JS (no framework)
@@ -79,23 +81,42 @@ nic_internship/
 │   │   ├── chat.py           # POST /api/v1/chat/stream, GET /api/v1/chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
-│   ├── services/             # chatbot.py (orchestrator, ~29000 lines), rag.py (intent/LLM),
-│   │   │                     #   postgres.py (DB-only queries), agent.py + agent_tools.py
-│   │   │                     #   (tool-calling fallback), plus ~25 per-topic *_qa.py modules
-│   │   │                     #   (owner/parcel/F-Line/TSLR/workflow/attachment handlers, …).
-│   │   │                     #   This list grows often — see CLAUDE.md's Project Structure
-│   │   │                     #   for the current full breakdown, not this file.
-│   ├── sample_db/            # sis_chatbot_db build pipeline — see backend/sample_db/README.md
-│   │   │                     #   NOTE: an uncommitted backend/sample_db_new/ has superseded
-│   │   │                     #   this as what actually built the live DB — see CLAUDE.md.
+│   ├── services/
+│   │   ├── chatbot/          # The orchestrator package (formerly one ~29000-line chatbot.py,
+│   │   │   │                 #   now split into ~45 modules under this directory):
+│   │   │   ├── orchestrator.py          # process_chat() / process_chat_stream() — main entry points
+│   │   │   ├── chat_dispatch.py / _stream.py  # routes a parsed intent to its deterministic handler
+│   │   │   ├── chat_application_queries.py    # all-service-code register listings/counts (ISD, NISD,
+│   │   │   │                                  #   and every other TAMILNILAM code alike)
+│   │   │   ├── chat_shared.py           # shared renderers (the all-service-code table, field maps)
+│   │   │   ├── chat_followups.py / chat_smalltalk.py / chat_corrections.py / chat_routing.py
+│   │   │   ├── agent.py, agent_tools.py # LLM tool-calling fallback (14 read-only domain tools)
+│   │   │   └── *_qa.py                  # ~25 per-record-type handlers: owner, parcel, F-Line, TSLR,
+│   │   │                                 #   workflow, cross-checks, attachment Q&A, …
+│   │   ├── rag.py            # Intent detection (~60 intents), language detection, LLM calls
+│   │   ├── postgres.py       # DB-only query functions (ISD/NISD `applications` + the
+│   │   │                     #   all-code `service_register_entries` register)
+│   │   ├── followup_context.py   # structured context for pronoun-less follow-ups
+│   │   ├── attachment_store.py, doc_extract.py, csv_ops.py   # uploaded-file handling
+│   │   ├── pgvector_store.py, embeddings.py                  # knowledge_embeddings (RAG corpus)
+│   │   └── readonly_guard.py # enforces that a chat turn can read the register but never write it
+│   │                         # See CLAUDE.md's Project Structure for the current full breakdown.
+│   ├── sample_db/            # SISchatbot build pipeline — see backend/sample_db/README.md
 │   │   ├── seed_sample_db.py      # Creates the DB, applies DDL, generates + inserts rows
 │   │   ├── verify_sample_db.py    # Structure/refs/population/signature/non-leakage checks
-│   │   ├── build_app_tables.py    # Projects sample tables → the app's ORM tables
+│   │   ├── build_app_tables.py    # Projects sample tables → the app's ISD/NISD ORM tables
 │   │   ├── verify_identifiers.py  # Checks every Aadhaar / CAN against identifiers.py
 │   │   ├── identifiers.py         # Aadhaar + CAN rules, shared by seed and projection
 │   │   ├── check_app_wiring.py    # Smoke test: app queries + chatbot answer from this DB
 │   │   ├── question_bank.py       # Shared question set for the suites
 │   │   └── README.md              # Source of truth for the DB layout
+│   ├── sample_db_new/        # The pipeline that actually built the LIVE SISchatbot DB:
+│   │   │                     #   adds the other ~27 service codes (F-Line, TSLR, correction/
+│   │   │                     #   modification, …) sample_db/'s own seed never covered, and
+│   │   │                     #   populates service_register_entries. Live table names drop
+│   │   │                     #   the sample_db/ "_demo" suffix.
+│   │   ├── build_app_tables_new.py   # Projects sample_db_new's CSVs → the live DB tables
+│   │   └── column_map.py             # CSV-column → DB-column mapping for that projection
 │   ├── documents/            # RAG corpus: workflow_guide.txt, faq_*.txt, survey_manual.txt
 │   └── utils/
 │       ├── fuzzy.py          # Fuzzy month/token matching for typo tolerance
@@ -158,59 +179,68 @@ Run `python -m backend.sample_db.test_intent_coverage` to verify routing without
 - **Tanglish**: Phonetic patterns (e.g., "vanakkam", "enna")
 - **English**: Default fallback
 
-### 3. Database Architecture — `sis_chatbot_db`
+### 3. Database Architecture — `SISchatbot`
 
-One PostgreSQL database holds **two layers**:
+One PostgreSQL database (52 tables, live). Table names here are the names as they
+actually exist in the running database (`backend/sample_db_new/` built it — the
+older `backend/sample_db/` pipeline's own tables carry a `_demo` suffix the live
+ones don't).
 
-**Layer 1 — 16 CSV-shaped tables** (source of record, seeded from TAMILNILAM urban extracts):
+**Register — every service code, one flat table.** `service_register_entries`
+(176 rows across the 11 service codes currently populated: ISD `0154`, NISD
+`0153`, `0156`, `0158`, `0159`, `0160`, `0162`, `0164`, `0165`, `0169`, `0178`)
+is the source for any question that names no specific type — listings, counts,
+status filters, per-ward/block/channel breakdowns, comparisons. No code is
+singled out: `get_all_service_code_applications()` in `postgres.py` and
+`chat_application_queries.py` / `chat_shared.py` in the chatbot package query
+and render it generically, keyed off `SIS_URBAN_SERVICES` (all 29 canonical
+codes, in `backend/utils/helpers.py`), never a hardcoded code list.
 
-| Table | Rows | Table | Rows |
-|---|---|---|---|
-| `appl_log_urban_demo` | 1211 | `full_field_patta_transfer_old_owner_demo` | 630 |
-| `application_workflow_demo` | 288087 | `full_field_patta_transfer_return_owner_demo` | 46 |
-| `areg_temp_subdivclub_demo` | 49 | `full_field_patta_transfer_urban_demo` | 229 |
-| `chitta_temp_subdivclub_demo` | 117 | `sub_div_patta_transfer_application_information_urban_demo` | 41 |
-| `full_field_patta_transfer_application_information_demo` | 166 | `sub_div_patta_transfer_urban_demo` | 50 |
-| `full_field_patta_transfer_igrs_owner_demo` | 100 | `uareg_demo` | 1033 |
-| `full_field_patta_transfer_new_owner_demo` | 620 | `uaregmap_ds_demo` | 1036 |
-| `uchitta_natham_demo` | 551 | `uchitta_nathammap_ds_demo` | 439 |
+**The ISD/NISD workflow machine.** `applications` (57 rows) is narrower by
+design: only ISD (`0154`) and NISD (`0153`) get a full multi-desk workflow
+(`workflow_history`, `field_visits`, `patta_transfers`, `applicants`,
+`application_documents`) — the department's own data only runs that chain for
+those two codes. A question that names ISD/NISD specifically, or something
+only they carry (overdue field visits, workflow stage, per-file applicant
+detail), is answered from here instead of the flat register.
 
-These table names and the mapping below are the names as *committed* in
-`backend/sample_db/`. The live database was in fact last built from an
-uncommitted `backend/sample_db_new/` pipeline (different table names, e.g.
-`appl_log_urban` with no `_demo` suffix, plus several tables not listed here —
-`service_register_entries`, `correction_modification_flow`, `f_line_service_urban`,
-`tslr_sketch_urban`, …). See CLAUDE.md's "Database Layout" section for the
-current, unreconciled state before trusting either list against a running DB.
+**Per-code detail tables**, each read by its own `*_qa.py` handler in
+`backend/services/chatbot/`, for the service codes that carry extra structure
+beyond the register row: `f_line_service_urban` / `f_line_service_application_
+information_urban` (F-Line `0178`), `tslr_sketch_urban` (TSLR `0156`),
+`correction_modification_flow` + `uareg_modification` + `uchitta_natham_
+modification` (Modification/Addition/Deletion `0158`/`0159`/`0160`, ULC
+Subdivision `0164`, Govt-to-Private `0169`), `sd_attachment` (ISD sketch
+PDFs), `full_field_patta_transfer_*` (NISD patta-transfer owners), `chitta_
+temp_*` / `areg_temp_subdivclub` (ISD sub-division + natham-chitta owners).
 
-**Layer 2 — ORM tables** (`backend/models.py`), projected from layer 1 by `build_app_tables.py`:
+**Geography masters** (department-wide, statewide): `district_unicode`,
+`taluk`, `town`, `ward`, `block` — loaded verbatim from TAMILNILAM pg_dumps;
+the app's own `towns` → `wards` → `blocks` carry the officer-jurisdiction
+scoping and reference the masters for names.
 
-| Sample table | App table |
-|---|---|
-| `urban_parcel_register` | `towns` → `wards` → `blocks`, `survey_numbers`, `sub_divisions` |
-| `urban_natham_chitta_owner` | `owners`, `survey_ownership` |
-| `urban_application_log` | `applications` (+ `applicants`, `application_documents`) |
-| `application_workflow_action` | `workflow_history`, `field_visits` |
-| `urban_temp_subdivision_parcel` | `application_sub_divisions` |
-| `nisd_/isd_transfer_urban_detail` | `patta_transfers` |
-| workflow usernames at role 41 | `sis_officers`, `officer_jurisdictions` |
-
-The chatbot queries **only layer 2** through `postgres.py`. `knowledge_embeddings` (768-dim vectors, HNSW index, cosine similarity) lives in the same database.
+**Everything the chatbot reads goes through `postgres.py`** — no handler
+queries a table directly. `knowledge_embeddings` (768-dim vectors, HNSW index,
+cosine similarity) lives in the same database and backs the RAG/LLM fallback.
 
 ### 4. Application Types
 
 - **ISD** (`0154`) — **Involving Sub-Division**: field inspection + SD sketch required
 - **NISD** (`0153`) — **Not Involving Sub-Division**: document verification only, no field visit
+- **Every other service code** (`0156`, `0158`–`0169`, `0178`, …) — register-only, no field-visit
+  tracking of its own; `SIS_URBAN_SERVICES` states whether the service needs one.
 
 ### 5. Application Statuses
 
-`pending` → `in_progress` → `escalated` → `approved` / `rejected`
+`applications` (ISD/NISD) runs the full state machine: `pending` → `in_progress` → `escalated` →
+`approved` / `rejected`. `service_register_entries` (every code, including ISD/NISD) only ever
+carries the coarser `pending` / `approved` / `rejected` the source extract gives — no
+`in_progress`/`escalated` split.
 
-Current split: 150 approved, 52 rejected, 5 pending, 2 in progress.
+**All queries exclude `rejected` applications by default** (a listing says how many were left
+out and that asking for them shows them) to prevent ghost data appearing in lists.
 
-**All queries exclude `rejected` applications** to prevent ghost data appearing in lists.
-
-### 6. Chatbot Logic (`services/chatbot.py`)
+### 6. Chatbot Logic (`services/chatbot/`)
 
 **Context Management** — implicit follow-ups:
 - `followup_context.py` stores structured context from each deterministic answer in `chat_messages.structured_data`, enabling pronoun-less follow-ups ("which is oldest?", "when was it scheduled?")
@@ -276,8 +306,8 @@ Catalogue + exhaustive sweep artifacts: `SIS_All_Service_Code_Catalogue.csv` (29
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/sis_chatbot_db
-SYNC_DATABASE_URL=postgresql://user:pass@localhost:5432/sis_chatbot_db
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/SISchatbot
+SYNC_DATABASE_URL=postgresql://user:pass@localhost:5432/SISchatbot
 
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434
