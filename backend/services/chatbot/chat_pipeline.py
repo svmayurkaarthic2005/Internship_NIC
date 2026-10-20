@@ -95,6 +95,7 @@ class EarlyReply:
 
 def early_guard_reply(message: str, language: str, chat_history: Optional[List[dict]],
                       raw_message: Optional[str], has_followup_ctx: bool,
+                      has_active_document: bool = False,
                       ) -> Tuple[Optional[EarlyReply], Optional[str]]:
     """The guard chain both pipelines run before intent routing, in their
     original order: contentless message -> mutation request -> bare language
@@ -105,6 +106,17 @@ def early_guard_reply(message: str, language: str, chat_history: Optional[List[d
     when there is no reply, because the caller's praise/complaint branch right
     after this chain reads it. It is None whenever the chain stopped before
     computing it, which is exactly when the caller has already returned.
+
+    `has_active_document` stands the out-of-scope refusal aside: an officer
+    may upload ANY file, not just SIS-shaped ones (a spreadsheet of movies,
+    a recipe, a memo) -- that is the whole point of the attachment feature,
+    documented in CLAUDE.md as reading "evidence," not SIS content. "how many
+    movies are by Christopher Nolan" right after uploading a CSV of movies
+    was refused "I'm the SIS assistant..." before the attachment planner --
+    which answers exactly that from the file -- ever got a turn, because this
+    guard runs first and has no notion of what was just uploaded. Capability
+    questions ("what can you do") are untouched: they are about the
+    assistant itself, not the file, whatever is attached.
     """
     blank_kind = _contentless_message(message)
     if blank_kind:
@@ -169,7 +181,8 @@ def early_guard_reply(message: str, language: str, chat_history: Optional[List[d
     # deterministic gate and left to the caller's direct LLM reply.
     ssk = _special_scope_kind(message)
     if not _sd_parse(message, chat_history) and (
-            _is_capability_question(message) or _is_out_of_scope(message)
+            _is_capability_question(message)
+            or (_is_out_of_scope(message) and not has_active_document)
             or bool(ssk and ssk not in ("praise", "complaint"))):
         capability = _is_capability_question(message)
         return EarlyReply(

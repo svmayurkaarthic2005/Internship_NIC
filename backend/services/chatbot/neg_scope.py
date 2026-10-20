@@ -17,6 +17,11 @@ EXCLUDE: contextvars.ContextVar = contextvars.ContextVar("app_exclude", default=
 
 _TA = "[஀-௿]"
 _TERM = (rf"(?:nisd|nsid|isd|pending|approved|accepted|completed|rejected|in[\s-]?progress|escalated|"
+         # everyday status synonyms -- "neither accepted nor refused"
+         # otherwise only captured "accepted": "refused" matched nothing in
+         # this regex at all, so it was never seen as a term to exclude, and
+         # the "nor refused" half of the negation was silently dropped.
+         rf"outstanding|unfinished|unresolved|open|sanctioned|cleared|refused|declined|"
          rf"csc|citizen|sub[\s-]?registrar|sro|ward\s*\d{{1,3}}|வார்டு\s*\d{{1,3}}|"
          rf"அங்கீகரி{_TA}*|ஒப்புத{_TA}*|நிராகரி{_TA}*|மறுக்கப்{_TA}*|நிலுவை{_TA}*|செயல்பாட்டில்)")
 # these cues negate every item in the list that follows ("except A and B", "neither A nor B")
@@ -59,7 +64,10 @@ _SEP = re.compile(r"\s*(,|and|or|nor|&|/)\s*(?:(?:" + _CUE_ALL + "|" + _CUE_ONE 
 _STATUS_TA = (("அங்கீகரி", "approved"), ("ஒப்புத", "approved"), ("நிராகரி", "rejected"),
               ("மறுக்கப்", "rejected"), ("நிலுவை", "pending"), ("செயல்பாட்டில்", "in_progress"))
 _STATUS_EN = {"pending": "pending", "approved": "approved", "accepted": "approved", "completed": "approved",
-              "rejected": "rejected", "escalated": "escalated"}
+              "rejected": "rejected", "escalated": "escalated",
+              "outstanding": "pending", "unfinished": "pending", "unresolved": "pending", "open": "pending",
+              "sanctioned": "approved", "cleared": "approved",
+              "refused": "rejected", "declined": "rejected"}
 _LABEL_TA = {"pending": "நிலுவையில் உள்ள", "approved": "அங்கீகரிக்கப்பட்ட", "rejected": "நிராகரிக்கப்பட்ட",
              "in_progress": "செயல்பாட்டில் உள்ள", "escalated": "உயர்நிலைக்கு அனுப்பப்பட்ட",
              "CSC": "CSC", "citizen": "குடிமகன்", "sub_registrar": "சார்-பதிவாளர்"}

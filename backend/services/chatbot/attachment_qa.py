@@ -86,12 +86,31 @@ _DOC_WORDS = (
     # determiner. The noun itself still names the file; only the determiner
     # changed scripts.
     "andha file", "andha document", "andha doc", "andha pdf", "andha attachment",
-    "files", "both files", "the files", "two files", "files la", "files-la", "filesla",
-    "கோப்புகள்", "கோப்புகளி", "இரண்டு கோப்பு",
+    # Deliberately no bare/plural "files" here ("pending files", "my files",
+    # "approved files", "கோப்புகள்"): an SIS officer says "file" the same way
+    # they say "application" -- rag.py's own application-listing routing
+    # treats plural "files" as that noun (a negative lookahead specifically
+    # excludes "the files" from its singular "the file" = upload-reference
+    # check for the same reason). Without this exclusion, EVERY such
+    # question -- with no upload ever involved -- was answered "I don't have
+    # an uploaded document for this chat", because the bare plural alone was
+    # enough to claim the turn out from under the register listing. A
+    # genuine "summarize both files" after an actual upload is still caught:
+    # `targets_attachment()` has other signals once a document is active
+    # (is_overview_request, csv headers, or intent == general_query).
 )
 
 _VAGUE_DOC_WORDS = ("in it", "the report")
 _PAGE_OR_FILETYPE_RE = re.compile(r"\b(?:page|pg)\s*\d+\b|\b(?:memo|pdf|csv|docx)\b")
+# "row 1"/"row no. 3" is as explicit a file reference as "page 2" -- a CSV
+# has no pages, rows are how an officer points at one of its lines -- EXCEPT
+# when the rest of the message already names a register listing of its own
+# ("row 1 of my pending applications", "2nd ISD row"), which stays exactly
+# that. Unlike `_PAGE_OR_FILETYPE_RE` this one is register-cue-aware, so it
+# cannot be folded into that plain regex -- see `rag.names_bare_csv_row()`.
+def _names_file_row(message: str) -> bool:
+    from backend.services.rag import names_bare_csv_row
+    return names_bare_csv_row(message)
 
 # A question shaped like a register query stays on the register even when the
 # conversation was just about the file. Split into words that are unambiguous
@@ -320,6 +339,7 @@ def explicit_attachment_signal(message: str, docs: Sequence[ChatAttachment]) -> 
     low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
     return bool(mentions_filename(message, docs)
                 or _PAGE_OR_FILETYPE_RE.search(low)
+                or _names_file_row(message)
                 or any(w in low_words for w in _DOC_WORDS)
                 or is_overview_request(message)
                 or (resolve_file_ordinal_pick(message, docs) is not None))
@@ -1139,7 +1159,26 @@ _OVERVIEW_RE = re.compile(
     r"|\bwhat\s+(?:does|do)\s+(?:it|this|that)(?:\s+(?:file|document|doc|attachment|pdf|txt))?\s+"
     r"(?:contain\w*|have|include\w*|say|cover\w*)\b"
     r"|சுருக்க|உள்ளடக்க|என்ன\s+இருக்கு|என்ன\s+உள்ளது|என்ன\s+இருக்கிறது|இதில்\s+என்ன"
-    r"|\b(?:enna\s+irukku|ulla\s+enna|summary\s+sollu|ithula\s+enna|idhula\s+enna)\b",
+    r"|\b(?:enna\s+irukku|ulla\s+enna|summary\s+sollu|ithula\s+enna|idhula\s+enna)\b"
+    # "show me everything in the file" / "show the whole document" / "list
+    # all rows" / "display all sections" / "give me the full file" -- an
+    # officer pointing at the WHOLE upload, not asking "what does it
+    # contain" in those exact words. These used to miss the overview path
+    # entirely: the vague request carried no content word for the evidence
+    # floor to match ("could not find this"), or the generic noun ("rows",
+    # "sections", "data", "table") read as ordinary SIS vocabulary and the
+    # question was answered from the live register instead of the file.
+    r"|\b(?:show|list|display|give|read)\s+(?:me\s+)?"
+    r"(?:(?:all|everything)|the\s+(?:whole|entire|complete|full))\b"
+    r"\s*(?:\w+\s+){0,3}"
+    r"(?:content|contents|rows?|sections?|data|document|doc|file|csv|pdf|"
+    r"table|details?|text)\b"
+    # "format the document nicely" / "format this as a table" over a bare
+    # file reference (no prior answer to reformat -- `reformat_as_table`
+    # already owns that case when there IS one) -- the officer wants the
+    # file's own content presented, read the same as "show me the file".
+    r"|\bformat\s+(?:me\s+)?(?:this|it|the\s+(?:file|document|doc|data|"
+    r"content|csv|table))\b",
     re.IGNORECASE)
 _OVERVIEW_TYPO_TARGETS = ("contains", "contents", "summary", "summarize", "summarise", "overview")
 
@@ -1420,7 +1459,7 @@ def targets_attachment(message: str, intent: str,
     # `explicit_attachment_signal` already does, so this check and that one
     # agree on what counts as a real upload reference.
     low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
-    if any(w in low_words for w in _DOC_WORDS) or _PAGE_OR_FILETYPE_RE.search(low):
+    if any(w in low_words for w in _DOC_WORDS) or _PAGE_OR_FILETYPE_RE.search(low) or _names_file_row(message):
         return True
     if _APPLICATION_NO_RE.search(message or ""):
         # An explicit register reference outranks attachment context. The file
@@ -1877,7 +1916,25 @@ def build_prompt(message: str, language: str, evidences: Sequence[Evidence],
         "the refusal just because the evidence is a single value instead of "
         "a table: a single labelled value answers \"list every X\" just as "
         "well as \"what is X\" does.\n"
-        f"{lang_line}\n"
+        + (
+            # "show me everything" / "the whole document" names no single
+            # field for the rules above to hunt for, so the model -- reading
+            # them literally -- found no one labelled fact to extract and
+            # fell to the refusal line, on evidence that was the ENTIRE
+            # document. This rule only applies when the question itself was
+            # already recognised as an overview request (never volunteered
+            # for an ordinary field lookup, which keeps the narrow rules
+            # above exactly as strict as they were).
+            "- The officer asked to see the file's own content as a whole "
+            "(\"show everything\", \"the whole document\", \"the full "
+            "text\"), not one field. Present the evidence itself -- quoted "
+            "or lightly summarised, every distinct point it contains -- "
+            "instead of refusing for naming no single field; the refusal "
+            "line above is for when the evidence does NOT contain what was "
+            "asked, not for a request that spans all of it.\n"
+            if is_overview_request(message) else ""
+        )
+        + f"{lang_line}\n"
         f"{_RECOVERY_LINE if recovery else ''}"
         f"{computed_block}"
         f"\n=== EVIDENCE ===\n{evidence_text}\n=== END EVIDENCE ===\n\n"
@@ -2926,6 +2983,7 @@ def _maybe_expired_notice(message: str, language: str) -> Optional[AttachmentPla
     low_words = _ATTACHED_TO_RECORD_RE.sub(" ", low)
     if not (typed_filenames(message)
             or _PAGE_OR_FILETYPE_RE.search(low)
+            or _names_file_row(message)
             or any(w in low_words for w in _DOC_WORDS if w not in _VAGUE_DOC_WORDS)):
         return None
     return AttachmentPlan(kind=KIND_DETERMINISTIC, text=_expired_notice_text(language))
@@ -2960,7 +3018,7 @@ def _is_bare_doc_backref(message: str) -> bool:
     low = (message or "").lower()
     if _APPLICATION_NO_RE.search(low) or any(m in low for m in _DB_ONLY_MARKERS):
         return False
-    if typed_filenames(message) or _PAGE_OR_FILETYPE_RE.search(low):
+    if typed_filenames(message) or _PAGE_OR_FILETYPE_RE.search(low) or _names_file_row(message):
         return False  # names something explicit -- _maybe_expired_notice already owns this
     return bool(_BARE_DOC_BACKREF_RE.search(low))
 

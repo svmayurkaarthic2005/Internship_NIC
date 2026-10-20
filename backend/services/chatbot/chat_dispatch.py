@@ -1349,7 +1349,10 @@ async def dispatch_intent(
     elif intent == "officer_directory":
         _dir_ward = extract_ward_number(message) if re.search(
             r"\bward\b|வார்டு", message, re.IGNORECASE) else None
-        structured_data = await get_ward_directory(db, officer, ward_number=_dir_ward)
+        _dir_block = extract_block_number(message) if re.search(
+            r"\bblock\b|பிளாக்", message, re.IGNORECASE) else None
+        structured_data = await get_ward_directory(db, officer, ward_number=_dir_ward,
+                                                     block_number=_dir_block)
         structured_data["query_type"] = "Ward Directory"
 
     elif intent == "completion_rate":

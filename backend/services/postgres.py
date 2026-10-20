@@ -3836,6 +3836,7 @@ async def get_ward_directory(
     db: AsyncSession,
     officer: OfficerContext,
     ward_number: Optional[str] = None,
+    block_number: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Who holds which ward, and how many wards/blocks the town has.
 
@@ -3883,11 +3884,23 @@ async def get_ward_directory(
         if ward_number:
             ward_list = [w for w in ward_list
                          if str(w["ward_number"] or "").lstrip("0") == str(ward_number).lstrip("0")]
+        if block_number:
+            # "show block 0055" names a specific block, not a request for the
+            # whole directory -- narrow to the ward(s) that actually carry it,
+            # and narrow each ward's own block list the same way, so the
+            # answer is about that one block instead of every block in town.
+            _bn = str(block_number).lstrip("0")
+            ward_list = [w for w in ward_list
+                         if any(str(b).lstrip("0") == _bn for b in w["blocks"])]
+            ward_list = [{**w, "blocks": [b for b in w["blocks"]
+                                          if str(b).lstrip("0") == _bn]}
+                         for w in ward_list]
 
         return {
             "found": bool(ward_list),
             "town": town_name,
             "asked_ward": ward_number,
+            "asked_block": block_number,
             "wards": ward_list,
             "total_wards": len(wards),
             "total_blocks": sum(len(w["blocks"]) for w in wards.values()),

@@ -1787,7 +1787,11 @@ def _render_ward_directory(sd: dict, language: str) -> str:
     is_tamil = language in ("ta", "tanglish")
     wards = (sd or {}).get("wards") or []
     asked = (sd or {}).get("asked_ward")
+    asked_block = (sd or {}).get("asked_block")
     if not wards:
+        if asked_block:
+            return (f"பிளாக் {asked_block} பதிவில் இல்லை." if is_tamil
+                    else f"There is no block {asked_block} on record.")
         if asked:
             return (f"வார்டு {asked} பதிவில் இல்லை." if is_tamil
                     else f"There is no ward {asked} on record.")
@@ -1796,6 +1800,20 @@ def _render_ward_directory(sd: dict, language: str) -> str:
 
     from html import escape as _esc
     own = {str(w) for w in ((sd or {}).get("own_wards") or [])}
+
+    if asked_block and not asked:
+        # "show block 0055" names one block, not the whole directory -- answer
+        # just which ward(s) carry it and who holds each, never every block.
+        lines = []
+        for w in wards:
+            who = ", ".join(f"{o['name']} ({o.get('designation') or 'SIS'})"
+                            for o in w["officers"]) or ("பதிவு இல்லை" if is_tamil else "no officer posted")
+            _num = str(w["ward_number"])
+            mine = (" (இது உங்கள் வார்டு.)" if _num in own else "") if is_tamil \
+                else (" This is your ward." if _num in own else "")
+            lines.append((f"பிளாக் {asked_block}, வார்டு {_num} — {who}.{mine}") if is_tamil
+                          else f"Block {asked_block}, ward {_num} is handled by {who}.{mine}")
+        return " ".join(lines)
 
     if asked and len(wards) == 1:
         w = wards[0]

@@ -40,6 +40,18 @@ _ARITH_WORDS = (("divided by", "/"), ("multiplied by", "*"), ("times", "*"), ("m
                 ("over", "/"), ("x", "*"), ("×", "*"), ("÷", "/"))
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.USub: operator.neg}
 
+# This module counts ROWS only -- it has no fee/amount column to total. "sum
+# of fees for approved applications" matched `_SUM` on the bare word "sum"
+# and fell into the single-spec branch below, which silently substituted the
+# COUNT of approved applications (78) for a fee total -- a confident, wrong
+# number with no fee in it at all, and nothing said about the substitution.
+# Declining here instead lets the turn reach the real fee handlers
+# (`fee_summary` / the ISD-NISD-only fee total, which says so when it cannot
+# answer) rather than this module inventing a figure it cannot compute.
+_MONEY_RE = re.compile(
+    r"\bfees?\b|\bamounts?\b|\brupees?\b|\brs\.?\b|₹|\bcosts?\b|\bcharges?\b|"
+    r"\bpayments?\b|\bchallans?\b|கட்டணம்", re.IGNORECASE)
+
 
 def _eval(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -156,6 +168,8 @@ def answer(message: str, rows: List[dict]) -> Optional[str]:
     a = arithmetic(text)
     if a:
         return a
+    if _MONEY_RE.search(text):
+        return None
     low = text.lower()
     if not rows or (neg_scope.parse(text)[0] and not re.search(r"\bminus\b", low)):
         return None

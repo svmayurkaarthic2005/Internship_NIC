@@ -84,6 +84,7 @@ from backend.services.rag import (
     _money,
     call_llama,
     call_llama_stream,
+    names_bare_csv_row,
     paraphrase_facts_naturally,
     parse_intent,
     parse_last_application_query,
@@ -2368,6 +2369,17 @@ async def _process_chat_impl(
             message = _neg_msg
         message = _all_word_to_english(_take_sort_clause(message))
         intent = parse_intent(message, prev_intent=_prev_intent)
+        # "row 1" with a document active and no register-only word anywhere
+        # else: almost certainly the uploaded file, not whichever listing
+        # `intent` happened to resolve to -- see `names_bare_csv_row()`.
+        # `_apply_result_limit()`'s row-selection has no notion of
+        # attachments at all, so left alone this answered from the
+        # officer's OWN register (oldest of their real pending files)
+        # instead of the file plainly named by "row 1".
+        if (intent not in ("general_query", "application_status") and names_bare_csv_row(message)
+                and await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
+            intent = "general_query"
         _cm_strong_hit = _cm_strong(message, chat_history)
         _bare_status_hit = _bare_app_status(message, chat_history)
         _app_evidence = _app_evidence_in_scope(message, chat_history)
@@ -2843,7 +2855,8 @@ async def _process_chat_impl(
         # then return) stays here.
         _early, _ssk = early_guard_reply(
             message, language, chat_history, _RAW_MESSAGE.get(),
-            bool(locals().get("_followup_ctx")))
+            bool(locals().get("_followup_ctx")),
+            await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id))
         if _early:
             if _early.clear_session:
                 await _cb()._mark_session_cleared(db, session_id, officer)
@@ -5213,6 +5226,17 @@ async def _process_chat_stream_impl(
             message = _neg_msg
         message = _all_word_to_english(_take_sort_clause(message))
         intent = parse_intent(message, prev_intent=_prev_intent)
+        # "row 1" with a document active and no register-only word anywhere
+        # else: almost certainly the uploaded file, not whichever listing
+        # `intent` happened to resolve to -- see `names_bare_csv_row()`.
+        # `_apply_result_limit()`'s row-selection has no notion of
+        # attachments at all, so left alone this answered from the
+        # officer's OWN register (oldest of their real pending files)
+        # instead of the file plainly named by "row 1".
+        if (intent not in ("general_query", "application_status") and names_bare_csv_row(message)
+                and await attachment_qa.any_active_documents(
+                    db, officer.officer_id if officer else None, session_id)):
+            intent = "general_query"
         _cm_strong_hit = _cm_strong(message, chat_history)
         _bare_status_hit = _bare_app_status(message, chat_history)
         _app_evidence = _app_evidence_in_scope(message, chat_history)
@@ -5470,7 +5494,8 @@ async def _process_chat_stream_impl(
         # emitted first, the turn saved after.
         _early, _ssk = early_guard_reply(
             message, language, chat_history, _RAW_MESSAGE.get(),
-            bool(locals().get("_followup_ctx")))
+            bool(locals().get("_followup_ctx")),
+            await attachment_qa.any_active_documents(db, officer.officer_id if officer else None, session_id))
         if _early:
             import json as _json_early
             if _early.clear_session:

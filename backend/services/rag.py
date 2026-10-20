@@ -873,6 +873,35 @@ def extract_row_selection(message: str):
     return None
 
 
+def names_bare_csv_row(message: str) -> bool:
+    """"row 1"/"row no. 3" with no register-only word (isd/pending/approved/
+    ward/...) anywhere else in the message -- the shape an officer uses to
+    point at a line of an uploaded CSV, not "2nd pending application" or
+    "row 3 of my NISD applications", both of which still name the register
+    and are left alone.
+
+    Used by the orchestrator to keep a bare "row N" question on the
+    attachment path when a document is active, ahead of `extract_row_
+    selection()` -- that function has no notion of attachments at all, and
+    happily reads "row 1" as "item 1 of whatever list is on screen," which
+    for an intent like `pending_applications` is the OFFICER'S OWN register,
+    not the file they were plainly pointing at. "mobile number of the
+    applicant in row 1" right after uploading a CSV used to answer with the
+    oldest of the officer's 17 real pending applications -- confidently,
+    and about someone else's data than the one named.
+    """
+    msg = normalize_text(message or "")
+    if not msg or not _POS_ROWN_RE.search(msg):
+        return False
+    # Excludes "my"/"the"/"of" from `_POS_TYPEWORDS` on purpose -- those are
+    # filler that would make almost any sentence look register-shaped
+    # ("the applicant"); only a real status/type/channel word counts as a
+    # genuine register signal here.
+    return not re.search(
+        r"\b(?:nisd|isd|pending|approved|rejected|completed|overdue|open|"
+        r"csc|citizen|sro|sub\s*registrar|ward|block)\b", msg, re.IGNORECASE)
+
+
 def extract_result_limit(message: str) -> Optional[Tuple[int, str]]:
     """(n, "head"|"tail"|"head_nth") when the officer asked for part of a list.
 
@@ -4052,7 +4081,12 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
                       # the owner's name and share instead of the number asked.
                       "pattadar", "urimaiyalar", "urimayalar"]
     ta_pending     = ["நிலுவை", "நிலுவையில்", "நிலுவையிலுள்ள", "காத்திருக்கும்", "பெண்டிங்", "பெண்டிங்ஸ்", "பெண்டிங்கில்", "பெண்டிங்க்", "பென்டிங்",
-                      "pending", "waiting", "pendig", "pendng", "uncompleted", "niluvai", "niluvaiyil"]
+                      "pending", "waiting", "pendig", "pendng", "uncompleted", "niluvai", "niluvaiyil",
+                      # everyday synonyms for "still open": only the literal word
+                      # "pending" worked, so "open applications" / "outstanding
+                      # files" / "unresolved cases" fell to general_query even
+                      # though they mean the officer's own open queue
+                      "open", "outstanding", "unfinished", "unresolved"]
     ta_overdue     = ["காலதாமதம்", "காலதாமதமாக", "காலதாமத", "காலதாமதமான", "தாமதம்", "தாமதமான", "காலக்கெடு கடந்த", "ஓவர்டியூ", "ஓவர் டியூ", "ஓவர்ட்யூ", "ஓவர்டியு", "ஓவர்டியூஸ்", "ஒவர்டியூ", "ஓவர்ட்யு", "ஓவர்",
                       "overdue", "late", "delayed", "overdew", "overdu", "over-due", "kaalathaamadha", "kaalathamadhamaana", "thamadham",
                       # natural synonyms officers use for "past the SLA" -- specific
@@ -4062,7 +4096,11 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
                       "past their due date", "past the due date", "past due",
                       "behind schedule", "overshot the deadline", "exceeded the deadline",
                       "crossed the deadline", "crossed their deadline", "crossed the date",
-                      "crossed their date", "crossed the due date"]
+                      "crossed their date", "crossed the due date",
+                      # "காலாவதியான" (lapsed/expired) is a different root from
+                      # "தாமதம்" (delay) but the same meaning here -- an
+                      # application whose processing window has run out
+                      "காலாவதியான", "காலாவதி", "expired", "lapsed"]
     # Bare "field"/"visit"/"visits"/"schedule"/"scheduling" used to sit in this
     # list -- ordinary words that turn up in unrelated sentences ("best places
     # to VISIT in kerala", "SCHEDULE a call") and, via the plain catch-all
@@ -4073,7 +4111,8 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
                       "field visit", "field visits", "fieldvisit", "field-visit",
                       "site visit", "feild visit", "inspection", "kala aaivu"]
     ta_workload    = ["பணிச்சுமை", "வேலைச்சுமை", "ஒர்க்லோடு", "வொர்க்லோடு", "வர்க்லோட்", "வர்க் லோடு",
-                      "workload", "worklod", "work load", "panichumai", "velaichumai"]
+                      "workload", "worklod", "work load", "panichumai", "velaichumai",
+                      "caseload", "case load"]
     ta_application = ["விண்ணப்பம்", "விண்ணப்பங்கள்", "விண்ணப்பங்களை", "விண்ணப்பங்களின்",
                       # case-suffixed forms that appear in ordinary phrasing
                       "விண்ணப்பங்களைக்", "விண்ணப்பங்களைப்", "விண்ணப்பங்களுக்கு",
@@ -5041,7 +5080,13 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
     _has_fv_terms = ((any(w in msg for w in [
         "field visit", "field visits", "inspection", "inspections", "fv", "visit date",
         "site visit", "site visits",
-        "கள ஆய்வு", "களஆய்வு", "வருகை", "கள பார்வை"
+        "கள ஆய்வு", "களஆய்வு", "வருகை", "கள பார்வை",
+        # "தளம்" and "களம்" are the two everyday Tamil words for "site/field";
+        # only "கள ஆய்வு" was recognised, so "தள ஆய்வு" / the full "களம்
+        # ஆய்வு" (with the mei consonant the short "கள" form drops) fell
+        # through to general_query -- bare "ஆய்வு" stays out, same caution as
+        # bare "field" in English, below.
+        "தள ஆய்வு", "தளஆய்வு", "களம் ஆய்வு", "களம்ஆய்வு"
     ]) or (("field" in msg or "inspection" in msg) and _looks_like_fv_question
            and any(w in msg for w in ["visit", "inspection", "survey", "site", "schedule", "officer", "kalam", "aaivu", "duty", "workload"])
            and not any(w in msg for w in ["application", "applications", "survey number"]))) and not _fv_non_domain) or (
@@ -6020,6 +6065,11 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
         elif (re.search(r"\bapprove", msg) or re.search(r"\bcompleted\b", msg)
               or re.search(r"\brejec", msg) or re.search(r"\bescalat", msg)
               or re.search(r"\bin[ _-]?progres{1,2}\b", msg)
+              # everyday synonyms: "accepted"/"sanctioned"/"cleared" files are
+              # approved ones, "refused"/"turned down" are rejected ones --
+              # only the literal "approve"/"reject" stems worked, so these
+              # fell through to the LLM exactly like the status words above
+              or re.search(r"\b(?:accepted|sanctioned|cleared|refused|declined|turned\s+down)\b", msg)
               or any(is_token_typo_match(w, t) for w in words
                      for t in ("approved", "approve", "completed", "rejected", "cancelled", "cancel",
                                "reject", "escalated"))):
@@ -6063,6 +6113,10 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
             return "pending_applications"
         elif has(ta_ward) or has(ta_block) or has(ta_status) or \
                 any(w in msg for w in ["நிராகரிக்கப்பட்ட", "அங்கீகரிக்கப்பட்ட", "நிலுவை",
+                                        # "ஒப்புதல் பெற்ற" (received approval) --
+                                        # the everyday phrasing, next to the
+                                        # formal "அங்கீகரிக்கப்பட்ட" above
+                                        "ஒப்புதல்",
                                         "versus", " vs ", "position"]):
             # A noun plus a filter and nothing else -- "வார்டு 002 விண்ணப்பங்கள்",
             # "pending versus approved position". Still a list request.
@@ -6713,7 +6767,13 @@ def _parse_intent_core(message: str, prev_intent: str = None, app_scoped: bool =
                                # the survey/application guard below still
                                # keeps it off record lookups.
                                "எனது பகுதி", "ஒதுக்கப்பட்ட பகுதி", "அதிகார வரம்பு"])) and \
-       not has(ta_survey) and not has(ta_application):
+       not has(ta_survey) and not has(ta_application) and not _case_file_word:
+        # "declined FILES in my jurisdiction" names a listing (the officer's
+        # own word for applications), not a request for the jurisdiction's
+        # posting info -- `ta_application` already keeps the literal word
+        # "applications" out of this rule, but not its "file(s)" synonym, so
+        # this answered with the static district/ward/block card instead of
+        # the declined list the officer actually asked for.
         return "jurisdiction_summary"
 
     # ── ISD Processing queries (before survey_owners / pending_applications) ──

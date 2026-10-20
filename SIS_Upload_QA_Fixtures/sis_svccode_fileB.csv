@@ -1,6 +1,0 @@
-row,service_code,service_description,application_number,status
-1,0178,F Line Demarcation Urban,TEST/0178/99/000702,Approved
-2,0164,ULC Land Subdivision,TEST/0164/99/000801,Pending
-3,0154,Involving Subdivison,TEST/0154/99/000701,Rejected
-4,01778,F-Line,TEST/9999/99/000999,Pending
-5,0160,Deletion,TEST/0160/99/000805,

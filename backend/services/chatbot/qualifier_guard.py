@@ -32,6 +32,7 @@ show display list give get find see view fetch tell count how many much what whi
 please pls kindly also only just even ever again still already yet now then today yesterday tomorrow tonight
 application applications aplication aplications app apps file files case cases record records entry entries item items
 pending approved rejected completed complete incomplete open closed active overdue escalated progress inprogress
+outstanding unfinished unresolved accepted sanctioned cleared refused declined expired lapsed
 new old older oldest newer newest latest recent recently earliest first last next previous top bottom highest lowest
 isd nisd type types status stage stages channel channels source sources csc sro citizen portal registrar sub
 ward wards block blocks taluk town district survey surveys number numbers no date dates day days week weeks month months
@@ -133,6 +134,7 @@ week weeks month months year years today yesterday tomorrow day days recent rece
 january february march april may june july august september october november december
 jan feb mar apr jun jul aug sep sept oct nov dec
 pending approved rejected completed overdue escalated progress inprogress isd nisd csc sro citizen registrar sub portal
+outstanding unfinished unresolved accepted sanctioned cleared refused declined expired lapsed
 """.split())
 
 

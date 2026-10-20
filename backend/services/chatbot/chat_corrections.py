@@ -1410,14 +1410,36 @@ def _big_plan(message: str):
     # the whole message already resolves to a real comparison, at >=14 words
     # too (the short-message path a few lines below only ever checked this
     # for itself).
-    from backend.services.rag import parse_comparison_query as _big_plan_cmp
-    if _big_plan_cmp(text):
-        return None
-    if len(words) < 14:
-        _apps_s = list(dict.fromkeys(_APP_NO_RE.findall(text)))
-        _m = _multi_app_plan(text, _apps_s) if len(_apps_s) >= 2 else None
+    # "compare A and B on status and applicant" names explicit FIELDS, which
+    # `compare_applications`'s "which is older" verdict has no way to answer
+    # -- `parse_comparison_query` recognises the bare "compare A and B" shape
+    # regardless, discarding the "on ..." qualifier entirely (its `aspect`
+    # comes back None), so the officer's actual multi-field request was
+    # swallowed into a side-by-side comparison that never mentions status or
+    # applicant at all. Tried first, and only when the message carries the
+    # qualifier `_multi_app_plan` itself requires -- a genuine "which is
+    # older, A or B" (no "on <fields>") still falls through untouched to the
+    # `_big_plan_cmp` stand-aside below.
+    _apps_s = list(dict.fromkeys(_APP_NO_RE.findall(text)))
+    if len(_apps_s) >= 2:
+        _m = _multi_app_plan(text, _apps_s)
         if _m:
             return _m
+    # The same gap, colon-shaped: "Compare A and B : status, applicant name,
+    # challan no, ..." names its field list after a colon instead of "on" --
+    # `_multi_app_plan`'s regex only recognises the latter, so this reached
+    # `_big_plan_cmp` unchallenged, which (same as above) claimed it as a
+    # bare "which is older" comparison and discarded the whole field list.
+    # `len(...) >= 3` mirrors the long-message colon-list check further down
+    # in this function -- a real field list, not an incidental colon -- so
+    # only that shape skips the `_big_plan_cmp` stand-aside; everything else
+    # (a bare "which is older, A or B") still defers to it as before.
+    _has_colon_field_list = (":" in text
+                              and len(_BIG_SEP.split(text.split(":", 1)[1])) >= 3)
+    from backend.services.rag import parse_comparison_query as _big_plan_cmp
+    if not _has_colon_field_list and _big_plan_cmp(text):
+        return None
+    if len(words) < 14:
         return _compound_split(text) if not _neg_scope.parse(text)[0] and not _parse_negation(text)[1] and not re.search(
             r"\b(?:compare|difference|between|versus|vs)\b", text, re.IGNORECASE) else None
     apps = []

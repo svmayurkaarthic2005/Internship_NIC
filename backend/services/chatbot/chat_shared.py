@@ -1250,58 +1250,51 @@ _STATUS_LABELS = {
 }
 
 
-def _explicit_status_request(message_lower: str):
-    """
-    The status the officer actually named, or None when they named none.
+_ALL_STATUSES = ("pending", "in_progress", "escalated", "approved", "rejected")
 
-    "How many rejected applications in 2024" used to answer with the
-    non-rejected ones: any date or year scope forced status_filter=None, and the
-    word "rejected" was never looked at. A status the officer typed outranks the
-    scope default.
-    """
-    if any(p in message_lower for p in ["history", "approved n rejected",
-                                        "approved and rejected", "approved & rejected"]):
-        return ["approved", "rejected"]
-    # A negated status ("not pending", "except rejected", "other than
-    # approved") is not the status it names -- it is every OTHER status.
-    # This used to be checked for "rejected"/"approved" only (returning
-    # None, i.e. "no status named"), so "not pending applications" matched
-    # neither of those two negation phrases, fell through to the plain
-    # `\bpending\b` check below (a bare substring test that cannot tell
-    # "pending" from "not pending"), AND separately, even the two phrases
-    # it did catch fell back to this function's caller's own default --
-    # which is ALSO "pending" for an unscoped listing. Either way the
-    # officer was shown PENDING applications for a request that named
-    # every status except that one: the literal opposite of the question,
-    # with nothing to say it had been misread. "Not pending" unambiguously
-    # names the other four statuses, so returned directly rather than left
-    # for a default to coincidentally get wrong the same way.
-    _ALL_STATUSES = ("pending", "in_progress", "escalated", "approved", "rejected")
-    # Typo-tolerant on the STATUS word ("not rejcted", "except aproved") the
-    # same way the positive match below is -- an officer who typos a status
-    # word negated it exactly as often as they typo one they are asking FOR,
-    # and an unmatched typo here fell through to the plain substring check
-    # below, which then read "not rejcted" as naming no status at all (it
-    # only ever tests exact spellings), so the caller's own "pending" default
-    # applied -- again the wrong answer, just reached a different way.
-    # "not"/"except"/"excluding" stay exact: they are short, common function
-    # words, and this codebase's own rule is that a word that short gets no
-    # typo budget at all (the same reason "isd" cannot absorb "nisd").
-    def _status_word_to_canonical(_word: str) -> Optional[str]:
-        _word1 = _word.split()[0] if " " in _word else _word
-        if re.match(r"in[ _-]?progres{1,2}\b", _word):
-            return "in_progress"
-        if is_token_typo_match(_word1, "rejected") or is_token_typo_match(_word1, "reject"):
-            return "rejected"
-        if (is_token_typo_match(_word1, "approved") or is_token_typo_match(_word1, "approve")
-                or is_token_typo_match(_word1, "completed")):
-            return "approved"
-        if is_token_typo_match(_word1, "escalated"):
-            return "escalated"
-        if is_token_typo_match(_word1, "pending"):
-            return "pending"
-        return None
 
+# Typo-tolerant on the STATUS word ("not rejcted", "except aproved") the
+# same way the positive match in `_explicit_status_request` is -- an officer
+# who typos a status word negated it exactly as often as they typo one they
+# are asking FOR, and an unmatched typo here fell through to the plain
+# substring check below, which then read "not rejcted" as naming no status
+# at all (it only ever tests exact spellings), so the caller's own "pending"
+# default applied -- again the wrong answer, just reached a different way.
+# "not"/"except"/"excluding" stay exact: they are short, common function
+# words, and this codebase's own rule is that a word that short gets no
+# typo budget at all (the same reason "isd" cannot absorb "nisd").
+def _status_word_to_canonical(_word: str) -> Optional[str]:
+    _word1 = _word.split()[0] if " " in _word else _word
+    if re.match(r"in[ _-]?progres{1,2}\b", _word):
+        return "in_progress"
+    if (is_token_typo_match(_word1, "rejected") or is_token_typo_match(_word1, "reject")
+            or is_token_typo_match(_word1, "refused") or is_token_typo_match(_word1, "declined")):
+        return "rejected"
+    if (is_token_typo_match(_word1, "approved") or is_token_typo_match(_word1, "approve")
+            or is_token_typo_match(_word1, "completed") or is_token_typo_match(_word1, "accepted")
+            or is_token_typo_match(_word1, "sanctioned") or is_token_typo_match(_word1, "cleared")):
+        return "approved"
+    if is_token_typo_match(_word1, "escalated"):
+        return "escalated"
+    if (is_token_typo_match(_word1, "pending") or is_token_typo_match(_word1, "outstanding")
+            or is_token_typo_match(_word1, "unfinished") or is_token_typo_match(_word1, "unresolved")
+            # "open" itself, not a typo match against "pending" -- matched
+            # exactly (no edit-distance budget) the same way short function
+            # words elsewhere in this codebase are, since a 4-letter word's
+            # typo budget would just as easily catch an unrelated word
+            or _word1 == "open"):
+        return "pending"
+    return None
+
+
+def _explicit_status_exclusions(message_lower: str) -> List[str]:
+    """Every status word the message negates, canonicalised to the full
+    5-state model (`pending`/`in_progress`/`escalated`/`approved`/`rejected`).
+
+    Pulled out of `_explicit_status_request` so `_requested_status_filter_for_
+    register` can coarsen the EXCLUDED set directly instead of reconstructing
+    it from the complement -- see the comment there for why that matters.
+    """
     # Every negated status, not just the first. "not approved and not
     # rejected" (or "neither approved nor rejected") names TWO exclusions;
     # `re.search` only ever finds the first, so "not rejected" was silently
@@ -1317,8 +1310,12 @@ def _explicit_status_request(message_lower: str):
     # word it had actually named twice was excluded only once.
     _excluded: List[str] = []
     for _m in re.finditer(
-        r"\b(?:not|except|excluding|other\s+than)\s+(?:the\s+)?"
-        r"(\w+(?:[ _-](?!not\b|except\b|excluding\b|other\b|neither\b|nor\b)\w+)?)",
+        # "exclude" (no -ing) negates a status exactly like "excluding" does --
+        # "exclude outstanding applications" was read as a plain POSITIVE
+        # "pending" listing (the status it was asked to drop), the opposite
+        # of what was asked, because only the gerund form was recognised here.
+        r"\b(?:not|except|excluding|exclude|other\s+than)\s+(?:the\s+)?"
+        r"(\w+(?:[ _-](?!not\b|except\b|excluding\b|exclude\b|other\b|neither\b|nor\b)\w+)?)",
         message_lower
     ):
         _c = _status_word_to_canonical(_m.group(1))
@@ -1345,6 +1342,40 @@ def _explicit_status_request(message_lower: str):
             _c = _status_word_to_canonical(_g)
             if _c:
                 _excluded.append(_c)
+    out: List[str] = []
+    for s in _excluded:
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _explicit_status_request(message_lower: str):
+    """
+    The status the officer actually named, or None when they named none.
+
+    "How many rejected applications in 2024" used to answer with the
+    non-rejected ones: any date or year scope forced status_filter=None, and the
+    word "rejected" was never looked at. A status the officer typed outranks the
+    scope default.
+    """
+    if any(p in message_lower for p in ["history", "approved n rejected",
+                                        "approved and rejected", "approved & rejected"]):
+        return ["approved", "rejected"]
+    # A negated status ("not pending", "except rejected", "other than
+    # approved") is not the status it names -- it is every OTHER status.
+    # This used to be checked for "rejected"/"approved" only (returning
+    # None, i.e. "no status named"), so "not pending applications" matched
+    # neither of those two negation phrases, fell through to the plain
+    # `\bpending\b` check below (a bare substring test that cannot tell
+    # "pending" from "not pending"), AND separately, even the two phrases
+    # it did catch fell back to this function's caller's own default --
+    # which is ALSO "pending" for an unscoped listing. Either way the
+    # officer was shown PENDING applications for a request that named
+    # every status except that one: the literal opposite of the question,
+    # with nothing to say it had been misread. "Not pending" unambiguously
+    # names the other four statuses, so returned directly rather than left
+    # for a default to coincidentally get wrong the same way.
+    _excluded = _explicit_status_exclusions(message_lower)
     if _excluded:
         return [s for s in _ALL_STATUSES if s not in _excluded]
     # EVERY status the officer named, not just the first one matched. "ISD
@@ -1370,11 +1401,17 @@ def _explicit_status_request(message_lower: str):
 
     named = []
     if (re.search(r"\brejec", message_lower) or "நிராகரிக்கப்பட்ட" in message_lower
-            or _names("reject", "rejected")):
+            or _names("reject", "rejected")
+            # everyday synonyms: "refused"/"turned down" applications are
+            # rejected ones -- only the "rejec" stem was recognised, so these
+            # silently fell to the default "pending" status instead
+            or re.search(r"\b(?:refused|declined|turned\s+down)\b", message_lower)):
         named.append("rejected")
     if (re.search(r"\bapprove", message_lower) or re.search(r"\bcompleted\b", message_lower)
-            or "அங்கீகரிக்கப்பட்ட" in message_lower
-            or _names("approve", "approved", "completed")):
+            or "அங்கீகரிக்கப்பட்ட" in message_lower or "ஒப்புதல்" in message_lower
+            or _names("approve", "approved", "completed")
+            # "accepted"/"sanctioned"/"cleared" applications -- same gap
+            or re.search(r"\b(?:accepted|sanctioned|cleared)\b", message_lower)):
         named.append("approved")
     # progres{1,2} tolerates a dropped trailing 's' ("inprogres") without
     # token-level fuzzy matching, which would need "process" excluded --
@@ -1386,7 +1423,10 @@ def _explicit_status_request(message_lower: str):
             or "எஸ்கலேஷன்" in message_lower):
         named.append("escalated")
     if (re.search(r"\bpending\b", message_lower) or "நிலுவை" in message_lower
-            or _names("pending")):
+            or _names("pending")
+            # "open"/"outstanding"/"unfinished"/"unresolved" applications --
+            # the same gap, for the status the register calls "pending"
+            or re.search(r"\b(?:open|outstanding|unfinished|unresolved)\b", message_lower)):
         named.append("pending")
     if not named:
         return None
@@ -1997,21 +2037,37 @@ def _requested_status_filter_for_register(message: str):
     every status (e.g. "all pending and approved and rejected") collapses
     to None -- no filter -- rather than a no-op list of all three.
     """
-    named = _explicit_status_request(message.lower())
-    if named is None:
-        return None
-    _REGISTER_STATUSES = {"pending", "approved", "rejected"}
+    _REGISTER_STATUSES = ("pending", "approved", "rejected")
 
     def _coarsen(s):
         return "pending" if s in ("in_progress", "escalated") else s
 
+    # Coarsen the EXCLUDED set directly, not the complement `_explicit_status_
+    # request` hands back. "not pending applications" excludes just {pending}
+    # in the full 5-state model; its complement there is {in_progress,
+    # escalated, approved, rejected} -- which, coarsened to THIS table's 3
+    # states, re-admits "pending" (in_progress/escalated collapse back into
+    # it) and the filter is read as covering all 3 register states, i.e. "no
+    # filter at all". The officer who asked to exclude pending then saw
+    # pending applications right alongside the rest -- the opposite of the
+    # request, and a pre-existing gap, not specific to any one status word
+    # ("not approved applications" had the matching failure the other way).
+    _excluded = _explicit_status_exclusions(message.lower())
+    if _excluded:
+        _excl_coarse = {_coarsen(s) for s in _excluded}
+        _kept = [s for s in _REGISTER_STATUSES if s not in _excl_coarse]
+        return _kept if len(_kept) != len(_REGISTER_STATUSES) else None
+
+    named = _explicit_status_request(message.lower())
+    if named is None:
+        return None
     if isinstance(named, list):
         mapped = []
         for s in named:
             c = _coarsen(s)
             if c not in mapped:
                 mapped.append(c)
-        if set(mapped) >= _REGISTER_STATUSES:
+        if set(mapped) >= set(_REGISTER_STATUSES):
             return None
         return mapped
     return _coarsen(named)
