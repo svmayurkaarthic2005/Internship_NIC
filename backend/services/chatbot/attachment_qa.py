@@ -112,6 +112,21 @@ def _names_file_row(message: str) -> bool:
     from backend.services.rag import names_bare_csv_row
     return names_bare_csv_row(message)
 
+
+def names_a_file(message: str) -> bool:
+    """A cheap, docs-independent signal that the message itself names an
+    uploaded file (a filename, "page 2", "the pdf", a bare CSV row). Used to
+    stop an unrelated keyword match elsewhere (a record module's own
+    vocabulary -- "boundary" in fline_qa, for instance) from taking a turn
+    away from the attachment it plainly names: "what does X.pdf say about
+    the eastern boundary" was swallowed by `_cm_strong` on the word
+    "boundary" alone and never even reached `plan_answer()`, so it fell to
+    `general_query` and the agent's document-corpus search instead of the
+    file sitting right there. Naming the file overrides everything, per the
+    routing rule above -- this just makes that rule reachable without first
+    loading the session's active documents."""
+    return bool(_PAGE_OR_FILETYPE_RE.search(message or "") or _names_file_row(message))
+
 # A question shaped like a register query stays on the register even when the
 # conversation was just about the file. Split into words that are unambiguous
 # register vocabulary on their own ("pending", "how many", ...) and weaker

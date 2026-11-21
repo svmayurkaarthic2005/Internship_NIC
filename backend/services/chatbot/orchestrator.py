@@ -2568,6 +2568,7 @@ async def _process_chat_impl(
             attachment_qa.is_negative_correction(message)
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
+            or attachment_qa.names_a_file(message)
         )
         # Which antecedent a negative correction ("I don't think so", "not
         # that") disputes -- decided BEFORE the attachment layer gets a
@@ -5402,6 +5403,7 @@ async def _process_chat_stream_impl(
             attachment_qa.is_negative_correction(message)
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
+            or attachment_qa.names_a_file(message)
         )
         # Same antecedent-routing decision as the non-streaming path, just
         # delivered as a single SSE chunk instead of a plain return value.
