@@ -1,0 +1,875 @@
+source_file,message,has_domain_term,passed_eligibility_gate,predicted_kind,best_cosine,best_sis_anchor_cosine,fired_as_conversational,verdict
+test_questions_openers.txt,what is isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is merge,False,True,smalltalk,0.672,0.726,False,correct_no_capture
+test_questions_openers.txt,what is sd,False,True,greeting,0.694,0.763,False,correct_no_capture
+test_questions_openers.txt,what is dis,False,True,smalltalk,0.704,0.745,False,correct_no_capture
+test_questions_openers.txt,what is dsc,False,True,smalltalk,0.645,0.697,False,correct_no_capture
+test_questions_openers.txt,what is sis,False,True,smalltalk,0.704,0.725,False,correct_no_capture
+test_questions_openers.txt,what is fmb,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is patta,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is a sub division,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is tahsildar,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,sis endral enna,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,dsc என்றால் என்ன,False,False,,,,False,excluded_by_gate
+test_questions_openers.txt,who approves isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,who approves nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,who approves merge,False,True,thanks,0.654,0.824,False,correct_no_capture
+test_questions_openers.txt,explain workflow process,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the workflow,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,how does the process work,False,True,smalltalk,0.706,0.857,False,correct_no_capture
+test_questions_openers.txt,explain isd workflow,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,explain nisd workflow process,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,explain merge workflow,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what are the workflow steps,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,how many days for nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the sla,False,True,smalltalk,0.627,0.673,False,correct_no_capture
+test_questions_openers.txt,what is the price of isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the price,False,True,smalltalk,0.724,0.862,False,correct_no_capture
+test_questions_openers.txt,cost of nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,isd vilai enna,False,True,farewell,0.787,0.818,False,correct_no_capture
+test_questions_openers.txt,what time does the office open,False,True,greeting,0.697,0.739,False,correct_no_capture
+test_questions_openers.txt,what is the stamp duty,False,True,farewell,0.661,0.747,False,correct_no_capture
+test_questions_openers.txt,who is the district collector of thoothukudi,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,how many wards do i have,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,my wards,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is pending for me,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what should i do today,False,True,smalltalk,0.766,0.762,False,correct_no_capture
+test_questions_openers.txt,give me a summary,False,True,smalltalk,0.709,0.818,False,correct_no_capture
+test_questions_openers.txt,survey number 1355,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,survey 24,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is 0153,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is service code 0154,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the fee for merge,False,True,farewell,0.618,0.821,False,correct_no_capture
+test_questions_openers.txt,how many taluks in thoothukudi,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,who am i,False,True,smalltalk,0.891,0.729,True,FALSE_POSITIVE
+test_questions_openers.txt,what is my ward,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what can you do,False,True,smalltalk,0.737,0.775,False,correct_no_capture
+test_questions_openers.txt,compare me with other officers,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,applications on 31 february 2026,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,next year applications,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,delete all my applications,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,எல்லா விண்ணப்பங்களையும் நீக்கு,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,ennoda applications ellam delete pannu,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the weather,False,True,smalltalk,0.757,0.713,False,correct_no_capture
+test_questions_openers.txt,wat is isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is nsid,False,True,thanks,0.717,0.752,False,correct_no_capture
+test_questions_openers.txt,isd na enna,False,True,greeting,0.758,0.839,False,correct_no_capture
+test_questions_openers.txt,nisd endral enna,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,ISD என்றால் என்ன,False,False,,,,False,excluded_by_gate
+test_questions_openers.txt,NISD என்றால் என்ன,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,MERGE என்றால் என்ன,False,False,,,,False,excluded_by_gate
+test_questions_openers.txt,explain workflw process,False,True,smalltalk,0.650,0.884,False,correct_no_capture
+test_questions_openers.txt,workflow procss explain,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,who aproves isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the prise of isd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,how mny wards do i have,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,dsc na enna,False,True,greeting,0.734,0.796,False,correct_no_capture
+test_questions_openers.txt,workflow enna,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,isd workflow sollu,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,nisd workflow enna,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,ISD பணிப்பாய்வு என்ன,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,பணிப்பாய்வு விளக்கு,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,workflow process explain pannu,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,isd meaning,False,True,smalltalk,0.681,0.954,False,correct_no_capture
+test_questions_openers.txt,define nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what does isd stand for,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what does sis stand for,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,full form of dsc,False,True,greeting,0.654,0.659,False,correct_no_capture
+test_questions_openers.txt,what is the difference between isd and nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,isd vs nisd,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,does nisd need field visit,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,does isd need field visit,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what happens after sis,False,True,farewell,0.688,0.777,False,correct_no_capture
+test_questions_openers.txt,what happens after sd,False,True,farewell,0.694,0.769,False,correct_no_capture
+test_questions_openers.txt,what is the next step after dis,False,True,greeting,0.676,0.882,False,correct_no_capture
+test_questions_openers.txt,what is the role of sis,False,True,smalltalk,0.639,0.689,False,correct_no_capture
+test_questions_openers.txt,role of tahsildar,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what does a tahsildar do,True,False,,,,False,excluded_by_gate
+test_questions_openers.txt,what is the role of draughtsman,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,=================================================================,False,True,smalltalk,0.703,0.703,False,correct_no_capture
+test_questions_100.txt,SIS CHATBOT - 100 TEST QUESTIONS (தமிழ் & ENGLISH),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 1: GREETINGS & BASIC QUERIES (10 Questions),False,False,,,,False,excluded_by_gate
+test_questions_100.txt,1. Hello,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,வணக்கம்,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,2. Good morning,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,காலை வணக்கம்,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,"3. Hi, how are you?",False,False,,,,False,excluded_by_gate
+test_questions_100.txt,"ஹாய், எப்படி இருக்கீங்க?",False,False,,,,False,excluded_by_gate
+test_questions_100.txt,4. What can you help me with?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,நீங்க என்ன உதவி செய்ய முடியும்?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,5. Tell me about yourself,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,உன்னைப் பத்தி சொல்லு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,6. What is your purpose?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,உங்கள் நோக்கம் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,7. How do you work?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,நீ எப்படி வேலை செய்கிறாய்?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,8. Can you speak Tamil?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,தமிழ் பேச தெரியுமா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,9. Thank you,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,நன்றி,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,10. Bye,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,போய் வாரேன்,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 2: APPLICATION STATUS & DETAILS (15 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,11. Show me application APP-2024-000001,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,விண்ணப்பம் APP-2024-000001 காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,12. What is the status of APP-2024-000001?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 நிலை என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,13. Which stage is application APP-2024-000002 at?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,விண்ணப்பம் APP-2024-000002 எந்த கட்டத்தில் உள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,14. Where is application APP-2024-000001 right now?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,விண்ணப்பம் APP-2024-000001 இப்போது எங்கே உள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,15. What is the applicant name for APP-2024-000001?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 விண்ணப்பதாரர் பெயர் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,16. Give me the mobile number of APP-2024-000001 applicant,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 விண்ணப்பதாரரின் தொலைபேசி எண் கொடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,17. What is the applicant address for APP-2024-000002?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000002 விண்ணப்பதாரரின் முகவரி என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,18. Show me the email of the applicant in APP-2024-000001,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 விண்ணப்பதாரரின் மின்னஞ்சல் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,19. What type is APP-2024-000001? ISD or NISD?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 என்ன வகை? ISD அல்லது NISD?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,20. When was APP-2024-000001 submitted?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 எப்போது சமர்ப்பிக்கப்பட்டது?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,21. What year was APP-2024-000002 submitted?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000002 எந்த ஆண்டு சமர்ப்பிக்கப்பட்டது?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,22. Which survey number is APP-2024-000001 for?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 எந்த கணக்கெண்ணுக்கானது?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,23. Is APP-2024-000003 overdue?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000003 காலதாமதமா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,24. Show workflow history for APP-2024-000001,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 வேலை வரலாறு காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,25. What is the priority of APP-2024-000004?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000004 முன்னுரிமை என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 3: PENDING & ACTIVE APPLICATIONS (12 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,26. Show all my pending applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எனது நிலுவையில் உள்ள விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,27. List pending applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,நிலுவை விண்ணப்பங்கள் பட்டியல்,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,28. How many pending ISD applications do I have?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எனக்கு எத்தனை நிலுவை ISD விண்ணப்பங்கள் உள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,29. Show me all NISD applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அனைத்து NISD விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,30. List all merge applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அனைத்து இணைப்பு விண்ணப்பங்களை பட்டியலிடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,31. Show pending MERGE applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,நிலுவையில் உள்ள இணைப்பு விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,32. How many applications are assigned to me?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எனக்கு எத்தனை விண்ணப்பங்கள் ஒதுக்கப்பட்டுள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,33. Display all my applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,என் அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,34. Show me approved applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அங்கீகரிக்கப்பட்ட விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,35. List rejected applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,நிராகரிக்கப்பட்ட விண்ணப்பங்களை பட்டியலிடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,36. Show applications in progress,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,செயலில் உள்ள விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,37. Give me the count of pending applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,நிலுவை விண்ணப்பங்களின் எண்ணிக்கையை கொடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 4: OVERDUE & PRIORITY (8 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,38. Show overdue applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,காலதாமதமான விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,39. List all overdue ISD applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,காலதாமதமான அனைத்து ISD விண்ணப்பங்களை பட்டியலிடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,40. Which applications need immediate action?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எந்த விண்ணப்பங்களுக்கு உடனடி நடவடிக்கை தேவை?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,41. Show high priority applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அதிக முன்னுரிமை விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,42. Which applications are approaching deadline?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எந்த விண்ணப்பங்கள் காலக்கெடு நெருங்குகின்றன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,43. Show applications that are overdue for more than 20 days,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,20 நாட்களுக்கு மேல் தாமதமான விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,44. List applications pending longest,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,மிக நீண்ட காலமாக நிலுவையில் உள்ள விண்ணப்பங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,45. Show escalation threshold applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,காலக்கெடு வரம்பு விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 5: FIELD VISITS (12 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,46. Show my field visits,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,என் கள ஆய்வுகளை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,47. List scheduled field visits,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,திட்டமிடப்பட்ட கள ஆய்வுகளை பட்டியலிடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,48. Show unscheduled field visits,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,திட்டமிடப்படாத கள ஆய்வுகளை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,49. How many field visits are scheduled this week?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இந்த வாரம் எத்தனை கள ஆய்வுகள் திட்டமிடப்பட்டுள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,50. Show field visits awaiting scheduling,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கால அட்டவணை இல்லாத கள ஆய்வுகளை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,51. Which field visits are overdue?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எந்த கள ஆய்வுகள் காலதாமதமாகின?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,52. Has APP-2024-000001 passed the 15-day deadline?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 15 நாள் காலக்கெடுவை கடந்துவிட்டதா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,53. What date did I select for field visit of APP-2024-000001?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 கள ஆய்வுக்கு நான் எந்த தேதியை தேர்ந்தெடுத்தேன்?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,54. Show nearby pending applications in the same ward,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அதே வார்டில் அருகில் உள்ள நிலுவை விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,55. When can I reschedule this field visit?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இந்த கள ஆய்வை எப்போது மீண்டும் திட்டமிட முடியும்?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,56. Are there any scheduling conflicts?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,ஏதேனும் கால அட்டவணை முரண்பாடுகள் உள்ளனவா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,57. Show recently rescheduled field visits,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,சமீபத்தில் மாற்றப்பட்ட கள ஆய்வுகளை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 6: WORKLOAD & STATISTICS (8 Questions),False,False,,,,False,excluded_by_gate
+test_questions_100.txt,58. Show my workload,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,என் பணிச்சுமையை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,59. What is my workload summary?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,என் பணிச்சுமை சுருக்கம் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,60. How many applications are assigned today?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இன்று எத்தனை விண்ணப்பங்கள் ஒதுக்கப்பட்டுள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,61. Show workload by application type,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,விண்ணப்ப வகை வாரியான பணிச்சுமையை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,62. What is my completion rate?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,எனது முடிப்பு விகிதம் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,63. What is my completion rate this month?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,இந்த மாதம் எனது முடிப்பு விகிதம் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,64. How many applications completed this month?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இந்த மாதம் எத்தனை விண்ணப்பங்கள் முடிந்தன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,65. Show active applications by taluk,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,தாலுகா வாரியாக செயலில் உள்ள விண்ணப்பங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 7: SURVEY NUMBERS & SUBDIVISIONS (10 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,66. Show details of survey number 145,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145 விவரங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,67. Tell me about survey 145/1A,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145/1A பற்றி சொல்லு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,68. Who are the owners of survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145 உரிமையாளர்கள் யார்?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,69. Show ownership details for survey 145/2,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145/2 உரிமை விவரங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,70. Are there joint owners for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145-க்கு கூட்டு உரிமையாளர்கள் உள்ளனரா?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,71. Is APP-2024-000001 applicant the sole owner?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 விண்ணப்பதாரர் ஒரே உரிமையாளரா?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,72. What is the next available subdivision number for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145-க்கு அடுத்த கிடைக்கும் உட்பிரிவு எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,73. Show all surveys in my jurisdiction,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எனது அதிகார வரம்பில் உள்ள அனைத்து கணக்கெண்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,74. List surveys in ward 5,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,வார்டு 5-ல் உள்ள கணக்கெண்களை பட்டியலிடு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,75. Show surveys in block B1,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,தொகுதி B1-ல் உள்ள கணக்கெண்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 8: MERGE APPLICATIONS (8 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,76. Show merge application details for APP-2024-000004,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000004 இணைப்பு விண்ணப்ப விவரங்களை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,77. Which subdivisions are included in APP-2024-000004?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000004-ல் எந்த உட்பிரிவுகள் சேர்க்கப்பட்டுள்ளன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,78. What is the total merge area for APP-2024-000004?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000004-ன் மொத்த இணைப்பு பரப்பளவு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,79. Show all merge applications,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,அனைத்து இணைப்பு விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,80. List subdivisions being merged in APP-2024-000004,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000004-ல் இணைக்கப்படும் உட்பிரிவுகளை பட்டியலிடு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,81. Which survey number is this merge application for?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இந்த இணைப்பு விண்ணப்பம் எந்த கணக்கெண்ணுக்கானது?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,82. How many subdivisions are being merged?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,எத்தனை உட்பிரிவுகள் இணைக்கப்படுகின்றன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,83. Show merge application status,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,இணைப்பு விண்ணப்ப நிலையை காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 9: ISD PROCESSING (7 Questions),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,84. What are the proposed subdivisions for APP-2024-000001?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு முன்மொழியப்பட்ட உட்பிரிவுகள் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,85. How many proposed subdivisions in APP-2024-000001?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-ல் எத்தனை முன்மொழியப்பட்ட உட்பிரிவுகள்?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,86. Compare original area with proposed area for APP-2024-000001,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு அசல் பரப்பளவையும் முன்மொழியப்பட்ட பரப்பளவையும் ஒப்பிடு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,87. Show subdivision status for APP-2024-000001,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 உட்பிரிவு நிலையை காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,88. How many patta transfer orders for APP-2024-000001?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு எத்தனை பட்டா பரிமாற்ற ஆணைகள்?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,89. What are the assigned subdivision numbers?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,ஒதுக்கப்பட்ட உட்பிரிவு எண்கள் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,90. Show latest action for each subdivision,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,ஒவ்வொரு உட்பிரிவுக்கும் கடைசி நடவடிக்கையை காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,SECTION 10: DOCUMENTS & VERIFICATION (10 Questions),False,False,,,,False,excluded_by_gate
+test_questions_100.txt,91. Are all documents submitted for APP-2024-000001?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு அனைத்து ஆவணங்களும் சமர்ப்பிக்கப்பட்டனவா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,92. Which documents are missing for APP-2024-000002?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000002-க்கு எந்த ஆவணங்கள் காணவில்லை?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,93. Is the sale deed verified for APP-2024-000001?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு விற்பனை பத்திரம் சரிபார்க்கப்பட்டதா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,94. Check sale deed for APP-2024-000001,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 விற்பனை பத்திரத்தை சரிபார்,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,95. Is there any litigation on survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,கணக்கெண் 145-ல் ஏதேனும் வழக்கு உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,96. Check for encroachment flag on APP-2024-000001,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-ல் ஆக்கிரமிப்பு கொடி உள்ளதா சரிபார்,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,97. What did SD request for additional info on APP-2024-000001?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கு கூடுதல் தகவலுக்காக SD என்ன கோரியது?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,98. Show SD remarks for APP-2024-000001,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001-க்கான SD குறிப்புகளை காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,99. Has APP-2024-000001 been forwarded to SD?,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000001 SD-க்கு அனுப்பப்பட்டதா?,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,100. Show rejection history for APP-2024-000006,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APP-2024-000006 நிராகரிப்பு வரலாறு காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,APPLICATION TYPE DEFINITIONS (Reference),True,False,,,,False,excluded_by_gate
+test_questions_100.txt,ISD (Involving Sub-Division):,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Creates NEW subdivisions when dividing land,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Example: Survey 145 → 145/1 + 145/2,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Requires field visit,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,NISD (Not Involving Sub-Division):,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,"- Only transfers ownership, NO subdivisions",True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Survey number remains unchanged,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Only patta holder name changes,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,MERGE:,False,True,farewell,0.682,0.687,False,correct_no_capture
+test_questions_100.txt,- Combines multiple subdivisions into ONE,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Example: 145/1 + 145/2 → Survey 145,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,- Reduces number of parcels,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,END OF TEST QUESTIONS,False,True,farewell,0.705,0.710,False,correct_no_capture
+test_questions_100.txt,TESTING INSTRUCTIONS:,False,True,greeting,0.638,0.652,False,correct_no_capture
+test_questions_100.txt,1. Test questions in sequence or randomly,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,2. Verify responses match expected data,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,3. Check Tamil/English language detection,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,4. Verify table rendering for list queries,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,"5. Test field-specific queries (name, mobile, date, etc.)",False,False,,,,False,excluded_by_gate
+test_questions_100.txt,6. Verify jurisdiction access controls,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,7. Check error handling for invalid app numbers,False,False,,,,False,excluded_by_gate
+test_questions_100.txt,8. Test conversation continuity (follow-up questions),False,False,,,,False,excluded_by_gate
+test_questions_100.txt,Expected Features to Test:,False,True,greeting,0.637,0.713,False,correct_no_capture
+test_questions_100.txt,✓ Language detection (English/Tamil/Tanglish),False,True,greeting,0.763,0.758,False,correct_no_capture
+test_questions_100.txt,✓ Intent recognition,False,True,greeting,0.779,0.768,False,correct_no_capture
+test_questions_100.txt,✓ Field-specific extraction,False,True,greeting,0.697,0.697,False,correct_no_capture
+test_questions_100.txt,✓ HTML table generation,False,True,greeting,0.737,0.720,False,correct_no_capture
+test_questions_100.txt,✓ Direct answers for interrogative queries,False,True,greeting,0.719,0.691,False,correct_no_capture
+test_questions_100.txt,✓ Conversation context tracking,False,True,greeting,0.722,0.713,False,correct_no_capture
+test_questions_100.txt,✓ Date/year extraction,False,True,greeting,0.739,0.820,False,correct_no_capture
+test_questions_100.txt,✓ Pending count accuracy,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,✓ Merge application handling,True,False,,,,False,excluded_by_gate
+test_questions_100.txt,✓ Field visit deadline checks,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,================================================================================,False,True,smalltalk,0.680,0.680,False,correct_no_capture
+test_questions_200.txt,SIS CHATBOT - 200 TEST QUESTIONS BENCHMARK (ENGLISH & தமிழ்),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,TAMILNILAM URBAN REVENUE & PATTA MUTATION SYSTEM,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,APPLICATION NUMBER FORMAT: YYYY / URBAN_SERVICE_CODE / DISTRICT_CODE / SEQUENCE,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,Examples:,False,True,greeting,0.656,0.705,False,correct_no_capture
+test_questions_200.txt,"- 2026/0154/02/000001 (ISD - Involving Subdivision, Chennai District)",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"- 2026/0153/02/000002 (NISD - Not Involving Subdivision, Chennai District)",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,(No 0155/MERGE service code exists; applications use only 0153 (NISD) and 0154 (ISD)),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,SCHEMA COLUMNS COVERED (39 Fields):,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,1. serial_number              14. application_id             27. source_name,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,2. user_id                    15. survey_number              28. renewal_number,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,3. department_code            16. subdivision_number         29. workflow_state,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,4. service_code               17. patta_number               30. igrs_form6_number,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,5. district_code              18. role_id                    31. return_status,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,6. taluk_code                 19. source_code                32. current_subdivision_number,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,7. village_code               20. csc_service_charge         33. parent_application_id,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,8. urban_unit_code            21. government_service_charge  34. auto_mutated_flag,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,9. ward_code                  22. can_number                 35. is_auto_mutated,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,10. block_code                23. dispatch_date              36. igrs_auto_mutation_flag,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,11. application_date          24. received_date              37. camp_flag,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,12. application_status        25. ip_address                 38. camp_correction_id,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,13. last_updated_datetime     26. generated_datetime         39. camp_code,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 25),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: application_id, serial_number, parent_application_id, renewal_number, user_id, role_id]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,1. Show details for application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_id] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,2. விண்ணப்ப எண் 2026/0154/02/000001 இன் முழு விவரங்களைத் தருக,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_id] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,3. What is the application type of 2026/0153/02/000002?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,4. 2026/0154/02/000004 விண்ணப்பத்தின் வகை என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,5. What is the serial number of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[serial_number] [EN],False,True,greeting,0.687,0.702,False,correct_no_capture
+test_questions_200.txt,6. 2026/0154/02/000001 விண்ணப்பத்தின் வரிசை எண் (serial number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[serial_number] [TA],False,True,greeting,0.688,0.685,False,correct_no_capture
+test_questions_200.txt,7. Does application 2026/0154/02/000001 have a parent application id?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[parent_application_id] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,8. 2026/0154/02/000004 விண்ணப்பத்திற்கு parent_application_id உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[parent_application_id] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,9. Show renewal number for application 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[renewal_number] [EN],False,True,farewell,0.664,0.694,False,correct_no_capture
+test_questions_200.txt,10. 2026/0154/02/000001 விண்ணப்பத்தின் புதுப்பித்தல் எண் (renewal_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[renewal_number] [TA],False,True,farewell,0.671,0.696,False,correct_no_capture
+test_questions_200.txt,11. Which officer user_id is assigned to application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[user_id] [EN],False,True,greeting,0.727,0.687,False,correct_no_capture
+test_questions_200.txt,12. 2026/0154/02/000001 விண்ணப்பம் எந்த அதிகாரிக்கு (user_id) ஒதுக்கப்பட்டுள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[user_id] [TA],False,True,greeting,0.738,0.693,False,correct_no_capture
+test_questions_200.txt,13. What role_id is handling application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[role_id] [EN],False,True,greeting,0.667,0.672,False,correct_no_capture
+test_questions_200.txt,14. விண்ணப்பம் 2026/0154/02/000001 இன் அதிகாரியின் role_id என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[role_id] [TA],False,True,greeting,0.687,0.684,False,correct_no_capture
+test_questions_200.txt,15. List all applications currently assigned to me,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,16. எனக்கு ஒதுக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,17. How many total applications are in my jurisdiction?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,18. எனது அதிகார வரம்பில் உள்ள மொத்த விண்ணப்பங்களின் எண்ணிக்கை எவ்வளவு?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,19. Give me summary of application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,20. 2026/0154/02/000001 விண்ணப்பத்தின் சுருக்கத்தை வழங்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,21. Check status of application 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,22. 2026/0153/02/000002 விண்ணப்பத்தின் தற்போதைய நிலையைச் சரிபார்க்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,23. Find application 2026/0154/02/000004,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,24. 2026/0154/02/000004 விண்ணப்பத்தைக் கண்டறியவும்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,25. List all applications that have a merge id (merged_application_id) recorded,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,CATEGORY 2: GEOGRAPHIC & ADMINISTRATIVE HIERARCHY CODES (Questions 26 - 55),False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: district_code, taluk_code, village_code, urban_unit_code, ward_code, block_code]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,26. What is the official district code for Chennai?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[district_code] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,27. சென்னை மாவட்டத்தின் district_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[district_code] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,28. What is the district code of Tiruvallur?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,29. திருவள்ளூர் மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,30. Show applications for district_code 02,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,31. மாவட்டம் 02 இல் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,32. Show applications under taluk Ambattur,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[taluk_code] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,33. அம்பத்தூர் வட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[taluk_code] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,34. What is the taluk_code for Ambattur?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,35. அம்பத்தூர் வட்டத்தின் taluk_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,36. Show applications under urban_unit_code AMB-T01,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[urban_unit_code] [EN],False,True,greeting,0.652,0.674,False,correct_no_capture
+test_questions_200.txt,37. நகர்ப்புற அலகு குறியீடு (urban_unit_code) AMB-T01 விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[urban_unit_code] [TA],False,True,smalltalk,0.666,0.666,False,correct_no_capture
+test_questions_200.txt,38. What is the village_code associated with survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[village_code] [EN],False,True,greeting,0.665,0.697,False,correct_no_capture
+test_questions_200.txt,39. சர்வே 145 இன் கிராம குறியீடு (village_code) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[village_code] [TA],False,True,smalltalk,0.693,0.693,False,correct_no_capture
+test_questions_200.txt,40. List all applications in Ward 12,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[ward_code] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,41. வார்டு 12 இல் உள்ள அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[ward_code] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,42. Show survey numbers in Ward 12,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,43. வார்டு 12 இல் உள்ள புல எண்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,44. What is the ward_code for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,45. 2026/0154/02/000001 இன் வார்டு எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,46. List applications in Block B1,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[block_code] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,47. பிளாக் B1 இல் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[block_code] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,48. How many applications are pending in Block B1?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,49. பிளாக் B1 இல் எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,50. Show all survey numbers in Block B1,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,51. பிளாக் B1 இல் உள்ள அனைத்து சர்வே எண்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,52. What is the district code of Coimbatore?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,53. கோயம்புத்தூர் மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,54. What is the district code of Madurai?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,55. மதுரை மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,CATEGORY 3: SERVICE & DEPARTMENT CODES (Questions 56 - 75),False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: service_code, department_code, source_code, source_name]",False,True,greeting,0.615,0.701,False,correct_no_capture
+test_questions_200.txt,56. What does service_code 0154 represent?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[service_code] [EN],False,True,greeting,0.671,0.722,False,correct_no_capture
+test_questions_200.txt,57. சேவை குறியீடு (service_code) 0154 எதனைக் குறிக்கிறது?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[service_code] [TA],False,True,greeting,0.703,0.686,False,correct_no_capture
+test_questions_200.txt,58. What does service_code 0153 mean?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,59. சேவை குறியீடு 0153 என்றால் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,60. What is service_code 0155 in Urban TamilNilam?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,61. தமிழ்நிலம் நகர்ப்புறத்தில் சேவை குறியீடு 0155 என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,62. List all ISD applications (service_code 0154),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,63. அனைத்து ISD விண்ணப்பங்களையும் காட்டு (0154),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,64. List all NISD applications (service_code 0153),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,65. அனைத்து NISD விண்ணப்பங்களையும் காட்டு (0153),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,66. List all applications with a merge id recorded (merged_application_id set),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,67. இணைக்கப்பட்ட விண்ணப்ப எண் (merge id) பதிவாகியுள்ள அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,68. What is the department_code for survey and settlement department?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[department_code] [EN],False,True,greeting,0.674,0.716,False,correct_no_capture
+test_questions_200.txt,69. சர்வே துறையின் department_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[department_code] [TA],False,True,greeting,0.689,0.684,False,correct_no_capture
+test_questions_200.txt,70. Show applications with source_code CITIZEN,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[source_code] [EN],False,True,greeting,0.682,0.707,False,correct_no_capture
+test_questions_200.txt,71. பொதுமக்கள் நேரடியாக சமர்ப்பித்த (CITIZEN) விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[source_code] [TA],False,True,greeting,0.696,0.688,False,correct_no_capture
+test_questions_200.txt,72. Show applications with source_code CSC,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,73. CSC மையம் மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,74. What is the source_name of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[source_name] [EN],False,True,greeting,0.686,0.699,False,correct_no_capture
+test_questions_200.txt,75. 2026/0154/02/000001 விண்ணப்பத்தின் ஆதாரம் (source_name) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[source_name] [TA],False,True,greeting,0.695,0.689,False,correct_no_capture
+test_questions_200.txt,CATEGORY 4: LAND & SURVEY IDENTIFIERS (Questions 76 - 105),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: survey_number, subdivision_number, current_subdivision_number, patta_number]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,76. Show survey details for survey 145,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[survey_number] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,77. புல எண் 145 இன் விவரங்களைத் தருக,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,[survey_number] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,78. What is the survey_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,79. 2026/0154/02/000001 விண்ணப்பத்தின் சர்வே எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,80. Who is the owner of survey number 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,81. புல எண் 145 இன் உரிமையாளர் யார்?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,82. What is the total area of survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,83. புல எண் 145 இன் மொத்த பரப்பளவு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,84. What is the next subdivision number for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[subdivision_number] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,85. புல எண் 145 க்கான அடுத்த உட்பிரிவு எண் (next subdivision number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[subdivision_number] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,86. What are the existing subdivisions for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,87. புல எண் 145 இல் உள்ள உட்பிரிவுகள் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,88. What is the current_subdivision_number proposed for 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[current_subdivision_number] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,89. 2026/0154/02/000001 இல் முன்மொழியப்பட்ட உட்பிரிவு எண் (current_subdivision_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[current_subdivision_number] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,90. What is the patta_number for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[patta_number] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,91. புல எண் 145 இன் பட்டா எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[patta_number] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,92. What is the patta_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,93. 2026/0154/02/000001 விண்ணப்பத்தின் பட்டா எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,94. Does survey 145 have any encroachment or litigation?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,95. புல எண் 145 இல் ஆக்கிரமிப்பு அல்லது வழக்கு உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,96. Show details for survey 146,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,97. சர்வே 146 விவரங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,98. Show next available subdivision number for survey 146,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,99. புல எண் 146 இன் அடுத்த உட்பிரிவு எண் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,100. Show all survey numbers in my jurisdiction,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,101. எனது அதிகார வரம்பில் உள்ள அனைத்து சர்வே எண்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,102. Find surveys linked to patta number 101,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,103. பட்டா எண் 101 உடன் இணைக்கப்பட்ட சர்வே எண்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,104. Check subdivision 145/1A details,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,105. உட்பிரிவு 145/1A விவரங்களைச் சரிபார்க்கவும்,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"CATEGORY 5: DATE, TIMELINE & TIMESTAMP FIELDS (Questions 106 - 130)",False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: application_date, received_date, dispatch_date, last_updated_datetime, generated_datetime]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,106. When was application 2026/0154/02/000001 submitted?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_date] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,107. 2026/0154/02/000001 விண்ணப்பம் எப்போது சமர்ப்பிக்கப்பட்டது?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_date] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,108. Show applications submitted in July 2026,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,109. ஜூலை 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,110. Show applications submitted between 2026-07-01 and 2026-07-29,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,111. 2026-07-01 முதல் 2026-07-29 வரை சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,112. What is the received_date of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[received_date] [EN],False,True,greeting,0.688,0.775,False,correct_no_capture
+test_questions_200.txt,113. 2026/0154/02/000001 விண்ணப்பம் பெறப்பட்ட தேதி (received_date) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[received_date] [TA],False,True,greeting,0.686,0.768,False,correct_no_capture
+test_questions_200.txt,114. What is the dispatch_date for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[dispatch_date] [EN],False,True,greeting,0.648,0.784,False,correct_no_capture
+test_questions_200.txt,115. 2026/0154/02/000001 அனுப்பப்பட்ட தேதி (dispatch_date) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[dispatch_date] [TA],False,True,greeting,0.669,0.783,False,correct_no_capture
+test_questions_200.txt,116. When was application 2026/0154/02/000001 last updated?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[last_updated_datetime] [EN],False,True,greeting,0.655,0.774,False,correct_no_capture
+test_questions_200.txt,117. 2026/0154/02/000001 கடைசியாக எப்போது புதுப்பிக்கப்பட்டது (last_updated)?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[last_updated_datetime] [TA],False,True,greeting,0.653,0.773,False,correct_no_capture
+test_questions_200.txt,118. What is the generated_datetime for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[generated_datetime] [EN],False,True,greeting,0.679,0.767,False,correct_no_capture
+test_questions_200.txt,119. 2026/0154/02/000001 உருவான தேதி/நேரம் (generated_datetime) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[generated_datetime] [TA],False,True,greeting,0.687,0.772,False,correct_no_capture
+test_questions_200.txt,120. Show applications submitted in June 2026,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,121. ஜூன் 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,122. What year was application 2026/0154/02/000001 submitted?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,123. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட ஆண்டு என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,124. List applications received this month,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,125. இந்த மாதம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,126. Show all completed applications with dispatch dates,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,127. முடிவடைந்து அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,128. List applications updated in the last 7 days,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,129. கடந்த 7 நாட்களில் புதுப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,130. How many applications were submitted in July 2026?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"CATEGORY 6: STATUS, WORKFLOW STATES & RETURN STATUS (Questions 131 - 155)",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: application_status, workflow_state, return_status]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,131. What is the application_status of 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_status] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,132. 2026/0154/02/000001 இன் நிலை (status) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[application_status] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,133. List all pending applications,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,134. நிலுவையில் உள்ள அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,135. How many applications are pending?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,136. எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,137. List all approved applications,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,138. அங்கீகரிக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,139. List all rejected applications,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,140. நிராகரிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,141. Show overdue applications in my jurisdiction,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,142. காலதாமதமான விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,143. What is the workflow_state of 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[workflow_state] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,144. 2026/0154/02/000001 விண்ணப்பத்தின் தற்போதைய கட்டம் (workflow_state) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[workflow_state] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,145. Show applications currently at SIS workflow state,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,146. SIS கட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,147. Show applications forwarded to Tahsildar,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,148. தாசில்தார் அலுவலகத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,149. Where is application 2026/0154/02/000001 right now?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,150. 2026/0154/02/000001 தற்போது எந்த அலுவலகத்தில் உள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,151. What is the return_status of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[return_status] [EN],False,True,greeting,0.702,0.782,False,correct_no_capture
+test_questions_200.txt,152. 2026/0154/02/000001 இன் திருப்பி அனுப்பிய நிலை (return_status) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[return_status] [TA],False,True,greeting,0.713,0.763,False,correct_no_capture
+test_questions_200.txt,153. Show all applications with return_status flagged as returned for clarification,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,154. விளக்கத்திற்காக திருப்பி அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,155. Show applications at DIS review stage,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,CATEGORY 7: FINANCIAL & FEE DETAILS (Questions 156 - 170),False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: csc_service_charge, government_service_charge]",False,True,thanks,0.600,0.690,False,correct_no_capture
+test_questions_200.txt,156. What is the csc_service_charge for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[csc_service_charge] [EN],False,True,greeting,0.636,0.710,False,correct_no_capture
+test_questions_200.txt,157. 2026/0154/02/000001 விண்ணப்பத்திற்கான CSC சேவை கட்டணம் (csc_service_charge) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[csc_service_charge] [TA],False,True,greeting,0.656,0.712,False,correct_no_capture
+test_questions_200.txt,158. What is the government_service_charge for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[government_service_charge] [EN],False,True,greeting,0.648,0.747,False,correct_no_capture
+test_questions_200.txt,159. 2026/0154/02/000001 விண்ணப்பத்திற்கான அரசு சேவை கட்டணம் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[government_service_charge] [TA],False,True,smalltalk,0.663,0.750,False,correct_no_capture
+test_questions_200.txt,160. What is the standard fee for ISD application (service_code 0154)?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,161. ISD விண்ணப்பத்திற்கான கட்டண விவரங்கள் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,162. What is the government fee for NISD mutation (service_code 0153)?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,163. NISD பட்டா மாறுதலுக்கான அரசு கட்டணம் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,164. Show fee breakdown for application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,165. 2026/0154/02/000001 இன் கட்டண விவரங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,166. Is survey fee paid for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,167. 2026/0154/02/000001 விண்ணப்பத்திற்கு சர்வே கட்டணம் செலுத்தப்பட்டுள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,168. What are the CSC charges for TSLR extract services?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,169. TSLR சான்றிதழுக்கான CSC கட்டணம் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,170. Show total service charges collected for July 2026,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,"CATEGORY 8: CITIZEN IDENTITY, IGRS & IP AUDIT (Questions 171 - 185)",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: can_number, igrs_form6_number, ip_address]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,171. What is the can_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[can_number] [EN],False,True,greeting,0.705,0.733,False,correct_no_capture
+test_questions_200.txt,172. 2026/0154/02/000001 விண்ணப்பத்தின் குடிமக்கள் அணுகல் எண் (can_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[can_number] [TA],False,True,greeting,0.712,0.710,False,correct_no_capture
+test_questions_200.txt,173. Find application associated with CAN number CAN-000001,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,174. CAN எண் CAN-000001 இன் விண்ணப்பத்தைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,175. What is the igrs_form6_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[igrs_form6_number] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,176. 2026/0154/02/000001 விண்ணப்பத்தின் igrs_form6_number என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[igrs_form6_number] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,177. Show applications integrated with IGRS Form 6,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,178. IGRS படிவம் 6 மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,179. What is the ip_address from which application 2026/0154/02/000001 was submitted?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[ip_address] [EN],False,True,greeting,0.679,0.678,False,correct_no_capture
+test_questions_200.txt,180. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட IP முகவரி (ip_address) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[ip_address] [TA],False,True,greeting,0.696,0.669,False,correct_no_capture
+test_questions_200.txt,181. Show citizen details and CAN number for 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,182. 2026/0153/02/000002 விண்ணப்பதாரரின் CAN எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,183. Check registered sale deed and IGRS Form 6 status for 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,184. 2026/0154/02/000001 இன் பத்திரப் பதிவு மற்றும் IGRS விவரங்களைச் சரிபார்க்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,185. Are there any submission audit logs with IP addresses for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,CATEGORY 9: AUTO-MUTATION & SPECIAL CAMP FLAGS (Questions 186 - 200),True,False,,,,False,excluded_by_gate
+test_questions_200.txt,"[Columns: auto_mutated_flag, is_auto_mutated, igrs_auto_mutation_flag, camp_flag, camp_correction_id, camp_code]",True,False,,,,False,excluded_by_gate
+test_questions_200.txt,186. Is application 2026/0154/02/000001 marked with auto_mutated_flag?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[auto_mutated_flag] [EN],False,True,greeting,0.695,0.677,False,correct_no_capture
+test_questions_200.txt,187. 2026/0154/02/000001 விண்ணப்பத்திற்கு auto_mutated_flag உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[auto_mutated_flag] [TA],False,True,greeting,0.699,0.687,False,correct_no_capture
+test_questions_200.txt,188. Show applications where is_auto_mutated is True,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[is_auto_mutated] [EN],False,True,greeting,0.679,0.662,False,correct_no_capture
+test_questions_200.txt,189. தானியங்கி பட்டா மாறுதல் (is_auto_mutated) செய்யப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[is_auto_mutated] [TA],False,True,greeting,0.680,0.662,False,correct_no_capture
+test_questions_200.txt,190. What is the igrs_auto_mutation_flag for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[igrs_auto_mutation_flag] [EN],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,191. 2026/0154/02/000001 இன் igrs_auto_mutation_flag என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[igrs_auto_mutation_flag] [TA],True,False,,,,False,excluded_by_gate
+test_questions_200.txt,192. Show applications marked with camp_flag,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_flag] [EN],False,True,greeting,0.700,0.699,False,correct_no_capture
+test_questions_200.txt,193. சிறப்பு முகாம் (camp_flag) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_flag] [TA],False,True,smalltalk,0.712,0.712,False,correct_no_capture
+test_questions_200.txt,194. Is application 2026/0154/02/000001 processed under a special camp?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,195. 2026/0154/02/000001 சிறப்பு முகாம் விண்ணப்பமா?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,196. What is the camp_correction_id for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_correction_id] [EN],False,True,greeting,0.695,0.687,False,correct_no_capture
+test_questions_200.txt,197. 2026/0154/02/000001 இன் முகாம் திருத்த எண் (camp_correction_id) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_correction_id] [TA],False,True,greeting,0.705,0.703,False,correct_no_capture
+test_questions_200.txt,198. What is the camp_code for special revenue camps in Ambattur?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_code] [EN],False,True,greeting,0.684,0.693,False,correct_no_capture
+test_questions_200.txt,199. அம்பத்தூர் வட்ட சிறப்பு முகாம் குறியீடு (camp_code) என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_200.txt,[camp_code] [TA],False,True,smalltalk,0.700,0.700,False,correct_no_capture
+test_questions_200.txt,200. List all applications received under camp_code CMP-2026-01,True,False,,,,False,excluded_by_gate
+test_questions_200.txt,END OF 200 TEST QUESTIONS BENCHMARK,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,SIS CHATBOT - 206 TEST QUESTIONS BENCHMARK (ENGLISH & தமிழ்),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,2. service_code               17. patta_number               30. igrs_form6_number,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,3. village_code               20. csc_service_charge         33. parent_application_id,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,4. block_code                23. dispatch_date              36. igrs_auto_mutation_flag,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,5. last_updated_datetime     26. generated_datetime         39. camp_code,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 1: APPLICATION IDENTIFIERS & CORE METADATA (Questions 1 - 26),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,6. Show details for application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,7. விண்ணப்ப எண் 2026/0154/02/000001 இன் முழு விவரங்களைத் தருக,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,8. What is the application type of 2026/0153/02/000002?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,9. 2026/0154/02/000004 விண்ணப்பத்தின் வகை என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,10. What is the serial number of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,11. 2026/0154/02/000001 விண்ணப்பத்தின் வரிசை எண் (serial number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,12. Does application 2026/0154/02/000001 have a parent application id?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,13. 2026/0154/02/000004 விண்ணப்பத்திற்கு parent_application_id உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,14. Show renewal number for application 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,15. 2026/0154/02/000001 விண்ணப்பத்தின் புதுப்பித்தல் எண் (renewal_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,16. Which officer user_id is assigned to application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,17. 2026/0154/02/000001 விண்ணப்பம் எந்த அதிகாரிக்கு (user_id) ஒதுக்கப்பட்டுள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,18. What role_id is handling application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,19. விண்ணப்பம் 2026/0154/02/000001 இன் அதிகாரியின் role_id என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,20. List all applications currently assigned to me,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,21. எனக்கு ஒதுக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,22. How many total applications are in my jurisdiction?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,23. எனது அதிகார வரம்பில் உள்ள மொத்த விண்ணப்பங்களின் எண்ணிக்கை எவ்வளவு?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,24. Give me summary of application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,25. 2026/0154/02/000001 விண்ணப்பத்தின் சுருக்கத்தை வழங்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,26. Check status of application 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,27. 2026/0153/02/000002 விண்ணப்பத்தின் தற்போதைய நிலையைச் சரிபார்க்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,28. Find application 2026/0154/02/000004,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,29. 2026/0154/02/000004 விண்ணப்பத்தைக் கண்டறியவும்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,30. List all applications that have a merge id (merged_application_id) recorded,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,31. இணைக்கப்பட்ட விண்ணப்ப எண் (merged_application_id) பதிவாகியுள்ள அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 2: GEOGRAPHIC & ADMINISTRATIVE HIERARCHY CODES (Questions 27 - 56),False,False,,,,False,excluded_by_gate
+test_questions_206.txt,32. What is the official district code for Chennai?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,33. சென்னை மாவட்டத்தின் district_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,34. What is the district code of Tiruvallur?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,35. திருவள்ளூர் மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,36. Show applications for district_code 02,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,37. மாவட்டம் 02 இல் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,38. Show applications under taluk Ambattur,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,39. அம்பத்தூர் வட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,40. What is the taluk_code for Ambattur?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,41. அம்பத்தூர் வட்டத்தின் taluk_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,42. Show applications under urban_unit_code AMB-T01,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,43. நகர்ப்புற அலகு குறியீடு (urban_unit_code) AMB-T01 விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,44. What is the village_code associated with survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,45. சர்வே 145 இன் கிராம குறியீடு (village_code) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,46. List all applications in Ward 12,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,47. வார்டு 12 இல் உள்ள அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,48. Show survey numbers in Ward 12,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,49. வார்டு 12 இல் உள்ள புல எண்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,50. What is the ward_code for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,51. 2026/0154/02/000001 இன் வார்டு எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,52. List applications in Block B1,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,53. பிளாக் B1 இல் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,54. How many applications are pending in Block B1?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,55. பிளாக் B1 இல் எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,56. Show all survey numbers in Block B1,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,57. பிளாக் B1 இல் உள்ள அனைத்து சர்வே எண்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,58. What is the district code of Coimbatore?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,59. கோயம்புத்தூர் மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,60. What is the district code of Madurai?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,61. மதுரை மாவட்ட குறியீடு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 3: SERVICE & DEPARTMENT CODES (Questions 57 - 76),False,False,,,,False,excluded_by_gate
+test_questions_206.txt,62. What does service_code 0154 represent?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,63. சேவை குறியீடு (service_code) 0154 எதனைக் குறிக்கிறது?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,64. What does service_code 0153 mean?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,65. சேவை குறியீடு 0153 என்றால் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,66. What is service_code 0155 in Urban TamilNilam?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,67. தமிழ்நிலம் நகர்ப்புறத்தில் சேவை குறியீடு 0155 என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,68. List all ISD applications (service_code 0154),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,69. அனைத்து ISD விண்ணப்பங்களையும் காட்டு (0154),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,70. List all NISD applications (service_code 0153),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,71. அனைத்து NISD விண்ணப்பங்களையும் காட்டு (0153),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,72. List all applications with a merge id recorded (merged_application_id set),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,73. இணைக்கப்பட்ட விண்ணப்ப எண் (merge id) பதிவாகியுள்ள அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,74. What is the department_code for survey and settlement department?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,75. சர்வே துறையின் department_code என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,76. Show applications with source_code CITIZEN,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,77. பொதுமக்கள் நேரடியாக சமர்ப்பித்த (CITIZEN) விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,78. Show applications with source_code CSC,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,79. CSC மையம் மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,80. What is the source_name of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,81. 2026/0154/02/000001 விண்ணப்பத்தின் ஆதாரம் (source_name) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 4: LAND & SURVEY IDENTIFIERS (Questions 77 - 106),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,82. Show survey details for survey 145,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,83. புல எண் 145 இன் விவரங்களைத் தருக,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,84. What is the survey_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,85. 2026/0154/02/000001 விண்ணப்பத்தின் சர்வே எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,86. Who is the owner of survey number 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,87. புல எண் 145 இன் உரிமையாளர் யார்?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,88. What is the total area of survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,89. புல எண் 145 இன் மொத்த பரப்பளவு என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,90. What is the next subdivision number for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,91. புல எண் 145 க்கான அடுத்த உட்பிரிவு எண் (next subdivision number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,92. What are the existing subdivisions for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,93. புல எண் 145 இல் உள்ள உட்பிரிவுகள் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,94. What is the current_subdivision_number proposed for 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,95. 2026/0154/02/000001 இல் முன்மொழியப்பட்ட உட்பிரிவு எண் (current_subdivision_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,96. What is the patta_number for survey 145?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,97. புல எண் 145 இன் பட்டா எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,98. What is the patta_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,99. 2026/0154/02/000001 விண்ணப்பத்தின் பட்டா எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,100. Does survey 145 have any encroachment or litigation?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,101. புல எண் 145 இல் ஆக்கிரமிப்பு அல்லது வழக்கு உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,102. Show details for survey 146,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,103. சர்வே 146 விவரங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,104. Show next available subdivision number for survey 146,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,105. புல எண் 146 இன் அடுத்த உட்பிரிவு எண் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,106. Show all survey numbers in my jurisdiction,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,107. எனது அதிகார வரம்பில் உள்ள அனைத்து சர்வே எண்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,108. Find surveys linked to patta number 101,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,109. பட்டா எண் 101 உடன் இணைக்கப்பட்ட சர்வே எண்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,110. Check subdivision 145/1A details,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,111. உட்பிரிவு 145/1A விவரங்களைச் சரிபார்க்கவும்,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,"CATEGORY 5: DATE, TIMELINE & TIMESTAMP FIELDS (Questions 107 - 132)",False,False,,,,False,excluded_by_gate
+test_questions_206.txt,112. When was application 2026/0154/02/000001 submitted?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,113. 2026/0154/02/000001 விண்ணப்பம் எப்போது சமர்ப்பிக்கப்பட்டது?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,114. Show applications submitted in July 2026,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,115. ஜூலை 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,116. Show applications submitted between 2026-07-01 and 2026-07-29,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,117. 2026-07-01 முதல் 2026-07-29 வரை சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,118. What is the received_date of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,119. 2026/0154/02/000001 விண்ணப்பம் பெறப்பட்ட தேதி (received_date) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,120. What is the dispatch_date for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,121. 2026/0154/02/000001 அனுப்பப்பட்ட தேதி (dispatch_date) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,122. When was application 2026/0154/02/000001 last updated?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,123. 2026/0154/02/000001 கடைசியாக எப்போது புதுப்பிக்கப்பட்டது (last_updated)?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,124. What is the generated_datetime for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,125. 2026/0154/02/000001 உருவான தேதி/நேரம் (generated_datetime) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,126. Show applications submitted in June 2026,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,127. ஜூன் 2026 இல் சமர்ப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,128. What year was application 2026/0154/02/000001 submitted?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,129. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட ஆண்டு என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,130. List applications received this month,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,131. இந்த மாதம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,132. Show all completed applications with dispatch dates,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,133. முடிவடைந்து அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,134. List applications updated in the last 7 days,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,135. கடந்த 7 நாட்களில் புதுப்பிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,136. How many applications were submitted in July 2026?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,137. ஜூலை 2026 இல் எத்தனை விண்ணப்பங்கள் சமர்ப்பிக்கப்பட்டன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,"CATEGORY 6: STATUS, WORKFLOW STATES & RETURN STATUS (Questions 133 - 158)",True,False,,,,False,excluded_by_gate
+test_questions_206.txt,138. What is the application_status of 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,139. 2026/0154/02/000001 இன் நிலை (status) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,140. List all pending applications,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,141. நிலுவையில் உள்ள அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,142. How many applications are pending?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,143. எத்தனை விண்ணப்பங்கள் நிலுவையில் உள்ளன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,144. List all approved applications,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,145. அங்கீகரிக்கப்பட்ட அனைத்து விண்ணப்பங்களையும் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,146. List all rejected applications,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,147. நிராகரிக்கப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,148. Show overdue applications in my jurisdiction,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,149. காலதாமதமான விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,150. What is the workflow_state of 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,151. 2026/0154/02/000001 விண்ணப்பத்தின் தற்போதைய கட்டம் (workflow_state) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,152. Show applications currently at SIS workflow state,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,153. SIS கட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,154. Show applications forwarded to Tahsildar,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,155. தாசில்தார் அலுவலகத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,156. Where is application 2026/0154/02/000001 right now?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,157. 2026/0154/02/000001 தற்போது எந்த அலுவலகத்தில் உள்ளது?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,158. What is the return_status of application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,159. 2026/0154/02/000001 இன் திருப்பி அனுப்பிய நிலை (return_status) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,160. Show all applications with return_status flagged as returned for clarification,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,161. விளக்கத்திற்காக திருப்பி அனுப்பப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,162. Show applications at DIS review stage,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,163. DIS மதிப்பாய்வு கட்டத்தில் உள்ள விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 7: FINANCIAL & FEE DETAILS (Questions 159 - 174),False,False,,,,False,excluded_by_gate
+test_questions_206.txt,164. What is the csc_service_charge for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,165. 2026/0154/02/000001 விண்ணப்பத்திற்கான CSC சேவை கட்டணம் (csc_service_charge) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,166. What is the government_service_charge for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,167. 2026/0154/02/000001 விண்ணப்பத்திற்கான அரசு சேவை கட்டணம் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,168. What is the standard fee for ISD application (service_code 0154)?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,169. ISD விண்ணப்பத்திற்கான கட்டண விவரங்கள் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,170. What is the government fee for NISD mutation (service_code 0153)?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,171. NISD பட்டா மாறுதலுக்கான அரசு கட்டணம் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,172. Show fee breakdown for application 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,173. 2026/0154/02/000001 இன் கட்டண விவரங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,174. Is survey fee paid for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,175. 2026/0154/02/000001 விண்ணப்பத்திற்கு சர்வே கட்டணம் செலுத்தப்பட்டுள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,176. What are the CSC charges for TSLR extract services?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,177. TSLR சான்றிதழுக்கான CSC கட்டணம் என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,178. Show total service charges collected for July 2026,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,179. ஜூலை 2026 இல் வசூலிக்கப்பட்ட மொத்த சேவை கட்டணங்களைக் காட்டு,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,"CATEGORY 8: CITIZEN IDENTITY, IGRS & IP AUDIT (Questions 175 - 190)",True,False,,,,False,excluded_by_gate
+test_questions_206.txt,180. What is the can_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,181. 2026/0154/02/000001 விண்ணப்பத்தின் குடிமக்கள் அணுகல் எண் (can_number) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,182. Find application associated with CAN number CAN-000001,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,183. CAN எண் CAN-000001 இன் விண்ணப்பத்தைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,184. What is the igrs_form6_number for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,185. 2026/0154/02/000001 விண்ணப்பத்தின் igrs_form6_number என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,186. Show applications integrated with IGRS Form 6,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,187. IGRS படிவம் 6 மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,188. What is the ip_address from which application 2026/0154/02/000001 was submitted?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,189. 2026/0154/02/000001 சமர்ப்பிக்கப்பட்ட IP முகவரி (ip_address) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,190. Show citizen details and CAN number for 2026/0153/02/000002,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,191. 2026/0153/02/000002 விண்ணப்பதாரரின் CAN எண் என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,192. Check registered sale deed and IGRS Form 6 status for 2026/0154/02/000001,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,193. 2026/0154/02/000001 இன் பத்திரப் பதிவு மற்றும் IGRS விவரங்களைச் சரிபார்க்கவும்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,194. Are there any submission audit logs with IP addresses for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,195. 2026/0154/02/000001 விண்ணப்பத்திற்கு IP முகவரியுடன் சமர்ப்பிப்பு தணிக்கை பதிவுகள் உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,CATEGORY 9: AUTO-MUTATION & SPECIAL CAMP FLAGS (Questions 191 - 206),True,False,,,,False,excluded_by_gate
+test_questions_206.txt,196. Is application 2026/0154/02/000001 marked with auto_mutated_flag?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,197. 2026/0154/02/000001 விண்ணப்பத்திற்கு auto_mutated_flag உள்ளதா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,198. Show applications where is_auto_mutated is True,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,199. தானியங்கி பட்டா மாறுதல் (is_auto_mutated) செய்யப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,200. What is the igrs_auto_mutation_flag for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,201. 2026/0154/02/000001 இன் igrs_auto_mutation_flag என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,202. Show applications marked with camp_flag,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,203. சிறப்பு முகாம் (camp_flag) மூலம் பெறப்பட்ட விண்ணப்பங்களைக் காட்டு,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,204. Is application 2026/0154/02/000001 processed under a special camp?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,205. 2026/0154/02/000001 சிறப்பு முகாம் விண்ணப்பமா?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,206. What is the camp_correction_id for application 2026/0154/02/000001?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,207. 2026/0154/02/000001 இன் முகாம் திருத்த எண் (camp_correction_id) என்ன?,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,208. What is the camp_code for special revenue camps in Ambattur?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,209. அம்பத்தூர் வட்ட சிறப்பு முகாம் குறியீடு (camp_code) என்ன?,False,False,,,,False,excluded_by_gate
+test_questions_206.txt,210. List all applications received under camp_code CMP-2026-01,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,211. முகாம் குறியீடு CMP-2026-01 கீழ் பெறப்பட்ட அனைத்து விண்ணப்பங்களையும் பட்டியலிடுங்கள்,True,False,,,,False,excluded_by_gate
+test_questions_206.txt,END OF 206 TEST QUESTIONS BENCHMARK,False,False,,,,False,excluded_by_gate

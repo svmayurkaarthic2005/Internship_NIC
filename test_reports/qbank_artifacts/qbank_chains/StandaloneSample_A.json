@@ -1,0 +1,6 @@
+{
+  "chain_id": "StandaloneSample_A",
+  "questions": [
+    "Give me all NISD applications which have a rejected status, but separate those rejected due to missing linked documents from those with other recorded remarks. Include the survey number, subdivision, old patta number, final update date and workflow history. Don't invent a rejection reason when the remarks are blank."
+  ]
+}

@@ -562,7 +562,12 @@ async def _llm_greeting(message: str, kind: str, is_tamil: bool):
         bound = _rag.llm.bind(options={
             "num_ctx": 2048, "temperature": 0.5, "num_predict": 80,
         })
-        reply = await asyncio.wait_for(bound.ainvoke(prompt), timeout=_GREETING_LLM_TIMEOUT)
+        from backend.services.observability import record_llm
+        _t0 = time.perf_counter()
+        try:
+            reply = await asyncio.wait_for(bound.ainvoke(prompt), timeout=_GREETING_LLM_TIMEOUT)
+        finally:
+            record_llm((time.perf_counter() - _t0) * 1000)   # not gated by llm_slot, so timed here
         text = (getattr(reply, "content", "") or "").strip().strip('"').strip()
     except Exception as exc:
         logger.warning(f"LLM greeting unavailable, using fixed text: {exc}")
@@ -1589,7 +1594,14 @@ _WFH_REMARK_RE = re.compile(
     re.I)
 _WFH_RECOMMEND_RE = re.compile(r"\bsis\s+recommendation\b|\brecommendation\s+record\w*\b|\brecommendation\s+for\b", re.I)
 _WFH_BEFORE_RE = re.compile(r"\b(?:action|stage|transition)\b.{0,15}\bimmediately\s+before\b|"
-                            r"\bimmediately\s+before\s+the\s+current\s+stage\b|\bbefore\s+the\s+current\s+stage\b", re.I)
+                            r"\bimmediately\s+before\s+the\s+current\s+stage\b|\bbefore\s+the\s+current\s+stage\b|"
+                            # "what happened before the rejection/approval?" -- the terminal
+                            # outcome named instead of the literal words "current stage". For a
+                            # closed file the current stage already IS that outcome, so the same
+                            # "hop immediately before the last one" answer applies; this used to
+                            # match no sub-pattern at all and fall through to `general_query`.
+                            r"\bbefore\s+(?:the\s+|it\s+was\s+)?(?:rejection|rejected|approval|approved|closure|closed|completion|completed|decision|final\s+(?:order|outcome))\b",
+                            re.I)
 _WFH_AFTER_RE = re.compile(r"\b(?:action|stage|transition|what\s+happened)\b.{0,25}\b(?:immediately\s+)?after\b|"
                            r"\b(?:immediately\s+)?after\s+[a-z\u0B80-\u0BFF]+", re.I)
 _WFH_FINAL_RE = re.compile(
@@ -1606,8 +1618,20 @@ _WFH_LATEST_RE = re.compile(
     re.I)
 _WFH_TRANSITION_FROM_RE = re.compile(r"\bmoved?\s+from\s+[a-z\s\u0B80-\u0BFF]+(?:\s+[a-z\s\u0B80-\u0BFF]+)?\s+to\s+(?:another\s+stage|[a-z\s\u0B80-\u0BFF]+)\b", re.I)
 _WFH_REACHED_DATE_RE = re.compile(r"\breach(?:ed)?\s+(?:its\s+|the\s+)?current\s+stage\b", re.I)
+_WFH_ENTERED_RE = re.compile(
+    r"\bwhen\s+(?:did|was)\s+(?:it|this\s+(?:application|file)|the\s+(?:application|file)|\S+/\d{4}/\S+)\s+"
+    r"(?:move[ds]?|go(?:ne)?|sent|forwarded|reach(?:ed)?|arrive[ds]?|get|got)\s+(?:to|into|at)?\s*(?:the\s+)?"
+    r"([a-z஀-௿]+(?:\s+[a-z஀-௿]+){0,2})\s*(?:stage|desk)?\b", re.I)
+_WFH_LOG_RE = re.compile(
+    r"\bworkflow\s+history\b|\b(?:previous|past|earlier|all\s+(?:the\s+)?)\s*(?:workflow\s+)?(?:stages|steps|events|movements?)\b|"
+    r"\bstage\s+history\b|\b(?:events?|steps?|stages?)\s+(?:recorded|logged)\b|\brecorded\s+(?:workflow\s+)?(?:events|steps|stages)\b|"
+    r"\bstages\s+(?:it|this\s+application)\s+(?:went|passed|has\s+gone)\s+through\b|\bmovement\s+history\b|"
+    r"பணிப்பாய்வு\s*வரலாறு", re.I)
 _WFH_CUE = re.compile(
     r"\bworkflow\s+(?:action|entr\w+|event\w*|remark|transition|history)\b|\bfinal\s+(?:workflow\s+)?transition\b|"
+    r"\b(?:previous|past|earlier)\s+(?:workflow\s+)?(?:stages|steps|events)\b|\bstage\s+history\b|"
+    r"\b(?:events?|steps?|stages?)\s+(?:recorded|logged)\b|\brecorded\s+(?:workflow\s+)?(?:events|steps|stages)\b|"
+    r"\bwhen\s+(?:did|was)\s+(?:it|this\s+(?:application|file)|the\s+(?:application|file)|\S+/\d{4}/\S+)\s+(?:move[ds]?|go(?:ne)?|sent|forwarded|reach(?:ed)?|arrive[ds]?|get|got)\b|"
     r"\bfirst\s+(?:workflow\s+)?(?:transition|action)\b|\b(?:immediately\s+)?(?:before|after)\b|"
     r"\bmoved?\s+from\s+[a-z\s\u0B80-\u0BFF]+(?:\s+[a-z\s\u0B80-\u0BFF]+)?\s+to\b|\bsis\s+recommendation\b|\brecommendation\s+record\w*\b|"
     r"\breach(?:ed)?\s+(?:its\s+|the\s+)?current\s+stage\b|"
@@ -1678,8 +1702,12 @@ def _wfh_fmt_dt(dt) -> Optional[str]:
                 return f"{dpart} {tpart}" if tpart else f"{dpart} 00:00"
             return None
     if isinstance(dt, datetime):
-        local = dt.astimezone(_IST) if dt.tzinfo else dt
-        return local.strftime("%Y-%m-%d %H:%M")
+        # The stored value IS the register's recorded wall-clock time: the source extract's
+        # naive `update_dt` (e.g. '2026-09-10 19:35:14' for 045470's SIS->TAHSILDAR hop) is
+        # projected as UTC. Shifting it to IST printed 2026-09-11 01:05 -- a time the register
+        # never recorded -- and disagreed with the workflow log, decision date and remark date.
+        recorded = dt.astimezone(timezone.utc) if dt.tzinfo else dt
+        return recorded.strftime("%Y-%m-%d %H:%M")
     if isinstance(dt, date):
         return dt.strftime("%Y-%m-%d 00:00")
     return None
@@ -1772,6 +1800,20 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
         if len(hops) < 2:
             return (f"{app_no} இன்னும் ஒரே பணிப்பாய்வு படியில்தான் உள்ளது; முந்தைய நடவடிக்கை இல்லை." if is_tamil
                     else f"{app_no} has only one workflow step so far; there is no action before it.")
+        if not re.search(r"\bimmediately\b|\bcurrent\s+stage\b", m, re.I):
+            # "what happened before it was rejected / before approval": every recorded event
+            # ahead of the closing hop, in stored order with stored timestamps -- nothing inferred
+            last, prev = hops[-1], hops[-2]
+            lines = [(f"{app_no} {_wfh_desk_label(last['to_stage'])} ஆனதற்கு ({_wfh_fmt_dt(last['performed_at'])}) முன் இருந்த மேசை: "
+                      f"{_wfh_desk_label(prev['to_stage'])} ({_wfh_fmt_dt(prev['performed_at'])}). முன் பதிவான நிகழ்வுகள்:" if is_tamil
+                      else f"Immediately before {app_no} reached {_wfh_desk_label(last['to_stage'])} (on {_wfh_fmt_dt(last['performed_at'])}):"
+                           f" {_wfh_desk_label(prev['to_stage'])}, on {_wfh_fmt_dt(prev['performed_at'])}. Every recorded event before that outcome:")]
+            for i, h in enumerate(hops[:-1], 1):
+                note = h["remarks"] or h["rejection_reason"]
+                lines.append(f"  {i}. {_wfh_fmt_dt(h['performed_at'])} — "
+                             f"{_wfh_desk_label(h['from_stage']) if h['from_stage'] else 'Submission'} → {_wfh_desk_label(h['to_stage'])}"
+                             + (f' · "{note[:80]}"' if note else ""))
+            return "\n".join(lines)
         h = hops[-2]
         return (f"தற்போதைய கட்டத்திற்கு முன் இருந்த மேசை: {_wfh_desk_label(h['to_stage'])} ({_wfh_fmt_dt(h['performed_at'])})." if is_tamil
                 else f"Immediately before the current stage: {_wfh_desk_label(h['to_stage'])}, on {_wfh_fmt_dt(h['performed_at'])}.")
@@ -1830,6 +1872,27 @@ async def _workflow_history_answer(db, officer, message: str, app_no: str, is_ta
         h = hops[-1]
         return (f"{app_no} தற்போதைய கட்டத்தை ({_wfh_desk_label(h['to_stage'])}) அடைந்த தேதி: {_wfh_fmt_dt(h['performed_at'])}." if is_tamil
                 else f"{app_no} reached its current stage ({_wfh_desk_label(h['to_stage'])}) on {_wfh_fmt_dt(h['performed_at'])}.")
+
+    # "when did it move to the Tahsildar stage?" -- the hop that ENTERED a named stage
+    _ent = _WFH_ENTERED_RE.search(m)
+    stage = _wfh_find_stage(_ent.group(1)) if _ent else None
+    if stage:
+        for h in hops:
+            if str(h["to_stage"] or "").upper() == stage:
+                return (f"{app_no} {_wfh_desk_label(h['to_stage'])} கட்டத்திற்கு {_wfh_fmt_dt(h['performed_at'])} அன்று நகர்ந்தது." if is_tamil
+                        else f"{app_no} moved to the {_wfh_desk_label(h['to_stage'])} stage on {_wfh_fmt_dt(h['performed_at'])}"
+                             f" (from {_wfh_desk_label(h['from_stage']) if h['from_stage'] else 'submission'}).")
+        return (f"{app_no}-ன் பணிப்பாய்வில் {_wfh_desk_label(stage)} கட்டம் பதிவாகவில்லை." if is_tamil
+                else f"{app_no}'s recorded workflow never reached the {_wfh_desk_label(stage)} stage.")
+
+    # the whole recorded log: "workflow history", "previous stages", "events recorded"
+    if _WFH_LOG_RE.search(m):
+        from .chat_untracked_fields import _render_workflow_history
+        return _render_workflow_history({"application_number": app_no, "history": [
+            {"from_stage": h["from_stage"], "to_stage": h["to_stage"],
+             "changed_at": _wfh_fmt_dt(h["performed_at"]) or "",
+             "note": h["remarks"] or h["rejection_reason"] or ""} for h in hops]},
+            "ta" if is_tamil else "en")
 
     return None
 
@@ -1899,6 +1962,20 @@ def _sentiment_reply(kind: str, message: str, language: str) -> str:
     return opts[sum(map(ord, message or "")) % len(opts)]
 
 
+# A single ordinary greeting/thanks/farewell word (e.g. "goodbye", "greetings")
+# has no SIS-document trigram overlap and used to be flagged as keyboard-mash
+# gibberish by `_unrecognised_word_message` before `parse_intent`'s own
+# token-based greeting rule ever got a chance to see it -- "Bye." (3 letters,
+# under the trigram check's length-6 floor) passed, but "Goodbye." (7 letters)
+# did not, so the message never reached the greeting/farewell handling it
+# should have. Reused from the cue lists this module and rag.py already
+# maintain, rather than a new word list.
+_CONVERSATIONAL_SINGLE_WORDS = frozenset(
+    w for cue in (_THANKS_CUES + _FAREWELL_CUES) for w in cue.split()
+    if w.isascii() and w.isalpha()
+) | {"hello", "hi", "hey", "hiya", "greetings", "namaste"}
+
+
 def _unrecognised_word_message(text: str) -> bool:
     """One or two long tokens that are no word this system, its documents or its spelling
     corrector knows -- keyboard slips like "withwiky". Not sent to the model, which
@@ -1910,7 +1987,7 @@ def _unrecognised_word_message(text: str) -> bool:
     if not toks or len(toks) > 2 or len(" ".join(toks)) != len(stripped):
         return False
     try:
-        known = fctx._known_words() | fctx._vocab()
+        known = fctx._known_words() | fctx._vocab() | _CONVERSATIONAL_SINGLE_WORDS
         if fctx.correct_spelling(stripped.lower()) != stripped.lower():
             return False
         tri = _trigram_set()
@@ -2335,15 +2412,9 @@ _EXPLAIN_STYLE_WORDS = frozenset((
 ))
 
 _KNOWN_SIS_ACRONYMS = frozenset({
-    # "fmb" and "hqdt" deliberately NOT here (removed 2026-10-15): neither
-    # has a backing `_GLOSSARY` or `_FULLFORMS` entry, so being marked
-    # "known" only suppressed `_unknown_term()`'s honest refusal and let
-    # "what is HQDT?" / "what is FMB?" fall straight through to the LLM to
-    # invent an answer -- exactly the hallucination risk the refusal exists
-    # to prevent. (`_DOMAIN_ACRONYMS` / `_PLOT_CALC_WORDS` below are a
-    # separate, still-correct exemption against being misread as gibberish
-    # or off-topic; this is only about claiming a specific definition.)
-    "rera", "dtcp", "tslr", "zdt", "dro", "dis", "sis", "dsc", "sro", "csc",
+    # "fmb" deliberately NOT here: no backing glossary entry.
+    # "hqdt" is fully backed by glossary and full_field_patta_transfer tables (Approved/Rejected By ZDT/HQDT).
+    "rera", "dtcp", "tslr", "zdt", "hqdt", "dro", "dis", "sis", "dsc", "sro", "csc",
     "igrs", "isd", "nisd", "can", "sla", "patta", "chitta", "tahsildar", "subdivision"
 })
 
@@ -2834,7 +2905,7 @@ def _workflow_steps_alt_text(topic: str, is_tamil: bool) -> Optional[str]:
 
 
 _GLOSSARY_TERMS =(r"(sis|sd|dis|dsc|tahsildar|tahsildhar|tahshildar|tahsildr|tahsildaar|tasildar|thasildar|thasildhar"
-                   r"|zdt|dro|patta|sub[\s-]?divisions?|draughtsman|draftsman"
+                   r"|zdt|hqdt|dro|patta|sub[\s-]?divisions?|draughtsman|draftsman"
                    r"|sub\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
                    r"|deputy\s+inspect(?:or|er)(?:\s+survey(?:or|er))?"
                    r"|senior\s+draughtsman|senior\s+draftsman"
@@ -2876,7 +2947,7 @@ _ROLE_TA_RE = re.compile(
     r"(?:என்றால்\s+என்ன|endral\s+enna|na\s+enna|ah\s+enna|enna)?\s*[?.!]*$",
     re.IGNORECASE)
 _AFTER_RE = re.compile(
-    r"(?:what\s+happens|what\s+is\s+the\s+next\s+step|what\s+comes|next\s+step)\s+after\s+(?:the\s+)?(sis|sd|dis|tahsildar|zdt)\b", re.IGNORECASE)
+    r"(?:what\s+happens|what\s+is\s+the\s+next\s+step|what\s+comes|next\s+step)\s+after\s+(?:the\s+)?(sis|sd|dis|tahsildar|zdt|hqdt)\b", re.IGNORECASE)
 _AFTER = {
     "sis": ("After SIS: an ISD file goes to the Senior Draughtsman (SD) for the sub-division sketch; a NISD file goes straight to the Zonal Deputy Tahsildar.",
             "SIS-க்குப் பிறகு: ISD கோப்பு உட்பிரிவு வரைபடத்திற்காக மூத்த வரைவாளரிடம் (SD) செல்லும்; NISD கோப்பு நேராக மண்டல துணை வட்டாட்சியரிடம் செல்லும்."),
@@ -2888,6 +2959,8 @@ _AFTER = {
                   "தாசில்தார் DSC மூலம் கையொப்பமிட்ட பிறகு ஆணை உருவாகி கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்)."),
     "zdt": ("After the Zonal Deputy Tahsildar (ZDT) approves with the DSC key, the patta transfer order is generated and the NISD file is completed (or rejected). It does not go to the Tahsildar.",
             "மண்டல துணை வட்டாட்சியர் (ZDT) DSC மூலம் ஒப்புதல் அளித்த பிறகு, பட்டா மாறுதல் ஆணை உருவாகி NISD கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்). இது தாசில்தாருக்குச் செல்லாது."),
+    "hqdt": ("After the Headquarters Deputy Tahsildar (HQDT) / ZDT approves with the DSC key, the patta transfer order is generated and the NISD file is completed (or rejected).",
+             "தலைமையிட துணை வட்டாட்சியர் (HQDT) / ZDT DSC மூலம் ஒப்புதல் அளித்த பிறகு, பட்டா மாறுதல் ஆணை உருவாகி NISD கோப்பு முடிவடையும் (அல்லது நிராகரிக்கப்படும்)."),
 }
 _GLOSSARY_RE = re.compile(
     r"^(?:please\s+)?(?:what\s+(?:is|are|does)|who\s+is|who's|whos|what's|whats|define|explain|meaning\s+of|full\s+form\s+of|expand)\s+"
@@ -2911,6 +2984,8 @@ _GLOSSARY = {
                   "தாசில்தார் (வட்டாட்சியர்) — வட்டத்தின் முதன்மை வருவாய் அதிகாரி; ISD உட்பிரிவு பட்டா மாறுதல்களுக்கு DSC மூலம் இறுதி ஒப்புதல் அளிப்பவர். இவரது கையொப்பத்தில் ஆணை உருவாகும்."),
     "zdt": ("ZDT = Zonal Deputy Tahsildar -- the revenue officer who reviews non-subdivision (NISD) patta transfer applications after SIS document verification, holds the DSC key, and approves and generates the patta transfer order.",
             "ZDT = Zonal Deputy Tahsildar (மண்டல துணை வட்டாட்சியர்) — SIS ஆவண சரிபார்ப்புக்குப் பிறகு உட்பிரிவு இல்லாத (NISD) பட்டா மாறுதல் விண்ணப்பங்களை ஆய்வு செய்து, DSC மூலம் ஒப்புதல் அளித்து பட்டா மாறுதல் ஆணையை உருவாக்கும் வருவாய் அதிகாரி."),
+    "hqdt": ("HQDT = Headquarters Deputy Tahsildar -- the taluk revenue officer stationed at headquarters who, alongside ZDT (Zonal Deputy Tahsildar), reviews non-subdivision (NISD) patta transfer applications under the Tahsildar desk, holds DSC key approval authority, and issues approval/rejection orders (e.g. 'Approved By ZDT/HQDT' / 'Rejected By ZDT/HQDT').",
+             "HQDT = Headquarters Deputy Tahsildar (தலைமையிட துணை வட்டாட்சியர்) — வட்ட தலைமையகத்தில் உள்ள வருவாய் அதிகாரி; ZDT உடன் இணைந்து உட்பிரிவு இல்லாத (NISD) பட்டா மாறுதல் விண்ணப்பங்களை ஆய்வு செய்து DSC மூலம் ஒப்புதல் அல்லது நிராகரிப்பு ஆணை பிறப்பிப்பவர் (எ.கா. 'Approved By ZDT/HQDT' / 'Rejected By ZDT/HQDT')."),
     "patta": ("Patta = the land-ownership record for a survey number. A patta transfer (mutation) moves that record to the new owner; "
               "this assistant reads those applications, it does not change them.",
               "பட்டா = சர்வே எண்ணுக்கான நில உரிமைப் பதிவு. பட்டா மாறுதல் என்பது அந்தப் பதிவை புதிய உரிமையாளருக்கு மாற்றுவது; இந்த உதவியாளர் படிக்க மட்டுமே செய்யும்."),

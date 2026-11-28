@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     # the model corpus-adjacent noise costs a confident wrong answer. Set to
     # 2.0 to disable the floor.
     RAG_MAX_DISTANCE: float = 0.50
+
+    # ── Advanced Hybrid RAG Settings ──────────────────────────────────
+    RAG_HYBRID_ENABLED: bool = True
+    RAG_RRF_K: int = 60                     # Reciprocal Rank Fusion smoothing parameter
+    RAG_VECTOR_WEIGHT: float = 1.0           # Weight for vector similarity rankings
+    RAG_LEXICAL_WEIGHT: float = 1.0          # Weight for full-text lexical rankings
+    RAG_CANDIDATE_LIMIT: int = 15            # Number of candidates to pull per retriever
+    RAG_TOP_K: int = 4                       # Final number of top reranked passages to LLM
+    RAG_MIN_RELEVANCE_SCORE: float = 0.02    # Minimum fused relevance score threshold
+    RAG_CHUNK_SIZE: int = 1200               # Ingestion character chunk size
+    RAG_CHUNK_OVERLAP: int = 150             # Ingestion character chunk overlap
     # Max output tokens per LLM response. Ollama's own default (128 on many
     # builds) truncates anything longer than a short reply, so this is set
     # explicitly rather than left to the server default. Capped at 256 (down
@@ -98,6 +109,10 @@ class Settings(BaseSettings):
     EMBED_TIMEOUT_SECONDS: float = 15.0
     # How long Ollama keeps the chat model in memory after the last request.
     LLM_KEEP_ALIVE: str = "30m"
+    # "active" (default): semantic_intent.classify() can override intent to "greeting".
+    # "shadow": it still runs and logs what it would have predicted, but never overrides
+    # routing -- for trying a new prototype category safely before switching it to active.
+    SEMANTIC_INTENT_MODE: str = "active"
 
     # ── Agent (LLM tool-calling) layer ───────────────────────────────────
     # The ~60 deterministic handlers stay the primary path. The agent runs

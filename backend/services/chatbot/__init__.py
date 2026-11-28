@@ -25,7 +25,7 @@ from backend.config import (
 _DC_TANGLISH_RE = re.compile(r"\b(enapa|enna|oda|sollo|kudunga)\b", re.IGNORECASE)
 from backend.schemas import OfficerContext
 from . import attachment_qa
-from .agent import AgentUnavailable, run_agent, run_agent_stream
+from .agent import AgentUnavailable, run_agent, run_agent_stream, run_agent_with_plan
 from backend.services.readonly_guard import chat_turn
 from . import neg_scope as _neg_scope
 from . import negq as _negq
@@ -484,6 +484,17 @@ from .chat_answer import build_answer
 from .chat_dispatch import dispatch_intent
 from .chat_dispatch_stream import dispatch_intent_stream
 from .chat_pipeline import _bound
+from .response_generator import (
+    ResponseContext,
+    VerificationReport,
+    GeneratedResponse,
+    verify_response_evidence,
+    generate_intelligent_response,
+    render_accessible_table,
+    format_single_record_summary,
+    explain_missing_or_untracked,
+    generate_proactive_followups,
+)
 
 # This module's own logger (pipeline log records are named backend.services.chatbot).
 logger = get_logger(__name__)

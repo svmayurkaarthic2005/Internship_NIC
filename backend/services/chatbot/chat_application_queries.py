@@ -56,6 +56,7 @@ from . import tslr_qa as _tslr_qa
 from . import uamod_qa as _uamod_qa
 from . import natham_qa as _natham_qa
 from . import othercode_detail as _othercode_detail
+from . import reasoning_qa as _reasoning_qa
 from backend.services.rag import (
     detect_language,
     is_short_reply,
@@ -166,6 +167,7 @@ from .chat_shared import (
     _has_application_back_reference,
     _is_bare_concept_definition,
     _is_register_wide_listing,
+    is_two_application_comparison as _is_two_application_comparison,
     _na_parse,
     _owner_ctx_compare,
     _period_from_message,
@@ -181,7 +183,7 @@ from .chat_shared import (
     detect_offered_app_number_token,
     extract_month_from_query,
 )
-from .chat_smalltalk import _workflow_history_answer
+from .chat_smalltalk import _workflow_history_answer, _WFH_CUE
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -1187,6 +1189,7 @@ async def resolve_application_reference(
     officer,
     intent: str,
     session_id: str = None,
+    canonical_focus: str = None,
 ) -> Dict[str, Any]:
     """
     Single gate every application-specific request passes through before any
@@ -1228,6 +1231,13 @@ async def resolve_application_reference(
     app_number = extract_application_number(message)
     from_context = False
 
+    # A question explicitly anchored to a survey number (and naming no application number)
+    # is a survey query, not an application lookup. It should never be gated on a prior turn's application.
+    if not app_number and intent in ("joint_owner_check", "survey_owners"):
+        from backend.services.rag import extract_survey_number
+        if extract_survey_number(message):
+            return {"verdict": "none"}
+
     # "my previous application" points at the officer's history, not at whatever
     # is on screen. The wording ("prev application", "last app") is also a
     # back-reference pattern, so without this the gate would resolve it against
@@ -1261,6 +1271,10 @@ async def resolve_application_reference(
                 app_number = _mm.group(0)
                 from_context = True
                 break
+        # canonical server context settles a transcript pick inside its own set (P3.3)
+        app_number, _choose = fctx.canonical_tiebreak(app_number)
+        if _choose:
+            return {"verdict": "ambiguous_context", "suggestions": _choose}
 
     if not app_number:
         # Context is consulted for application-specific intents, and for any
@@ -1286,11 +1300,15 @@ async def resolve_application_reference(
             # to an application discussed before that attempt.
             return {"verdict": "ask_number"}
         if len(candidates) > 1:
-            # The turn being referred back to named several applications, so
-            # "it" genuinely has no single referent. Asking beats guessing.
-            return {"verdict": "ambiguous_context", "suggestions": candidates}
+            # The turn being referred back to named several applications. The
+            # server-side focus (FollowupContext.current_application, e.g. after
+            # "switch back to the first application") settles it when it is one
+            # of them; otherwise "it" has no single referent. Asking beats guessing.
+            if canonical_focus not in candidates:
+                return {"verdict": "ambiguous_context", "suggestions": candidates}
+            app_number = canonical_focus
 
-        app_number = _extract_app_number_from_context(
+        app_number = app_number or _extract_app_number_from_context(
             message, chat_history, allow_implicit_continuation=True
         )
 
@@ -1313,6 +1331,8 @@ async def resolve_application_reference(
                     app_number = picked
                 elif len(listed) == 1:
                     app_number = listed[0]
+                elif canonical_focus in listed:
+                    app_number = canonical_focus
                 else:
                     # Several rows on screen and no position named -- "it" has
                     # no single referent, so ask which instead of taking the
@@ -1328,6 +1348,10 @@ async def resolve_application_reference(
                     app_number = _mm.group(0)
                     break
 
+        # every transcript fallback above is checked against the canonical set (P3.3)
+        app_number, _choose = fctx.canonical_tiebreak(app_number)
+        if _choose:
+            return {"verdict": "ambiguous_context", "suggestions": _choose}
         from_context = bool(app_number)
 
     if not app_number:
@@ -1342,6 +1366,11 @@ async def resolve_application_reference(
         if from_context and re.search(r"\bsurvey\b[^0-9]{0,12}\d|\bsy\.?\s*\d|^\s*\d{1,4}(?:/\w+)?\s*(?:(?:ku|kku)\b|க்கு)", message or "", re.IGNORECASE):
             return {"verdict": "none"}
         _reg = await get_applications_by_numbers(db, officer, [app_number], include_rejected=True)
+        if (_reg or {}).get("applications") and not from_context and len(
+                {n.upper() for n in fctx._APP_NUMBER_PATTERN_RE.findall(message or "")}) >= 2:
+            # Two or more applications named: a comparison, not one file's card. The first is
+            # proven in jurisdiction here; the comparison reads (and checks) each side itself.
+            return {"verdict": "ok", "app_number": app_number, "from_context": False}
         if (_reg or {}).get("applications"):
             _m0 = message or ""
             if (_cm_strong(message, chat_history) or _WF_CUE.search(_m0) or _DECIDER_CUE.search(_m0)
@@ -2483,7 +2512,7 @@ def _month_name_answer(sd: dict, app_no: str, message_lower: str,
 
 async def _build_comparison(db, officer, message: str, is_tamil: bool = False) -> dict:
     """Fetch both sides of a comparison and settle the question that was asked."""
-    from backend.services.postgres import get_application_detail, get_comparison
+    from backend.services.postgres import get_application_detail, get_comparison, get_workflow_remarks
     from backend.services.rag import parse_comparison_query
 
     _CMP_WANTS_NEWER.set(bool(re.search(r"\b(?:newer|newest|latest|recent|later)\b|puthu|புதி|பின்னை", message or "", re.IGNORECASE)))
@@ -2532,7 +2561,22 @@ async def _build_comparison(db, officer, message: str, is_tamil: bool = False) -
     async def _side(number: str) -> dict:
         detail = await get_application_detail(db, number, officer)
         if not detail or not detail.get("found"):
-            return {"application_number": number, "found": False}
+            # `applications` holds only ISD / NISD: a register-only file (0158, 0156, 0178 ...) is
+            # read from the jurisdiction-checked register instead, so "compare 0158/A and 0158/B"
+            # compares both files rather than collapsing to one card.
+            reg = await get_applications_by_numbers(db, officer, [number], include_rejected=True)
+            rows = (reg or {}).get("applications") or []
+            if not rows:
+                return {"application_number": number, "found": False}
+            r = rows[0]
+            return {"found": True, "application_number": r.get("application_number", number),
+                    "type": r.get("type"), "status": r.get("status"),
+                    "submission_date": r.get("submission_date"), "decision_date": r.get("decision_date"),
+                    "days_to_decide": r.get("days_to_decide"), "survey_no": r.get("survey_no"),
+                    "ward_number": r.get("ward_number"), "submission_channel": r.get("submission_channel"),
+                    "area_sqm": None, "fee_amount": r.get("fee_amount"),
+                    "sub_division_no": r.get("sub_division_no"), "old_patta_no": None,
+                    "registration_place": None, "registration_date": None, "registration_document_no": None}
         days = None
         if detail.get("decision_date") and detail.get("submission_date"):
             try:
@@ -2552,9 +2596,47 @@ async def _build_comparison(db, officer, message: str, is_tamil: bool = False) -
             "submission_channel": detail.get("submission_channel"),
             "area_sqm": detail.get("area_sqm"),
             "fee_amount": detail.get("fee_amount"),
+            # The baseline question-bank report (Chain 2 / AmbiguousFollowups)
+            # asked to compare these too and never got a two-application
+            # answer at all. Reused from the same `get_application_detail()`
+            # call above and `get_workflow_remarks()` below -- no new query
+            # architecture, same "not recorded" rule as a single-application
+            # answer: None stays None, never copied from the other side.
+            "sub_division_no": detail.get("included_subdivisions"),
+            "old_patta_no": detail.get("old_patta_number"),
+            "registration_place": detail.get("registration_place"),
+            "registration_date": detail.get("registration_date"),
+            "registration_document_no": None,
         }
 
+    async def _fill_registration_doc(side: dict, number: str) -> None:
+        # `get_application_detail()`'s ORM `patta_transfers` relation is empty
+        # for these NISD files (a pre-existing Layer1/Layer2 projection gap --
+        # see CLAUDE.md's "Database Layout"), but the raw transfer table
+        # `fulltransfer_qa.load()` already reads from DOES carry the
+        # registration document number, place and date. Reusing that
+        # existing loader rather than a new query, and only filling in what
+        # the ORM side left blank -- never overwriting a value that IS there.
+        if not (number and number.count("/") >= 3 and number.split("/")[1] == "0153"):
+            return
+        rows = await _fulltransfer_qa.load(db, number)
+        if not rows:
+            return
+        r = rows[0]
+        side["registration_document_no"] = side.get("registration_document_no") or r.get("regi_doc_no")
+        side["registration_place"] = side.get("registration_place") or r.get("regi_place")
+        side["registration_date"] = side.get("registration_date") or r.get("regi_on")
+        side["old_patta_no"] = side.get("old_patta_no") or r.get("old_patta_no")
+
     left, right = await _side(spec["left"]), await _side(spec["right"])
+    if left.get("found") and right.get("found"):
+        await _fill_registration_doc(left, spec["left"])
+        await _fill_registration_doc(right, spec["right"])
+        _remarks = await get_workflow_remarks(db, officer, [left["application_number"], right["application_number"]])
+        _remarks_by_no = {r["application_number"].upper(): r for r in _remarks.get("apps", [])}
+        for side in (left, right):
+            _rem = _remarks_by_no.get(side["application_number"].upper())
+            side["rejection_remark"] = _rem.get("reason") if _rem else None
     missing = [s["application_number"] for s in (left, right) if not s.get("found")]
     if missing:
         if is_tamil:
@@ -2652,7 +2734,15 @@ async def _build_comparison(db, officer, message: str, is_tamil: bool = False) -
                            f"{bigger[key]} against {smaller[key]}.")
 
     return {"found": True, "kind": "applications", "aspect": aspect,
-            "left": left, "right": right, "verdict": verdict}
+            "left": left, "right": right, "verdict": verdict,
+            # Both applications, not just the first -- `followup_context.build_context()`
+            # already knows how to carry a `multi_applications` list forward as the
+            # follow-up context (same mechanism "show details for <A> and <B>" already
+            # uses). Without this, only one application was ever available to resolve
+            # "what about the other one?" / "which one was submitted first?" against,
+            # and a repeated single-application answer was the only thing left to fall
+            # back to.
+            "multi_applications": [left, right]}
 
 
 def _compare_label(kind: str, value: str, is_tamil: bool = False) -> str:
@@ -2809,7 +2899,13 @@ async def _single_app_workflow_answer(db, officer, message, app_no, chat_history
 
 _DOCS_CUE = re.compile(r"\bdocu?\w*|\batta?c?h?ments?\b|ஆவண|டாக்குமெண்ட்", re.IGNORECASE)
 _DOCS_SKIP = re.compile(r"\bmissing\b|\bmising\b|\bsd\b|\bsketch\b|\bdraughtsman\b|\.(?:pdf|csv|docx|txt)\b|\b(?:this|the|that|my)\s+(?:uploaded\s+)?file\b|"
-                        r"\brequired\s+for\b|\bneeded\s+for\b|\bwhat\s+documents\s+(?:are|do)\b(?!.*\d{4}/)", re.IGNORECASE)
+                        r"\brequired\s+for\b|\bneeded\s+for\b|\bwhat\s+documents\s+(?:are|do)\b(?!.*\d{4}/)|"
+                        # "the registration document (number/date/place)" names the legal
+                        # deed field in full_field_patta_transfer_urban (fulltransfer_qa /
+                        # appinfo_qa own this), not a chat-uploaded file attachment -- this
+                        # was answering "No document attachment is recorded" to a question
+                        # that was never about an upload at all.
+                        r"\bregistration\s+(?:document|doc)\b", re.IGNORECASE)
 
 
 async def _attached_documents(db, officer, message, gate_app, chat_history, ta):
@@ -2872,6 +2968,56 @@ async def _ip_comparison_answer(db, officer, message, gate_app, chat_history, ta
             f"{'as' if same else 'from'} {app} ({data['ip']}): {', '.join(shown)}{tail}.")
 
 
+# "what was its rejection reason?" / "why was this application rejected?" /
+# "what reason did the officer provide?" / "show the rejection remark(s)" --
+# the ONE application's actual recorded remark (P3.2), never the generic
+# `rejection_reasons` workflow-guide list `howto_qa` answers for a plural,
+# no-application question ("what are common reasons applications get
+# rejected?"). `howto_qa.match()` already excludes a message carrying this
+# cue alongside a pronoun/singular pointer (`its`, `this/that application`),
+# so this handler and that module never both claim the same message.
+_REJECTION_REASON_CUE = re.compile(
+    r"\b(?:rejection\s+reasons?|reasons?\s+for\s+(?:its\s+|the\s+)?rejection)\b|"
+    r"\bwhy\s+(?:was|is|did|has)\b.{0,30}\b(?:rejected|reject)\b|"
+    r"\brejection\s+remarks?\b|\breject(?:ed)?\s+remarks?\b|"
+    r"\bwhat\s+reason\b.{0,30}\b(?:officer|reject)\b|"
+    r"\brecorded\s+(?:rejection\s+)?remark\b|"
+    r"\bremark\b.{0,20}\brecorded\b.{0,20}\breject\w*\b",
+    re.IGNORECASE)
+
+
+async def _rejection_reason_answer(db, officer, message, gate_app, chat_history, ta):
+    from backend.services.postgres import get_workflow_remarks
+    if not _REJECTION_REASON_CUE.search(message or "") or len((message or "").split()) > 20:
+        return None
+    app = extract_application_number(message) or gate_app or _unheld_qa.context_app(chat_history)
+    if not app or app.count("/") < 3:
+        return None
+    reg = await get_applications_by_numbers(db, officer, [app], include_rejected=True)
+    rows = (reg or {}).get("applications") or []
+    if not rows:
+        return None  # jurisdiction refusal / not found already answered by the gate above
+    status = rows[0].get("status")
+    _HOOK_APP.set(app)
+    if status != "rejected":
+        return (f"{app} நிலையில் 'நிராகரிக்கப்பட்டது' இல்லை (தற்போதைய நிலை: {status}), எனவே நிராகரிப்பு காரணம் பொருந்தாது."
+                if ta else
+                f"{app} is not in a rejected status (current status: {status}), so a rejection reason does not apply.")
+    remarks = await get_workflow_remarks(db, officer, [app])
+    rec = next((r for r in remarks.get("apps", []) if r.get("application_number", "").upper() == app.upper()), None)
+    reason = rec.get("reason") if rec else None
+    if not reason:
+        return (f"{app} நிராகரிக்கப்பட்டாலும், அதற்கான காரணம் பதிவேட்டில் பதிவு செய்யப்படவில்லை."
+                if ta else
+                f"{app} is rejected, but no rejection remark is recorded for it in the register.")
+    hops = rec.get("hops") or []
+    closing = next((h for h in reversed(hops) if h.get("to") == "REJECTED"), None)
+    date_txt = f" ({closing['date']})" if closing and closing.get("date") else ""
+    return (f"{app}-க்கான பதிவுசெய்யப்பட்ட நிராகரிப்பு காரணம்{date_txt}: {reason}"
+            if ta else
+            f"Recorded rejection remark for {app}{date_txt}: {reason}")
+
+
 _DECIDER_CUE = re.compile(r"\bwho\s+(?:approved|rejected|signed|decided|closed|cleared|sanctioned)\b|\bwho\s+(?:is|was)\s+(?:the\s+)?(?:approver|approving\s+officer)\b", re.IGNORECASE)
 
 
@@ -2891,15 +3037,82 @@ async def _who_decided(db, officer, message, gate_app, chat_history, ta):
     return text
 
 
+def _reasoning_rule_keys(message: str) -> List[str]:
+    """Which documented project rules are relevant to ground this reasoning
+    question -- never all of them, so the prompt stays on topic."""
+    ms = (message or "").lower()
+    keys = []
+    if re.search(r"field[\s_-]*visit|inspection|mandatory|visit_dt", ms):
+        keys.append("nisd_no_visit")
+    if re.search(r"approv|closed|closure|complete", ms):
+        keys.append("desk_vs_closure")
+    if re.search(r"old[\s-]*owner|igrs|identical|same\s+(?:ownership|owner)", ms):
+        keys.append("owner_tables_distinct")
+    return keys
+
+
 async def _early_subdivision_answer(db, officer, message, intent, gate_app, chat_history, language):
     """The record answer as the card every other answer uses (see card_html)."""
+    if _is_two_application_comparison(message):
+        return None
     ta = language in ("ta", "tanglish")
+    # Evidence-grounded reasoning (P1-2): a genuine explanatory question
+    # ("does X mean Y", "why should A and B not be treated as identical")
+    # is claimed HERE, ahead of every single-field handler below, so a
+    # handler that can only retrieve one unrelated field never answers it
+    # with that one field alone. `is_reasoning_question()` is narrow on
+    # purpose -- a direct field lookup never matches it -- so this never
+    # intercepts an ordinary question the handlers below already answer.
+    if _reasoning_qa.is_reasoning_question(message):
+        _rsn_app = (extract_application_number(message) or gate_app
+                    or _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True))
+        if not _rsn_app:
+            # `_extract_app_number_from_context` is built around the
+            # ISD/NISD `applications` listing shape and misses a register-
+            # only code (0158 ...) still in view -- the same gap the
+            # record modules below close for themselves via `_cmflow_qa.
+            # _APP_NO.search()` (handles the "[number]" trailing-answer
+            # convention and strips markup). Reuse it here rather than
+            # duplicate it, so a reasoning follow-up about a register-only
+            # file ("what information is still missing...?") keeps its
+            # subject the same way every other follow-up on that file does.
+            for _m in reversed((chat_history or [])[-14:]):
+                _mm = _cmflow_qa._APP_NO.search(
+                    (_m.get("content") if isinstance(_m, dict) else str(_m)) or "")
+                if _mm:
+                    _rsn_app = _mm.group(0)
+                    break
+        if _rsn_app:
+            _HOOK_APP.set(_rsn_app)
+            return await _reasoning_qa.answer(
+                db, officer, message, _rsn_app, language,
+                rule_keys=_reasoning_rule_keys(message))
     _wd = await _who_decided(db, officer, message, gate_app, chat_history, ta)
     if _wd:
         return _wd
+    _rr = await _rejection_reason_answer(db, officer, message, gate_app, chat_history, ta)
+    if _rr:
+        return _rr
     _ipc = await _ip_comparison_answer(db, officer, message, gate_app, chat_history, ta)
     if _ipc:
         return _ipc
+    # `_other_code_workflow` below deliberately excludes 0153/0154 (an
+    # ISD/NISD file has its own, richer workflow-history answer), but nothing
+    # on this path used to try that ISD/NISD answer at all for a single
+    # application resolved from context -- `_single_app_workflow_answer`
+    # already tries it first and only reused `_other_code_workflow` on other
+    # service codes; this was hooked up only for the carried-LIST follow-up
+    # branch in orchestrator.py, not here. Without it, "what happened before
+    # the rejection?" (no application number of its own) fell all the way
+    # through to `general_query` and the LLM for a question that is, for an
+    # already-resolved ISD/NISD file, an ordinary deterministic lookup.
+    if _WF_CUE.search(message or "") or _WFH_CUE.search(message or ""):
+        _wf_app = extract_application_number(message) or gate_app or _unheld_qa.context_app(chat_history)
+        if _wf_app and _wf_app.count("/") >= 3 and _wf_app.split("/")[1] in ("0153", "0154"):
+            _wf = await _workflow_history_answer(db, officer, message, _wf_app, ta)
+            if _wf:
+                _HOOK_APP.set(_wf_app)
+                return _wf
     _wf = await _other_code_workflow(db, officer, message, gate_app, chat_history, ta)
     if _wf:
         return _wf              # plain lines: the shape of an ISD / NISD file's workflow history
@@ -2925,7 +3138,7 @@ _ABSENT_RECORDS = (  # (message cue, English sentence, Tamil sentence): records 
      "{app}-க்கு புதிய உரிமையாளர் பதிவு இல்லை. முழு புல பட்டா மாற்றத்துக்கு (NISD, 0153) மட்டுமே அது இருக்கும்."),
     (r"old\s+owner|chitta", "No old-owner record is held for {app}. An ISD file carries a chitta old-owner record and an NISD file a full-field old-owner record.",
      "{app}-க்கு பழைய உரிமையாளர் பதிவு இல்லை. ISD கோப்புக்கு சிட்டா பதிவும் NISD கோப்புக்கு முழு புல பதிவும் உண்டு."),
-    (r"full[\s-]*field|zdt", "No full-field patta transfer record is held for {app}. Only an NISD (0153) file carries one.",
+    (r"full[\s-]*field|zdt|hqdt", "No full-field patta transfer record is held for {app}. Only an NISD (0153) file carries one.",
      "{app}-க்கு முழு புல பட்டா மாற்ற பதிவு இல்லை. NISD (0153) கோப்புக்கு மட்டுமே அது இருக்கும்."),
 )
 
@@ -3112,6 +3325,25 @@ async def _early_subdivision_answer_inner(db, officer, message, intent, gate_app
             _fltxt = _fline_qa.answer(_fl["keys"], app_no, _frow_ft, _ftta)
             if _fltxt:
                 return _fltxt
+        # Same trap again, this time for a correction/modification file
+        # (0158-0169): "SIS recommendation" is also cmflow_qa's own
+        # correction-modification desk field (SIS/ZDT/SD/DIS/Tahsildar/...),
+        # and full_field_patta_transfer_urban never has a row for those
+        # codes either -- found live (P0-3): "when did the SIS
+        # recommendation occur?" on a 0158 file answered "No full-field
+        # patta transfer record is held ... only an NISD (0153) file
+        # carries one", even though cmflow_qa's own correction-modification
+        # table -- shown correctly earlier in the very same conversation --
+        # already named the date. Only reached when fulltransfer genuinely
+        # has nothing for this application (the 0153/0154/0178 cases above
+        # already have their own, more specific fallbacks), so this can
+        # never take an answer away from a file fulltransfer_qa actually owns.
+        if not _ftrows and app_no.count("/") >= 3 and app_no.split("/")[1] not in ("0153", "0154", "0178") and _cm_q:
+            _cmrow_ft = await _cmflow_qa.load(db, app_no)
+            _cmsvc_ft = {"service_code": app_no.split("/")[1]}
+            _cmtxt_ft = _cmflow_qa.answer(message, _cm_q, app_no, _cmrow_ft, _cmsvc_ft, _ftta)
+            if _cmtxt_ft:
+                return _cmtxt_ft
         if _ft["kind"] == "compare":
             if _ftrows or _ft_strong:
                 _ftxt = _fulltransfer_qa.answer_compare(_ft, app_no, _ftrows, await _newowner_qa.load_new(db, app_no),

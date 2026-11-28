@@ -1,0 +1,15 @@
+{
+  "chain_id": "TestB_endtoend",
+  "questions": [
+    "Investigate 2026/0158/02/001804. The register says it is still open, but the correction-modification information has positive recommendations and an Approved remark.",
+    "Tell me which table says what.",
+    "Which was the last workflow action?",
+    "What did the Tahsildar record?",
+    "Does the Approved remark mean the full application is closed?",
+    "Check the UAREG table too.",
+    "Why are there two operation rows?",
+    "Which value is the current survey number?",
+    "Is there an approval-file reference?",
+    "What information is still missing before you can definitively say it is completed?"
+  ]
+}

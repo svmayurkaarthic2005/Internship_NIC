@@ -2189,12 +2189,25 @@ async def dispatch_intent(
 
     elif intent == "joint_owner_check":
         # Check if asking about an application's survey ownership or direct survey ownership
+        direct_survey = extract_survey_number(message)
         app_number = extract_application_number(message)
-        if not app_number:
+        if not app_number and not direct_survey:
             # Allow implicit continuation for joint owner queries
             app_number = (_extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True) or _gate_app_number)
 
-        if app_number:
+        if direct_survey:
+            survey_no = direct_survey
+            owners_data = await get_survey_owners(db, survey_no, officer=officer)
+            if not owners_data.get("found", True):
+                structured_data = {"found": False, "message": owners_data.get("message", f"Survey number {survey_no} not found or not accessible")}
+            else:
+                structured_data = {
+                    "found": True,
+                    "survey_no": survey_no,
+                    "query_type": "Joint Ownership Details",
+                    **_summarize_joint_owners(owners_data),
+                }
+        elif app_number:
             # Get application details to find the survey number
             app_data = await get_application_detail(db, app_number, officer=officer)
             survey_no = app_data.get("survey_no") if app_data.get("found") else None
@@ -2210,7 +2223,7 @@ async def dispatch_intent(
                     **_summarize_joint_owners(owners_data),
                 }
         else:
-            # Direct survey number query
+            # Direct survey number query from reference
             survey_no = await _survey_ref(db, session_id, message, chat_history)
             if not survey_no:
                 structured_data = {"found": False, "message": "Please provide an application number or survey number"}

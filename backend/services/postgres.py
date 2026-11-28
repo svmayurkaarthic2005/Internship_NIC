@@ -4707,6 +4707,47 @@ async def get_workflow_remarks(
             rec["reason"] = reason
         elif status == "rejected" and to == "REJECTED" and remark:
             rec["reason"] = remark          # the closing hop's own words
+
+    # Enrich with application information intake / return remarks if available
+    for num, rec in by.items():
+        code = num.split("/")[1] if num.count("/") >= 3 else ""
+        tbl = "sub_div_patta_transfer_application_information_urban" if code == "0154" else "full_field_patta_transfer_application_information"
+        try:
+            async with db.begin_nested():
+                info = (await db.execute(
+                    text(f"SELECT remarks, proposed_remarks, reject_reason_code, update_date FROM {tbl} WHERE appl_id = :a LIMIT 1"),
+                    {"a": num}
+                )).mappings().first()
+            if info:
+                app_rem = _real_remark(info.get("remarks"))
+                rej_code = _real_remark(info.get("reject_reason_code"))
+                up_date = str(info.get("update_date"))[:10] if info.get("update_date") else None
+
+                if rec["status"] == "rejected":
+                    if rec["reason"] in (None, "Rejected", "REJECTED") and app_rem:
+                        rec["reason"] = app_rem
+                    elif not rec["reason"] and rej_code:
+                        rec["reason"] = f"Code {rej_code}"
+
+                if app_rem:
+                    existing_remarks = [h["remark"] for h in rec["hops"] if h["remark"]]
+                    if app_rem not in existing_remarks:
+                        desk_name = "SIS"
+                        rem_low = app_rem.lower()
+                        if "tahsildar" in rem_low:
+                            desk_name = "TAHSILDAR"
+                        elif "sis" in rem_low or "surveyor" in rem_low or "sub division" in rem_low:
+                            desk_name = "SIS"
+                        elif "sd" in rem_low or "draughtsman" in rem_low:
+                            desk_name = "SD"
+                        elif rec["status"] == "rejected":
+                            desk_name = "TAHSILDAR"
+
+                        rec["hops"].append({"desk": desk_name, "to": None, "remark": app_rem,
+                                            "date": up_date})
+        except Exception:
+            pass
+
     ordered = [by[n] for n in numbers if n in by]
     return {"apps": ordered, "requested": len(numbers), "dropped": len(numbers) - len(ordered)}
 

@@ -1,0 +1,102 @@
+{
+  "A_gratitude_farewell": [
+    {
+      "q": "Hello, good morning.",
+      "a": "Good morning! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you today with survey numbers, applications (ISD/NISD), or field visits?",
+      "intent": "greeting",
+      "seconds": 6.2
+    },
+    {
+      "q": "What can you help me with?",
+      "a": "I'm the SIS assistant for the Tamil Nadu Survey Department. I can help with applications of every service code and their status, the mutation workflow, field visits, owner and patta details, sub-divisions, and your jurisdiction. Try: 'my pending applications', 'F-Line applications', 'approved plus rejected', 'which service code has the most', 'my field visits this week', or 'what is service code 0154'. For an application-specific question, provide the application number you already have. What would you like to check?",
+      "intent": "capabilities",
+      "seconds": 0.4
+    },
+    {
+      "q": "Thanks for the explanation.",
+      "a": "You're very welcome! 😊 Feel free to ask if you need anything else regarding your survey work.",
+      "intent": "greeting",
+      "seconds": 8.5
+    },
+    {
+      "q": "Goodbye.",
+      "a": "Goodbye! 👋 Thank you — come back any time you need an application, a survey number or a field visit looked up. Have a good day.",
+      "intent": "greeting",
+      "seconds": 6.3
+    }
+  ],
+  "B_identity": [
+    {
+      "q": "Who are you?",
+      "a": "I'm the SIS assistant for the Tamil Nadu Survey Department. I can help with applications of every service code and their status, the mutation workflow, field visits, owner and patta details, sub-divisions, and your jurisdiction. Try: 'my pending applications', 'F-Line applications', 'approved plus rejected', 'which service code has the most', 'my field visits this week', or 'what is service code 0154'. For an application-specific question, provide the application number you already have. What would you like to check?",
+      "intent": "capabilities",
+      "seconds": 0.2
+    },
+    {
+      "q": "Who am I?",
+      "a": "You are **S. Perumal Chn**, Sub Inspector Surveyor (SIS).",
+      "intent": "officer_identity",
+      "seconds": 0.2
+    },
+    {
+      "q": "Which officer account is currently active?",
+      "a": "Your profile:\n• **Name**: S. Perumal Chn\n• **Designation**: Sub Inspector Surveyor (SIS)\n• **Employee ID**: SIS-003\n• **Email**: sperumal_chn@sis.tn.gov.in\n• **Jurisdiction**: Ward 007 (Block 0017), Ward 001 (Block 0001, 0002, 0003, 0005, 0007, 0008, 0009, 0012, 0013, 0014, 0015, 0016, 0017, 0019, 0020, 0021, 0025, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033, 0034, 0035, 0039, 0040, 0042, 0043, 0048, 0050, 0051, 0052, 0053, 0054, 0055, 0056), Ambattur town, Ambattur taluk, Chennai district (02)\n• **Open applications assigned to you**: 19",
+      "intent": "officer_identity",
+      "seconds": 0.4
+    }
+  ],
+  "C_registration_date": [
+    {
+      "q": "Investigate 2026/0153/02/045470.",
+      "a": "Here are the details for 2026/0153/02/045470. Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.",
+      "intent": "application_status",
+      "seconds": 0.4
+    },
+    {
+      "q": "What is its status?",
+      "a": "The Status for 2026/0153/02/045470 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.3
+    },
+    {
+      "q": "When was the registration document registered?",
+      "a": "<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0153/02/045470 (full-field transfer)</h3><span class='data-table-count'>2 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td>Registration document no</td><td>R/17/1/11822/2026</td></tr><tr><td>Registered on</td><td>28-08-2026</td></tr></tbody></table></div></div>",
+      "intent": "application_status",
+      "seconds": 2.8
+    }
+  ],
+  "D_rejection_workflow": [
+    {
+      "q": "Investigate 2026/0153/02/045470.",
+      "a": "Here are the details for 2026/0153/02/045470. Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.",
+      "intent": "application_status",
+      "seconds": 0.3
+    },
+    {
+      "q": "What happened before the rejection?",
+      "a": "Immediately before the current stage: Zonal Deputy Tahsildar, on 2026-09-11 01:05.",
+      "intent": "application_status",
+      "seconds": 0.9
+    },
+    {
+      "q": "Which desk handled it immediately before the final rejection?",
+      "a": "The Zonal Deputy Tahsildar desk performed 2026/0153/02/045470's most recent workflow action, on 2026-09-14 02:31. The register records desks, not individual officer names.",
+      "intent": "application_status",
+      "seconds": 0.9
+    }
+  ],
+  "E_mixed": [
+    {
+      "q": "Thanks, now check application 2026/0153/02/045470.",
+      "a": "Here are the details for 2026/0153/02/045470. Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.",
+      "intent": "application_status",
+      "seconds": 0.3
+    },
+    {
+      "q": "Goodbye, but first show the status of 2026/0154/02/012766.",
+      "a": "Here are the details for 2026/0153/02/045470. Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.",
+      "intent": "application_status",
+      "seconds": 1.3
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "chain_id": "Chain4_fieldvisit_contradiction",
+  "questions": [
+    "Consider 2026/0153/02/045470. This is an NISD application, which normally follows a workflow without a mandatory field inspection. However, I can see a field_visit_dt value in one workflow entry. Can you inspect the raw workflow evidence and the service type separately, and explain whether the stored date actually establishes a required field visit?",
+    "Which workflow transition contains that date?",
+    "Does a populated date column automatically mean that the service requires an inspection?",
+    "Explain the difference between a field visit being required by the service design and a date merely being present in a raw record."
+  ]
+}

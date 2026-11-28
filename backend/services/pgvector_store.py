@@ -30,6 +30,12 @@ from pgvector.psycopg2 import register_vector
 
 from backend.config import settings
 from backend.services.embeddings import batch_embed, generate_embedding
+from backend.services.reranker import (
+    format_citation,
+    normalize_query_for_rag,
+    reciprocal_rank_fusion,
+    rerank_passages,
+)
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -109,6 +115,17 @@ def init_pgvector() -> None:
                 );
                 """
             )
+            conn.commit()
+            # Ensure columns and indexes for hybrid retrieval and metadata filtering exist
+            cur.execute("ALTER TABLE knowledge_embeddings ADD COLUMN IF NOT EXISTS service_code TEXT;")
+            cur.execute("ALTER TABLE knowledge_embeddings ADD COLUMN IF NOT EXISTS document_type TEXT;")
+            cur.execute("ALTER TABLE knowledge_embeddings ADD COLUMN IF NOT EXISTS effective_date TEXT;")
+            cur.execute("ALTER TABLE knowledge_embeddings ADD COLUMN IF NOT EXISTS version TEXT;")
+            cur.execute("ALTER TABLE knowledge_embeddings ADD COLUMN IF NOT EXISTS metadata_json JSONB DEFAULT '{}'::jsonb;")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ke_service_code ON knowledge_embeddings (service_code);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ke_document_type ON knowledge_embeddings (document_type);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ke_tsv_english ON knowledge_embeddings USING gin(to_tsvector('english', content));")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ke_tsv_simple ON knowledge_embeddings USING gin(to_tsvector('simple', content));")
             conn.commit()
             logger.info("pgvector store: extension verified, table ready")
     finally:
@@ -210,16 +227,20 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
                 meta = doc.get("metadata") or {}
                 raw_lang = meta.get("language", "en")
                 language = _lang_map.get(raw_lang, raw_lang)
+                service_code = meta.get("service_code")
+                doc_type = meta.get("document_type") or meta.get("category")
+                effective_date = meta.get("effective_date")
+                version = meta.get("version")
 
                 cur.execute(
                     """
                     INSERT INTO knowledge_embeddings
                         (id, chunk_id, content, embedding,
-                         source, category, section, language, page, created_at, updated_at)
+                         source, category, section, language, page, service_code, document_type, effective_date, version, created_at, updated_at)
                     VALUES
                         (gen_random_uuid(), %(chunk_id)s, %(content)s, %(embedding)s,
                          %(source)s,   %(category)s, %(section)s,
-                         %(language)s, %(page)s, now(), now())
+                         %(language)s, %(page)s, %(service_code)s, %(document_type)s, %(effective_date)s, %(version)s, now(), now())
                     ON CONFLICT (chunk_id) DO UPDATE SET
                         content   = EXCLUDED.content,
                         embedding = EXCLUDED.embedding,
@@ -228,6 +249,10 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
                         section   = EXCLUDED.section,
                         language  = EXCLUDED.language,
                         page      = EXCLUDED.page,
+                        service_code   = EXCLUDED.service_code,
+                        document_type  = EXCLUDED.document_type,
+                        effective_date = EXCLUDED.effective_date,
+                        version        = EXCLUDED.version,
                         updated_at = now()
                     """,
                     {
@@ -238,7 +263,11 @@ def add_documents(docs: List[Dict[str, Any]]) -> None:
                         "category":  meta.get("category"),
                         "section":   meta.get("section"),
                         "language":  language,
-                        "page":      meta.get("page_number") or meta.get("page") or 0,
+                        "page":           meta.get("page_number") or meta.get("page") or 0,
+                        "service_code":   service_code,
+                        "document_type":  doc_type,
+                        "effective_date": effective_date,
+                        "version":        version,
                     },
                 )
         conn.commit()
@@ -280,7 +309,7 @@ def _lexical_search(
     distance and callers must not compare it against ``RAG_MAX_DISTANCE``.
     """
     params: Dict[str, Any] = {"q": query.strip(), "n": n_results}
-    where_clauses = ["tsv @@ websearch_to_tsquery('english', %(q)s)"]
+    where_clauses = ["(tsv_en @@ websearch_to_tsquery('english', %(q)s) OR tsv_simp @@ plainto_tsquery('simple', %(q)s))"]
 
     if where_filter:
         for col, val in where_filter.items():
@@ -293,18 +322,27 @@ def _lexical_search(
                     params[pk] = a
                     keys.append(f"%({pk})s")
                 where_clauses.append(f"language IN ({', '.join(keys)})")
-            elif col in ("category", "source", "section"):
+            elif col in ("category", "source", "section", "service_code", "document_type"):
                 params[f"f_{col}"] = str(val)
                 where_clauses.append(f"{col} = %(f_{col})s")
 
     sql = f"""
         WITH scored AS (
             SELECT content, source, category, section, language, page,
-                   to_tsvector('english', content) AS tsv
+                   coalesce(service_code, '') as service_code,
+                   coalesce(document_type, '') as document_type,
+                   coalesce(effective_date, '') as effective_date,
+                   coalesce(version, '') as version,
+                   to_tsvector('english', content) AS tsv_en,
+                   to_tsvector('simple', content) AS tsv_simp
             FROM knowledge_embeddings
         )
         SELECT content, source, category, section, language, page,
-               ts_rank(tsv, websearch_to_tsquery('english', %(q)s)) AS rank
+               service_code, document_type, effective_date, version,
+               GREATEST(
+                   ts_rank(tsv_en, websearch_to_tsquery('english', %(q)s)),
+                   ts_rank(tsv_simp, plainto_tsquery('simple', %(q)s))
+               ) AS rank
         FROM scored
         WHERE {' AND '.join(where_clauses)}
         ORDER BY rank DESC
@@ -332,6 +370,10 @@ def _lexical_search(
                 "section":       r["section"],
                 "language":      r["language"],
                 "page_number":   r["page"],
+                "service_code":  r.get("service_code") or None,
+                "document_type": r.get("document_type") or None,
+                "effective_date": r.get("effective_date") or None,
+                "version":       r.get("version") or None,
             },
             "distance": max(0.0, 1.0 - float(r["rank"])),
             "retrieval": "lexical",
@@ -350,6 +392,22 @@ def _lexical_search(
 # ---------------------------------------------------------------------------
 
 def similarity_search(
+    query: str,
+    n_results: int = 5,
+    where_filter: Optional[Dict[str, Any]] = None,
+    max_distance: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    """Timed entry point (request telemetry `retrieval_duration_ms`); see `_similarity_search_impl`."""
+    import time as _time
+    from backend.services.observability import record_retrieval
+    started = _time.perf_counter()
+    try:
+        return _similarity_search_impl(query, n_results, where_filter, max_distance)
+    finally:
+        record_retrieval((_time.perf_counter() - started) * 1000)
+
+
+def _similarity_search_impl(
     query: str,
     n_results: int = 5,
     where_filter: Optional[Dict[str, Any]] = None,
@@ -429,7 +487,7 @@ def similarity_search(
                     params[pk] = a
                     keys.append(f"%({pk})s")
                 where_clauses.append(f"language IN ({', '.join(keys)})")
-            elif col in ("category", "source", "section"):
+            elif col in ("category", "source", "section", "service_code", "document_type"):
                 param_key = f"filter_{col}"
                 where_clauses.append(f"{col} = %({param_key})s")
                 params[param_key] = str(val)
@@ -444,6 +502,10 @@ def similarity_search(
             section,
             language,
             page,
+            coalesce(service_code, '') as service_code,
+            coalesce(document_type, '') as document_type,
+            coalesce(effective_date, '') as effective_date,
+            coalesce(version, '') as version,
             embedding <=> %(vec)s::vector  AS distance
         FROM knowledge_embeddings
         {where_sql}
@@ -481,8 +543,13 @@ def similarity_search(
                     "section":       row["section"],
                     "language":      row["language"],
                     "page_number":   row["page"],
+                    "service_code":  row.get("service_code") or None,
+                    "document_type": row.get("document_type") or None,
+                    "effective_date": row.get("effective_date") or None,
+                    "version":       row.get("version") or None,
                 },
                 "distance": dist,
+                "retrieval": "vector",
             }
         )
 
@@ -498,6 +565,126 @@ def similarity_search(
             f"({dropped} past floor {max_distance}, filter={where_filter})"
         )
     return results
+
+
+# ---------------------------------------------------------------------------
+# delete_collection
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# hybrid_search — Dense Vector + Sparse Full-Text + RRF + Reranker
+# ---------------------------------------------------------------------------
+
+def hybrid_search(
+    query: str,
+    n_results: int = 5,
+    where_filter: Optional[Dict[str, Any]] = None,
+    language: str = "en",
+    candidate_limit: Optional[int] = None,
+    min_score: Optional[float] = None,
+    vector_weight: Optional[float] = None,
+    lexical_weight: Optional[float] = None,
+    rrf_k: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Advanced Hybrid Search combining vector similarity search and PostgreSQL full-text search.
+
+    Pipeline:
+      1. Query normalization & domain terminology preservation.
+      2. Candidate retrieval:
+         - Vector ANN search: fetches top `candidate_limit` dense hits.
+         - Lexical full-text search: fetches top `candidate_limit` keyword hits.
+      3. Reciprocal Rank Fusion (RRF):
+         - Merges dense and sparse rankings using configurable smoothing parameter k and weights.
+      4. Feature-based Reranking:
+         - Exact service code matches (0154 / 0153).
+         - Domain keyword coverage (patta, chitta, adangal, FMB, TSLR, field visit).
+         - Section and document title matches.
+         - Authoritative manual preference.
+         - Deduplication of overlapping chunk boundaries.
+         - Minimum relevance score thresholding to prevent hallucination.
+      5. Standardized source citations.
+
+    Returns:
+      List of top deduplicated and reranked document passages with structured metadata,
+      relevance_score, and formatted citation.
+    """
+    if not query or not query.strip():
+        logger.warning("hybrid_search called with empty query")
+        return []
+
+    c_limit = candidate_limit or getattr(settings, "RAG_CANDIDATE_LIMIT", 15)
+    v_weight = vector_weight if vector_weight is not None else getattr(settings, "RAG_VECTOR_WEIGHT", 1.0)
+    l_weight = lexical_weight if lexical_weight is not None else getattr(settings, "RAG_LEXICAL_WEIGHT", 1.0)
+    k_val = rrf_k or getattr(settings, "RAG_RRF_K", 60)
+    threshold = min_score if min_score is not None else getattr(settings, "RAG_MIN_RELEVANCE_SCORE", 0.02)
+
+    # 1. Query normalization & terminology preservation
+    norm = normalize_query_for_rag(query, language=language)
+    query_str = norm.get("normalized_query") or query.strip()
+
+    # Expand where_filter if service code extracted and not explicitly filtered
+    effective_filter = dict(where_filter) if where_filter else {}
+
+    # 2. Vector ANN Candidate Retrieval
+    vector_candidates: List[Dict[str, Any]] = []
+    try:
+        # We allow a larger distance limit (1.0 or 2.0) here to retrieve wide pool for RRF
+        vector_candidates = similarity_search(
+            query=query_str,
+            n_results=c_limit,
+            where_filter=effective_filter or None,
+            max_distance=1.0,
+        )
+    except Exception as exc:
+        logger.warning(f"hybrid_search: vector candidate retrieval error: {exc}")
+
+    # 3. Lexical / Full-Text Candidate Retrieval
+    lexical_candidates: List[Dict[str, Any]] = []
+    try:
+        lexical_candidates = _lexical_search(
+            query=query_str,
+            n_results=c_limit,
+            where_filter=effective_filter or None,
+        )
+    except Exception as exc:
+        logger.warning(f"hybrid_search: lexical candidate retrieval error: {exc}")
+
+    if not vector_candidates and not lexical_candidates:
+        logger.info(f"hybrid_search: 0 candidates from both retrievers for '{query[:60]}'")
+        return []
+
+    # 4. Reciprocal Rank Fusion (RRF)
+    ranking_lists: List[List[Dict[str, Any]]] = []
+    weights: List[float] = []
+    if vector_candidates:
+        ranking_lists.append(vector_candidates)
+        weights.append(v_weight)
+    if lexical_candidates:
+        ranking_lists.append(lexical_candidates)
+        weights.append(l_weight)
+
+    fused = reciprocal_rank_fusion(
+        ranking_lists=ranking_lists,
+        k=k_val,
+        weights=weights,
+    )
+
+    # 5. Reranking, Keyword Boosting, Deduplication & Relevance Thresholding
+    reranked = rerank_passages(
+        query=query,
+        candidates=fused,
+        language=language,
+        top_k=n_results,
+        min_score=threshold,
+    )
+
+    logger.info(
+        f"hybrid_search returned {len(reranked)} top passages "
+        f"({len(vector_candidates)} vec, {len(lexical_candidates)} lex candidates, "
+        f"top score: {reranked[0]['relevance_score'] if reranked else 0.0:.4f})"
+    )
+    return reranked
 
 
 # ---------------------------------------------------------------------------

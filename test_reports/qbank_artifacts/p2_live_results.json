@@ -1,0 +1,100 @@
+{
+  "A_small_talk": [
+    {
+      "q": "Hello, good morning.",
+      "a": "Good morning! 👋 I am your Sub Inspector Surveyor (SIS) AI assistant. How can I help you today with survey numbers, applications (ISD/NISD), or field visits?",
+      "intent": "greeting",
+      "seconds": 8.2
+    },
+    {
+      "q": "What can you help me with?",
+      "a": "I'm the SIS assistant for the Tamil Nadu Survey Department. I can help with applications of every service code and their status, the mutation workflow, field visits, owner and patta details, sub-divisions, and your jurisdiction. Try: 'my pending applications', 'F-Line applications', 'approved plus rejected', 'which service code has the most', 'my field visits this week', or 'what is service code 0154'. For an application-specific question, provide the application number you already have. What would you like to check?",
+      "intent": "capabilities",
+      "seconds": 1.1
+    },
+    {
+      "q": "Thanks for the explanation.",
+      "a": "I'm not sure what you mean. Please ask about an application, survey number, service, field visit, or workflow.",
+      "intent": "explain_clarify",
+      "seconds": 0.9
+    },
+    {
+      "q": "Goodbye.",
+      "a": "I could not understand that message. You can ask about an application (status, applicant, documents), a survey number, your field visits, your workload, fees or a service code.",
+      "intent": "unknown_message",
+      "seconds": 0.2
+    }
+  ],
+  "B_domain_exclusion": [
+    {
+      "q": "Investigate 2026/0153/02/045470.",
+      "a": "Here are the details for 2026/0153/02/045470. Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.",
+      "intent": "application_status",
+      "seconds": 5.4
+    },
+    {
+      "q": "What is its status?",
+      "a": "The Status for 2026/0153/02/045470 is: rejected",
+      "intent": "application_status",
+      "seconds": 1.0
+    },
+    {
+      "q": "When was the registration document registered?",
+      "a": "This is taking longer than expected to answer. Please try again, or narrow the question (an application number, a survey number, a ward or a service code).",
+      "intent": "general_query",
+      "seconds": 66.5
+    },
+    {
+      "q": "What happened before the rejection?",
+      "a": "I apologize, but I encountered an error processing your request. Please try again.",
+      "intent": "general_query",
+      "seconds": 127.8
+    }
+  ],
+  "C_context_retention": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.3
+    },
+    {
+      "q": "What about the other one?",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045472')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045472</a></td><td>NISD</td><td>35</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0012</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.2
+    },
+    {
+      "q": "Which one was submitted first?",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nBoth were filed on 2026-08-29.",
+      "intent": "compare_applications",
+      "seconds": 0.2
+    },
+    {
+      "q": "Show both applications again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.3
+    }
+  ],
+  "D_ambiguous_wording": [
+    {
+      "q": "Tell me about this.",
+      "a": "I'm not sure what you mean. Please ask about an application, survey number, service, field visit, or workflow.",
+      "intent": "general_query",
+      "seconds": 3.8
+    },
+    {
+      "q": "Can you explain that?",
+      "a": "I'm not sure what you mean. Please ask about an application, survey number, service, field visit, or workflow.",
+      "intent": "explain_clarify",
+      "seconds": 0.2
+    },
+    {
+      "q": "What about the other one?",
+      "a": "I do not know which application or list you mean — nothing has been shown in this conversation yet.\nGive an application number (for example 2026/0154/28/001197), or ask for a list first (\"my pending applications\", \"my approved applications\", \"applications from CSC\"), then ask this again.",
+      "intent": "followup_clarification",
+      "seconds": 0.2
+    }
+  ]
+}

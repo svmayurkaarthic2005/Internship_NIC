@@ -25,13 +25,30 @@ async def get_applications(
     current_officer = Depends(get_current_officer)
 ):
     """
-    Get list of applications assigned to current officer.
-    Filtered by jurisdiction and optional query parameters.
+    The officer's applications, every service code, from the register -- scoped to the officer's own
+    jurisdiction by `get_all_service_code_applications` (the same source the chat uses for listings).
+
+    Filters: `status` (approved / pending / rejected), `stage` (the register's coarse Open / Completed),
+    `application_type` (ISD, NISD or a 4-digit service code). Rejected files are included unless a status
+    is given. `total` counts every match; `skip` / `limit` page through it.
     """
-    # TODO: Implement application listing with filters (Phase 2)
+    from backend.services.postgres import get_all_service_code_applications
+
+    code = None
+    if application_type:
+        t = application_type.strip().upper()
+        code = {"ISD": "0154", "NISD": "0153"}.get(t, t if t.isdigit() and len(t) == 4 else None)
+        if code is None:
+            raise HTTPException(status_code=422, detail="application_type must be ISD, NISD or a 4-digit service code")
+    data = await get_all_service_code_applications(
+        db, current_officer, service_code=code, status=status.strip().lower() if status else None,
+        hide_rejected=False)
+    rows = data.get("applications") or []
+    if stage:
+        rows = [r for r in rows if (r.get("stage") or "").lower() == stage.strip().lower()]
     return StandardResponse.success_response(
-        data={"applications": [], "total": 0},
-        message="Applications retrieved (stub)"
+        data={"applications": rows[skip:skip + limit], "total": len(rows), "skip": skip, "limit": limit},
+        message="Applications retrieved"
     )
 
 

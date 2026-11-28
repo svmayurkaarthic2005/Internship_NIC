@@ -1,0 +1,65 @@
+{
+  "compare_0158_chat": [
+    {
+      "q": "Compare 2026/0158/02/000002 and 2026/0158/02/000003.",
+      "intent": "compare_applications",
+      "ms": 380.6,
+      "X": true,
+      "Y": true,
+      "answer": "**2026/0158/02/000002** vs **2026/0158/02/000003** • **Type**: Modification / Anadeenam | Modification / Anadeenam • **Status**: approved | approved • **Filed**"
+    },
+    {
+      "q": "What about the other one?",
+      "intent": "followup_list",
+      "ms": 371.4,
+      "X": false,
+      "Y": true,
+      "answer": "Found 1 application(s): Application No. Type Survey Number Sub-Divisions Status Stage Submission Date Ward Block 2026/0158/02/000003 Modification / Anadeenam 13"
+    },
+    {
+      "q": "What is its status?",
+      "intent": "application_status",
+      "ms": 307.2,
+      "X": false,
+      "Y": true,
+      "answer": "2026/0158/02/000003 is approved (stage: Completed)."
+    },
+    {
+      "q": "Show both applications again.",
+      "intent": "compare_applications",
+      "ms": 339.1,
+      "X": true,
+      "Y": true,
+      "answer": "**2026/0158/02/000002** vs **2026/0158/02/000003** • **Type**: Modification / Anadeenam | Modification / Anadeenam • **Status**: approved | approved • **Filed**"
+    }
+  ],
+  "compare_0158_stream": [
+    {
+      "q": "Compare 2026/0158/02/000002 and 2026/0158/02/000003.",
+      "X": true,
+      "Y": true,
+      "answer": "**2026/0158/02/000002** vs **2026/0158/02/000003** • **Type**: Modification / Anadeenam | Modification / Anadeenam • **Status**: approved | approved • **Filed**"
+    },
+    {
+      "q": "What about the other one?",
+      "X": false,
+      "Y": true,
+      "answer": "Found 1 application(s): Application No. Type Survey Number Sub-Divisions Status Stage Submission Date Ward Block 2026/0158/02/000003 Modification / Anadeenam 13"
+    }
+  ],
+  "applications_with_jwt": {
+    "status": 200,
+    "total": 152,
+    "returned": 5,
+    "message": "Applications retrieved"
+  },
+  "applications_pending_total": 47,
+  "applications_without_jwt": 401,
+  "channel_report": {
+    "status": 200,
+    "bytes": 58616,
+    "embedded_RAW": false,
+    "application_numbers_in_page": 0,
+    "mobile_like_numbers_in_page": 0
+  }
+}

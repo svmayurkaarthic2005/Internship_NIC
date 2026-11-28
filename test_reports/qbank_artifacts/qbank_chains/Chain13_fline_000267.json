@@ -1,0 +1,9 @@
+{
+  "chain_id": "Chain13_fline_000267",
+  "questions": [
+    "Please inspect F-Line application 2026/0178/02/000267. The application-information table shows a proposed field-visit date, an amount, payment details and an Order Generated status. Cross-check those with the main application log and workflow history, and explain which date represents the proposed visit, which represents the workflow action and which represents the application update. Don't treat them as interchangeable.",
+    "What is the proposed field-visit date?",
+    "What does the actual workflow record say happened on that date?",
+    "What amount and payment mode appear in the application-information record?"
+  ]
+}

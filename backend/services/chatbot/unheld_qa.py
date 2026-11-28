@@ -23,8 +23,8 @@ _RULES = (
      "market / guideline value, sale amount, stamp duty or registration fee", "சந்தை / வழிகாட்டி மதிப்பு, விற்பனைத் தொகை, முத்திரைத் தீர்வை, பதிவுக் கட்டணம்",
      "the registration document (number, place, date, year) and reason for the transfer; the only amount held is the application fee (challan amount)",
      "பதிவு ஆவணம் (எண், இடம், தேதி, ஆண்டு) மற்றும் மாற்றத்தின் காரணம்; பதிவில் உள்ள ஒரே தொகை விண்ணப்பக் கட்டணம் (சலான் தொகை)"),
-    (r"\b(?:tahsildar|tahsildhar|thasildar|dis|sd|surveyor|officer|zdt|rdo)(?:'s|s)?\s+(?:name|id|mobile|phone|contact)\b|"
-     r"\bname\s+of\s+the\s+(?:tahsildar|dis|sd|officer|surveyor|zdt|rdo)\b|\bwho\s+is\s+the\s+(?:tahsildar|dis|sd|zdt|rdo)\b|"
+    (r"\b(?:tahsildar|tahsildhar|thasildar|dis|sd|surveyor|officer|zdt|hqdt|rdo)(?:'s|s)?\s+(?:name|id|mobile|phone|contact)\b|"
+     r"\bname\s+of\s+the\s+(?:tahsildar|dis|sd|officer|surveyor|zdt|hqdt|rdo)\b|\bwho\s+is\s+the\s+(?:tahsildar|dis|sd|zdt|hqdt|rdo)\b|"
      r"தாசில்தார்\s*(?:பெயர்|யார்)|அதிகாரி\s*பெயர்",
      "the name of an officer", "அதிகாரியின் பெயர்",
      "the desk that acted (SIS, SD, DIS, Tahsildar ...), the date and the remark", "நடவடிக்கை எடுத்த மேசை, தேதி மற்றும் குறிப்பு"),
@@ -49,7 +49,16 @@ _HELD_FIRST = re.compile(r"\b(?:fee|amount|challan|payment)\b", re.IGNORECASE)
 
 def context_app(chat_history) -> Optional[str]:
     """The application the conversation is about: the newest message that names one. A listing (3+ numbers) is about
-    none of its rows, so if that is the newest, nothing is carried (the ordinary handlers ask which one)."""
+    none of its rows, so if that is the newest, nothing is carried (the ordinary handlers ask which one).
+
+    P3.3: the turn's canonical server context breaks ties inside its own set -- after "compare A and B" the
+    transcript's first number is A, but no member was chosen, so nothing is carried (the handlers ask); after
+    "switch back to the first" the focus wins. It never introduces a number the transcript did not name."""
+    from backend.services import followup_context as fctx
+    return fctx.canonical_tiebreak(_transcript_app(chat_history))[0]
+
+
+def _transcript_app(chat_history) -> Optional[str]:
     from .cmflow_qa import _APP_NO
     for m in reversed((chat_history or [])[-8:]):
         content = (m.get("content") or "") if isinstance(m, dict) else str(m)

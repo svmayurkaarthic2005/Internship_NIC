@@ -594,6 +594,17 @@ def _verify_answer_numbers(text: str, structured_data, intent: str = "", languag
             "Note: part of that answer named an application number that is not in "
             "your register, so it was removed. Use the application numbers in the "
             "table above.")
+    try:
+        from .response_generator import verify_response_evidence, ResponseContext
+        ctx = ResponseContext(query="", language=language or "en", structured_data=structured_data, intent=intent)
+        v_report = verify_response_evidence(corrected, ctx)
+        if not v_report.is_valid:
+            corrected = v_report.verified_text
+            for n in v_report.notes:
+                if n not in notes:
+                    notes.append(n)
+    except Exception as exc:
+        logger.debug(f"_verify_answer_numbers: verify_response_evidence pass: {exc}")
     return _pipes_to_table(corrected), (" " + " ".join(notes) if notes else "")
 
 
@@ -1273,9 +1284,15 @@ _IDENTITY_PATTERNS = [
     r"\bmy\s+(?:user[_\s]*id|login[_\s]*id|login)\b",
     r"\b(?:muy|myu|mi|mu)\s+(?:user[_\s]*id|login[_\s]*id)\b",
     r"\bmy\s+(?:profile|details|detail|info|information|credentials|account)\b",
-    r"\babout\s+me\b", r"\bmy\s+identity\b",
+    r"\babout\s+me\b", r"\bmy\s+(?:current\s+)?identity\b",
     r"\bwhich\s+officer\s+am\s+i\b", r"\bam\s+i\s+(?:a|an|the)\s+sis\b",
     r"\bwhat\s+am\s+i\b",
+    # "which officer account is active/current/logged in" / "who is logged
+    # in" / "logged in as" -- the current authenticated session's identity,
+    # same answer as "who am i", just phrased around the login rather than
+    # the person.
+    r"\bwhich\s+officer\s+(?:account\s+)?is\s+(?:currently\s+)?(?:active|logged\s*in|current)\b",
+    r"\bwho(?:'s|\s+is)\s+logged\s*in\b", r"\blogged\s+in\s+as\b",
     # Tamil
     r"நான்\s*யார்", r"நான்\s*யாரு", r"என்\s*பெயர்", r"எனது\s*பெயர்",
     r"என்\s*பதவி", r"எனது\s*பதவி", r"என்\s*விவரம்", r"எனது\s*விவரங்கள்",
@@ -1986,7 +2003,17 @@ def _followup_out_context(scoped_sd: dict, prior, row_peek: bool = False, last_p
             return None
         if last_peeked:
             import dataclasses as _dc
-            prior = _dc.replace(prior, filters={**(prior.filters or {}), "last_peeked": last_peeked})
+            # `current_application` is updated alongside the breadcrumb (not
+            # instead of it) -- "the other one" / "the first one" / "the
+            # second one" over a two-application pair must switch WHICH one
+            # is currently focused without ever narrowing
+            # `application_numbers` down to it; the pair stays exactly as it
+            # was, only the focus moves. Found live: without this the pair
+            # survived, but a plain "was that the rejected one?" right after
+            # a pick relied solely on the `last_peeked` breadcrumb, which
+            # `single_application` does not consult at all.
+            prior = _dc.replace(prior, filters={**(prior.filters or {}), "last_peeked": last_peeked},
+                                current_application=last_peeked)
         return prior.to_json()
     ctx = fctx.build_context("followup_list", scoped_sd)
     if ctx and ctx.application_numbers:
@@ -2128,6 +2155,8 @@ def _wants_carried_list_details(message: str, context) -> bool:
     text = (message or "").strip()
     if not text or _ANY_APP_NUMBER_RE.search(text):
         return False
+    if fctx.singular_target(text, context)[1]:
+        return False      # "its details" over several with no focus: not "all of them" -- left to ask (P3.3)
     low = text.lower()
     # "சர்வே 146 விவரங்களைக் காட்டு", "details of survey 5", "details 2026-07-01 to ...":
     # a details word beside a subject of its own is a fresh question.
@@ -2228,6 +2257,8 @@ def _carried_details_message(context, message: str = "") -> str:
     """
     nums = (context.application_numbers or [])[:_MAX_LISTED_DETAILS]
     picked = _pick_from_listing(message or "", nums)
+    if not picked:
+        picked = fctx.singular_target(message or "", context)[0]   # "its details" -> the focus (P3.3)
     if picked:
         nums = [picked]
     wants_applicant = (_asks_applicant_focus(message)

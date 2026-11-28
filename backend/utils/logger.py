@@ -8,6 +8,17 @@ import sys
 from backend.config import settings
 
 
+def redact_sensitive_processor(logger, method_name, event_dict):
+    """
+    Scrub passwords, tokens, Bearer headers, 12-digit Aadhaar, and phone numbers from all log events.
+    """
+    try:
+        from backend.services.security import redact_sensitive_dict
+        return redact_sensitive_dict(event_dict)
+    except Exception:
+        return event_dict
+
+
 def configure_logging():
     """
     Configure structlog for structured logging
@@ -28,6 +39,7 @@ def configure_logging():
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
+            redact_sensitive_processor,
             structlog.processors.JSONRenderer()
         ],
         context_class=dict,

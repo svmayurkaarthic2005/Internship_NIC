@@ -1,0 +1,412 @@
+{
+  "normal": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.48,
+      "history_mode": "normal",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "context": "path=sync focus=None pair=[] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    },
+    {
+      "q": "Show the status of 2026/0154/02/012766.",
+      "a": "The Status for 2026/0154/02/012766 is: approved",
+      "intent": "application_status",
+      "seconds": 0.66,
+      "history_mode": "normal",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=2 client_msgs=2 client_ignored=True client_app_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "context": "path=sync focus=None pair=['2026/0153/02/045470', '2026/0153/02/045472'] explicit_ids=['2026/0154/02/012766']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "Compare 2026/0154/02/012766 with the first application from our earlier comparison.",
+      "a": "**2026/0154/02/012766** vs **2026/0153/02/045470**\n• **Type**: ISD  |  NISD\n• **Status**: approved  |  rejected\n• **Filed**: 2026-08-08  |  2026-08-29\n• **Decided**: 2026-08-25  |  2026-09-13\n• **Days to decide**: 17  |  15\n• **Survey**: 76  |  110\n• **Sub-division**: 4, 2  |  N/A\n• **Old patta no**: N/A  |  75100\n• **Registration document**: N/A  |  R/17/1/11822/2026\n• **Registered at**: N/A  |  Ambattur\n• **Registered on**: N/A  |  28-08-2026\n• **Ward**: 001  |  001\n• **Channel**: CSC  |  sub_registrar\n• **Area (sq.m)**: 266.0  |  1.0\n• **Rejection remark**: N/A  |  [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.3,
+      "history_mode": "normal",
+      "client_history_len": 4,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=4 client_msgs=4 client_ignored=True client_app_ids=['2026/0153/02/045470', '2026/0153/02/045472', '2026/0154/02/012766']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0154/02/012766 resolved=['2026/0154/02/012766', '2026/0153/02/045470'] clarify=False",
+        "context": "path=sync focus=2026/0154/02/012766 pair=['2026/0154/02/012766'] explicit_ids=['2026/0154/02/012766', '2026/0153/02/045470']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "What is the status of the second application from our earlier comparison?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.48,
+      "history_mode": "normal",
+      "client_history_len": 6,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=6 client_msgs=6 client_ignored=True client_app_ids=['2026/0153/02/045470', '2026/0153/02/045472', '2026/0154/02/012766']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=None resolved=['2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=None pair=['2026/0154/02/012766', '2026/0153/02/045470'] explicit_ids=['2026/0153/02/045472']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0153/02/045472 from_context=False"
+      }
+    },
+    {
+      "q": "What about the other one?",
+      "a": "Which application do you mean? You are now on 2026/0153/02/045472; the earlier comparison was 2026/0153/02/045470 and 2026/0153/02/045472. Give the number, or say for example \"the second application from our earlier comparison\".",
+      "intent": "followup_clarification",
+      "seconds": 0.29,
+      "history_mode": "normal",
+      "client_history_len": 8,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=8 client_msgs=8 client_ignored=True client_app_ids=['2026/0153/02/045470', '2026/0153/02/045472', '2026/0154/02/012766']",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=[]"
+      }
+    },
+    {
+      "q": "Show both applications from our previous comparison again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.26,
+      "history_mode": "normal",
+      "client_history_len": 10,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=10 client_msgs=10 client_ignored=True client_app_ids=['2026/0153/02/045470', '2026/0153/02/045472', '2026/0154/02/012766']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0153/02/045472 resolved=['2026/0153/02/045470', '2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    }
+  ],
+  "none": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.2,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "context": "path=sync focus=None pair=[] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    },
+    {
+      "q": "Show the status of 2026/0154/02/012766.",
+      "a": "The Status for 2026/0154/02/012766 is: approved",
+      "intent": "application_status",
+      "seconds": 0.27,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=2 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "context": "path=sync focus=None pair=['2026/0153/02/045470', '2026/0153/02/045472'] explicit_ids=['2026/0154/02/012766']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "Compare 2026/0154/02/012766 with the first application from our earlier comparison.",
+      "a": "**2026/0154/02/012766** vs **2026/0153/02/045470**\n• **Type**: ISD  |  NISD\n• **Status**: approved  |  rejected\n• **Filed**: 2026-08-08  |  2026-08-29\n• **Decided**: 2026-08-25  |  2026-09-13\n• **Days to decide**: 17  |  15\n• **Survey**: 76  |  110\n• **Sub-division**: 4, 2  |  N/A\n• **Old patta no**: N/A  |  75100\n• **Registration document**: N/A  |  R/17/1/11822/2026\n• **Registered at**: N/A  |  Ambattur\n• **Registered on**: N/A  |  28-08-2026\n• **Ward**: 001  |  001\n• **Channel**: CSC  |  sub_registrar\n• **Area (sq.m)**: 266.0  |  1.0\n• **Rejection remark**: N/A  |  [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.27,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=4 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0154/02/012766 resolved=['2026/0154/02/012766', '2026/0153/02/045470'] clarify=False",
+        "context": "path=sync focus=2026/0154/02/012766 pair=['2026/0154/02/012766'] explicit_ids=['2026/0154/02/012766', '2026/0153/02/045470']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "What is the status of the second application from our earlier comparison?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.42,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=6 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=None resolved=['2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=None pair=['2026/0154/02/012766', '2026/0153/02/045470'] explicit_ids=['2026/0153/02/045472']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0153/02/045472 from_context=False"
+      }
+    },
+    {
+      "q": "What about the other one?",
+      "a": "Which application do you mean? You are now on 2026/0153/02/045472; the earlier comparison was 2026/0153/02/045470 and 2026/0153/02/045472. Give the number, or say for example \"the second application from our earlier comparison\".",
+      "intent": "followup_clarification",
+      "seconds": 0.26,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=8 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=[]"
+      }
+    },
+    {
+      "q": "Show both applications from our previous comparison again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.26,
+      "history_mode": "none",
+      "client_history_len": 0,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=10 client_msgs=0 client_ignored=False client_app_ids=[]",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0153/02/045472 resolved=['2026/0153/02/045470', '2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    }
+  ],
+  "stale": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.21,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=[] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    },
+    {
+      "q": "Show the status of 2026/0154/02/012766.",
+      "a": "The Status for 2026/0154/02/012766 is: approved",
+      "intent": "application_status",
+      "seconds": 0.22,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=2 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=['2026/0153/02/045470', '2026/0153/02/045472'] explicit_ids=['2026/0154/02/012766']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "Compare 2026/0154/02/012766 with the first application from our earlier comparison.",
+      "a": "**2026/0154/02/012766** vs **2026/0153/02/045470**\n• **Type**: ISD  |  NISD\n• **Status**: approved  |  rejected\n• **Filed**: 2026-08-08  |  2026-08-29\n• **Decided**: 2026-08-25  |  2026-09-13\n• **Days to decide**: 17  |  15\n• **Survey**: 76  |  110\n• **Sub-division**: 4, 2  |  N/A\n• **Old patta no**: N/A  |  75100\n• **Registration document**: N/A  |  R/17/1/11822/2026\n• **Registered at**: N/A  |  Ambattur\n• **Registered on**: N/A  |  28-08-2026\n• **Ward**: 001  |  001\n• **Channel**: CSC  |  sub_registrar\n• **Area (sq.m)**: 266.0  |  1.0\n• **Rejection remark**: N/A  |  [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.24,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=4 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0154/02/012766 resolved=['2026/0154/02/012766', '2026/0153/02/045470'] clarify=False",
+        "context": "path=sync focus=2026/0154/02/012766 pair=['2026/0154/02/012766'] explicit_ids=['2026/0154/02/012766', '2026/0153/02/045470']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "What is the status of the second application from our earlier comparison?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.42,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=6 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=None resolved=['2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=None pair=['2026/0154/02/012766', '2026/0153/02/045470'] explicit_ids=['2026/0153/02/045472']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0153/02/045472 from_context=False"
+      }
+    },
+    {
+      "q": "What about the other one?",
+      "a": "Which application do you mean? You are now on 2026/0153/02/045472; the earlier comparison was 2026/0153/02/045470 and 2026/0153/02/045472. Give the number, or say for example \"the second application from our earlier comparison\".",
+      "intent": "followup_clarification",
+      "seconds": 0.26,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=8 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=[]"
+      }
+    },
+    {
+      "q": "Show both applications from our previous comparison again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.25,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=10 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0153/02/045472 resolved=['2026/0153/02/045470', '2026/0153/02/045472'] clarify=False",
+        "context": "path=sync focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    }
+  ],
+  "stream_stale": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.18,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=[] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    },
+    {
+      "q": "Show the status of 2026/0154/02/012766.",
+      "a": "The Status for 2026/0154/02/012766 is: approved",
+      "intent": "application_status",
+      "seconds": 0.23,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=2 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=['2026/0153/02/045470', '2026/0153/02/045472'] explicit_ids=['2026/0154/02/012766']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "Compare 2026/0154/02/012766 with the first application from our earlier comparison.",
+      "a": "**2026/0154/02/012766** vs **2026/0153/02/045470**\n• **Type**: ISD  |  NISD\n• **Status**: approved  |  rejected\n• **Filed**: 2026-08-08  |  2026-08-29\n• **Decided**: 2026-08-25  |  2026-09-13\n• **Days to decide**: 17  |  15\n• **Survey**: 76  |  110\n• **Sub-division**: 4, 2  |  N/A\n• **Old patta no**: N/A  |  75100\n• **Registration document**: N/A  |  R/17/1/11822/2026\n• **Registered at**: N/A  |  Ambattur\n• **Registered on**: N/A  |  28-08-2026\n• **Ward**: 001  |  001\n• **Channel**: CSC  |  sub_registrar\n• **Area (sq.m)**: 266.0  |  1.0\n• **Rejection remark**: N/A  |  [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "(stream)",
+      "seconds": 0.29,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "stream",
+      "server": {
+        "transcript": "server_msgs=4 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0154/02/012766 resolved=['2026/0154/02/012766', '2026/0153/02/045470'] clarify=False",
+        "context": "path=stream focus=2026/0154/02/012766 pair=['2026/0154/02/012766'] explicit_ids=['2026/0154/02/012766', '2026/0153/02/045470']",
+        "gate": "path=stream intent=compare_applications verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "What is the status of the second application from our earlier comparison?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "(stream)",
+      "seconds": 0.4,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "stream",
+      "server": {
+        "transcript": "server_msgs=6 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=None resolved=['2026/0153/02/045472'] clarify=False",
+        "context": "path=stream focus=None pair=['2026/0154/02/012766', '2026/0153/02/045470'] explicit_ids=['2026/0153/02/045472']",
+        "gate": "path=stream intent=application_status verdict=ok app=2026/0153/02/045472 from_context=False"
+      }
+    },
+    {
+      "q": "What about the other one?",
+      "a": "Which application do you mean? You are now on 2026/0153/02/045472; the earlier comparison was 2026/0153/02/045470 and 2026/0153/02/045472. Give the number, or say for example \"the second application from our earlier comparison\".",
+      "intent": "(stream)",
+      "seconds": 0.3,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "stream",
+      "server": {
+        "transcript": "server_msgs=8 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=stream focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=[]"
+      }
+    },
+    {
+      "q": "Show both applications from our previous comparison again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "(stream)",
+      "seconds": 0.27,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "stream",
+      "server": {
+        "transcript": "server_msgs=10 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0153/02/045472 resolved=['2026/0153/02/045470', '2026/0153/02/045472'] clarify=False",
+        "context": "path=stream focus=2026/0153/02/045472 pair=['2026/0153/02/045472'] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=stream intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    }
+  ],
+  "both_three": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.19,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=[] explicit_ids=['2026/0153/02/045470', '2026/0153/02/045472']",
+        "gate": "path=sync intent=compare_applications verdict=ok app=2026/0153/02/045470 from_context=False"
+      }
+    },
+    {
+      "q": "Show the status of 2026/0154/02/012766.",
+      "a": "The Status for 2026/0154/02/012766 is: approved",
+      "intent": "application_status",
+      "seconds": 0.22,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=2 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "context": "path=sync focus=None pair=['2026/0153/02/045470', '2026/0153/02/045472'] explicit_ids=['2026/0154/02/012766']",
+        "gate": "path=sync intent=application_status verdict=ok app=2026/0154/02/012766 from_context=False"
+      }
+    },
+    {
+      "q": "Compare 2026/0154/02/012766 with both applications from our previous comparison.",
+      "a": "I can compare two applications at a time. Compare 2026/0154/02/012766 with which one from the earlier comparison: 2026/0153/02/045470 or 2026/0153/02/045472?",
+      "intent": "clarification_required",
+      "seconds": 0.04,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=4 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=['2026/0153/02/045470', '2026/0153/02/045472'] current=2026/0154/02/012766 resolved=[] clarify=True"
+      }
+    }
+  ],
+  "fresh": [
+    {
+      "q": "What is the status of the second application from our earlier comparison?",
+      "a": "There is no earlier comparison in this conversation to refer to. Give the application numbers.",
+      "intent": "clarification_required",
+      "seconds": 0.04,
+      "history_mode": "stale",
+      "client_history_len": 2,
+      "endpoint": "chat",
+      "server": {
+        "transcript": "server_msgs=0 client_msgs=2 client_ignored=True client_app_ids=['2026/0154/02/012766', '2026/0154/02/999999']",
+        "historical_ref": "prior_pair=None current=None resolved=[] clarify=True"
+      }
+    }
+  ]
+}

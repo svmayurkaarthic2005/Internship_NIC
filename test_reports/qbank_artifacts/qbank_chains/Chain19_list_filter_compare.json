@@ -1,0 +1,9 @@
+{
+  "chain_id": "Chain19_list_filter_compare",
+  "questions": [
+    "Show me the applications under service code 0154, but I am mainly interested in applications involving more than one temporary subdivision. For each matching application, include the application number, survey number, existing patta, number of subdivision rows, application status and whether the proposed owner information is present. Do not count owner rows as separate applications.",
+    "Now show only the rejected ones.",
+    "Which one has the largest total recorded subdivision area?",
+    "Show the owner details for that application, grouped by temporary subdivision."
+  ]
+}

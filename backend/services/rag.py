@@ -68,6 +68,10 @@ from backend.services.rag_llm import (  # noqa: E402
     paraphrase_facts_naturally,
     call_llama,
     call_llama_stream,
+    get_rag_evidence,
+    get_rag_evidence_async,
+    build_grounded_rag_prompt,
+    procedural_refusal_response,
 )
 
 
@@ -3575,7 +3579,7 @@ _ISD_NISD_ONLY_RE = re.compile(
     r"field[\s-]?visits?|visits?|inspections?|unscheduled|sketch|draughtsman|"
     r"workflow|stages?|desks?|priority|priorities|urgent|workload|assigned|"
     r"awaiting|waiting|sla|working\s+days?|oldest|longest|stuck)\b"
-    r"|\b(?:sd|dis|sis|tahsildar|zdt)\b|காலதாமத|தாமத|கள\s*ஆய்வு",
+    r"|\b(?:sd|dis|sis|tahsildar|zdt|hqdt)\b|காலதாமத|தாமத|கள\s*ஆய்வு",
     re.IGNORECASE)
 _LISTING_NOUN_RE = re.compile(r"\b(?:applications?|apps?|appl|files?|cases)\b|விண்ணப்ப", re.IGNORECASE)
 

@@ -1,0 +1,34 @@
+[
+  {
+    "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472. Compare their survey numbers, subdivisions, old patta numbers, registration documents, statuses and rejection remarks.",
+    "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted"
+  },
+  {
+    "q": "What about the other one?",
+    "a": "There is 1 Sub-Registrar NISD application(s) in that list."
+  },
+  {
+    "q": "Which one was submitted first?",
+    "a": "1 of those 1 application(s) is rejected."
+  },
+  {
+    "q": "What was different in the registration details of the other application?",
+    "a": "<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0153/02/045472</h3><span class='data-table-count'>10 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td>✔ Old patta (transfer) vs old owner&#x27;s patta</td><td>1841  |  1841</td></tr><tr><td colspan='2'>no new-owner record to compare the ZDT patta with</td></tr><tr><td>Old patta vs ZDT patta</td><td>1841  |  not recorded</td></tr><tr><td colspan='2'>the ZDT patta is not issued yet, so it cannot be compared</td></tr><tr><td colspan='2'>no new-owner record to compare survey / sub-division with</td></tr><tr><td>Old door vs new door</td><td>not recorded  |  not recorded</td></tr><tr><td>✔ Old street vs current street code</td><td>0000  |  0000</td></tr><tr><td>✔ Old vs new total tax</td><td>0.00  |  0.00</td></tr><tr><td>tax rate</td><td>not recorded</td></tr><tr><td colspan='2'>The total tax is unchanged.</td></tr><tr><td colspan='2'>Purchased area not recorded ; extent of the application 0 ha 3 ares 37 sq.m = 337 sq.m. They are in different units or one is blank, so they are not directly comparable.</td></tr><tr><td>Reason</td><td>Sale deed; registration document: R/17/1/11775/2026 (Ambattur, 27-08-2026); succession / legal-heir certificate: not recorded; court order: not recorded.</td></tr><tr><td colspan='2'>A sale deed is a registered document, so a registration document number is expected -- it is recorded.</td></tr><tr><td colspan='2'>No succession, legal-heir or court-order details are recorded, which is consistent with a transfer by deed rather than by inheritance or court order.</td></tr><tr><td>SIS recommendation</td><td>N (reason code 06); transaction status: 02/06 -- the register does not define these codes, so no rule links them.</td></tr><tr><td colspan='2'>the group survey / sub-division / patta numbers are blank (this file is not part of a grouped split), so there is nothing to match with the sub-division records</td></tr><tr><td>Owner correction reason code</td><td>not recorded; no new-owner record is held.</td></tr><tr><td>Direct transfer flag</td><td>not recorded; transaction type: not recorded; reason: Sale deed; transaction code: 01 (the register does not define the codes).</td></tr><tr><td colspan='2'>(✔ match, ✘ differs, – not comparable)</td></tr></tbody></table></div></div>"
+  },
+  {
+    "q": "Was that the rejected one?",
+    "a": "Yes — 2026/0153/02/045472 is rejected."
+  },
+  {
+    "q": "What was the reason for that?",
+    "a": "The Declared Reason for 2026/0153/02/045472 is: sale"
+  },
+  {
+    "q": "No, I meant the update date, not the submission date.",
+    "a": "Understood. If the details for application 2026/0153/02/045472 seemed incorrect, please let me know which field you would like me to re-verify against the official database (such as current status, applicant name, or documents)."
+  },
+  {
+    "q": "Show both applications again in one comparison.",
+    "a": "I don't know how to filter applications by \"comparison\", so I have not shown a list that ignores it. I can filter by status (pending, approved, rejected), type (ISD, NISD), channel (CSC, SRO, citizen), ward or block, month or year, or overdue -- which should I use?"
+  }
+]

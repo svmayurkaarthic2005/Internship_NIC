@@ -16,7 +16,8 @@ description: >-
 
 ## 1. Adding a New Chat Intent
 
-Follow these files in order. Changes touch exactly three service files.
+Follow these files in order: `rag.py`, `postgres.py`, then the two dispatch modules of the
+`backend/services/chatbot/` package (one per chat path).
 
 ### Step 1 — Register the intent keyword in `rag.py`
 
@@ -42,15 +43,19 @@ File: [`backend/services/postgres.py`](file:///c:/proj/nic_internship/backend/se
    ```python
    .where(Application.current_status != "rejected")
    ```
-4. Return a plain `dict` with a `"data"` key; chatbot.py unpacks it.
+4. Return a plain `dict` with a `"data"` key; the dispatch modules unpack it.
 
-### Step 3 — Wire it in `chatbot.py`
+### Step 3 — Wire it into both chat paths
 
-File: [`backend/services/chatbot.py`](file:///c:/proj/nic_internship/backend/services/chatbot.py)
+Files: [`chat_dispatch.py`](file:///c:/proj/nic_internship/backend/services/chatbot/chat_dispatch.py)
+(`dispatch_intent()`, used by `process_chat`) and
+[`chat_dispatch_stream.py`](file:///c:/proj/nic_internship/backend/services/chatbot/chat_dispatch_stream.py)
+(`dispatch_intent_stream()`, used by `process_chat_stream`), both in `backend/services/chatbot/`.
+The old single `chatbot.py` is now this package; `orchestrator.py` holds the two entry points.
 
-1. Find `process_chat_stream()` (the main dispatch block — large `if/elif` chain on intent).
-2. Add an `elif intent == "your_intent_name":` branch.
-3. Call your `postgres.py` handler, build context string, call `call_llama_stream()`.
+1. Add the same `intent == "your_intent_name"` branch to **both** dispatch functions.
+2. Call your `postgres.py` handler and render the answer from its data (the stream path yields SSE chunks).
+3. Streaming and non-streaming must answer identically -- add a test that runs both.
 4. Numeric/count data must come from DB **directly** — do not ask the LLM to count.
 
 ### Step 4 — Verify
@@ -70,24 +75,17 @@ curl -X POST http://localhost:8000/api/v1/chat/stream `
 
 ## 2. Running the Test Suites
 
-### Comprehensive Suite (top-level)
+### Unit + pipeline suite (pytest)
 
 ```powershell
 .venv\Scripts\activate
-python test_comprehensive_suite.py
+python -m pytest tests/unit -q
 ```
 
-Covers basic smoke tests across all intents.
-
-### 200-Question Suite (detailed NLP accuracy)
-
-```powershell
-python backend/test_200_suite.py
-```
-
-- Tests all intent categories including bilingual (Tamil/Tanglish/English) queries.
-- Output shows pass/fail per question + a summary accuracy %.
-- Target: **>90% pass rate** before merging changes.
+- Needs the live PostgreSQL (`sis_chatbot_db`) and the seeded officers; no LLM calls.
+- Add new tests under `tests/unit/` (fixtures `db_session`, `test_officer`, `secondary_officer` in `tests/conftest.py`).
+- The old `test_comprehensive_suite.py` / `backend/test_200_suite.py` scripts were removed (commit `39f9e25`);
+  the question banks `test_questions_*.txt` remain for manual runs.
 
 ### Interpreting Failures
 
@@ -105,12 +103,12 @@ python backend/test_200_suite.py
 
 ### First-Time Setup
 
+Follow "First-time DB setup" in `CLAUDE.md` (Dev Commands) and `backend/sample_db/README.md`.
+Note that the live database was built by `backend/sample_db_new/` (`load_sample_db_new.py`,
+`build_app_tables_new.py`), not the older `backend/sample_db/` seed; then:
+
 ```powershell
-# Run exactly in this order
-python create_database.py        # Creates the PostgreSQL DB
-python -m uvicorn backend.main:app --reload  # Let SQLAlchemy create tables on startup (then Ctrl+C)
-python backend/seed.py           # Seed all officers, applications, survey numbers
-python backend/ingest.py         # Ingest documents into pgvector
+python -m backend.ingest          # Ingest documents into pgvector (knowledge_embeddings)
 ```
 
 **Prerequisite**: pgvector must be installed in PostgreSQL:
@@ -119,24 +117,23 @@ python backend/ingest.py         # Ingest documents into pgvector
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### Resetting Data
+### Rebuilding Data
 
 ```powershell
-python reset_database.py   # Drops all rows, re-seeds from scratch
+python -m backend.sample_db.build_app_tables   # re-derive the ORM projection (idempotent)
 ```
 
-Use this when seed data is inconsistent or you've made model changes.
+There is no reset script any more (`reset_database.py` was removed).
 
 ### Integrity Checks
 
 Always run after seeding or schema changes:
 
 ```powershell
-python verify_no_duplicates.py   # Checks unique active-app-per-survey constraint
-python check_missing_values.py   # Validates no required fields are NULL
+python backend/sample_db/verify_sample_db.py     # CSV-shaped layer: structure, orphans, non-leakage
+python -m backend.sample_db.verify_identifiers   # Aadhaar + CAN formats, both layers
+python -m backend.sample_db.check_app_wiring --chat   # app queries + a chat answer
 ```
-
-Both scripts print a summary and exit non-zero on failure.
 
 ---
 
@@ -163,5 +160,4 @@ Both scripts print a summary and exit non-zero on failure.
 | [`backend/services/postgres.py`](file:///c:/proj/nic_internship/backend/services/postgres.py) | All DB query functions |
 | [`backend/utils/fuzzy.py`](file:///c:/proj/nic_internship/backend/utils/fuzzy.py) | Fuzzy month/token matching logic |
 | [`test_questions_206.txt`](file:///c:/proj/nic_internship/test_questions_206.txt) | Largest question bank for manual testing |
-| [`backend/services/attachment_qa.py`](file:///c:/proj/nic_internship/backend/services/attachment_qa.py) | Uploaded-document Q&A: entity extraction, enumeration, survey/subdivision pairing |
-| [`SIS_Survey_Subdivision_Pairing_Fix_Report.md`](file:///c:/proj/nic_internship/SIS_Survey_Subdivision_Pairing_Fix_Report.md) | Survey/subdivision pairing requirement — design, tests, known gaps |
+| [`backend/services/chatbot/attachment_qa.py`](file:///c:/proj/nic_internship/backend/services/chatbot/attachment_qa.py) | Uploaded-document Q&A: entity extraction, enumeration, survey/subdivision pairing |

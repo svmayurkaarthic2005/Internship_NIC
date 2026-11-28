@@ -1,0 +1,10 @@
+{
+  "chain_id": "Chain1_045470",
+  "questions": [
+    "I am reviewing application 2026/0153/02/045470. The register identifies it as a transfer relating to survey number 110, subdivision 2 and old patta 75100. I want to understand why this application ended the way it did rather than just seeing the current status. Please trace it from submission through the SIS desk to the final desk, include the dates of each transition, the recommendations and the remarks, and explain the actual reason recorded for its rejection. Also distinguish the application status from the transaction remarks.",
+    "Who handled it immediately before it reached the final desk, and on what date?",
+    "What exactly was missing? Was the problem with the original ownership document, a linked document or something else?",
+    "Can you compare the final remark in the transfer table with the final remark in the workflow history? Are they describing the same problem?",
+    "What was the registration document number, where was it registered and on what date? Don't confuse that with the application submission date."
+  ]
+}

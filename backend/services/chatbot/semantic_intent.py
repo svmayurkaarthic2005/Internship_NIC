@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from backend.config import settings
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -133,7 +134,13 @@ async def classify(message: str, has_domain_term: bool = False) -> Optional[str]
     except Exception as exc:  # embedding model unavailable, etc.
         logger.warning(f"semantic intent unavailable: {exc}")
         return None
-    if kind and best >= _THRESHOLD and best - sis >= _MARGIN:
-        logger.info(f"semantic intent: {kind} (cos {best:.2f}, sis {sis:.2f})")
-        return kind
-    return None
+    fires = bool(kind and best >= _THRESHOLD and best - sis >= _MARGIN)
+    shadow = settings.SEMANTIC_INTENT_MODE == "shadow"
+    if fires:
+        logger.info(
+            f"semantic intent{' [shadow, not applied]' if shadow else ''}: "
+            f"{kind} (cos {best:.2f}, sis {sis:.2f})")
+    if shadow:
+        # Logged above for offline evaluation; never overrides routing in shadow mode.
+        return None
+    return kind if fires else None

@@ -1,0 +1,9 @@
+{
+  "chain_id": "Chain14_045472_owners",
+  "questions": [
+    "I need to inspect the ownership information for 2026/0153/02/045472. There are separate old-owner and IGRS-owner extracts, and I don't want their rows mixed up. Please count the rows in each source, identify the fields they share, compare the available owner and relationship information, and distinguish source records from the applicant-information record.",
+    "How many IGRS-owner records are linked to this application?",
+    "Does the old-owner table contain the same number of rows?",
+    "Can you explain why these two tables should not automatically be treated as identical?"
+  ]
+}

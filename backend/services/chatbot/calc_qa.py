@@ -546,12 +546,34 @@ def compare_codes_conceptual(text: str, ta: bool = False) -> Optional[str]:
             f"{a} ({ia['name']}) {fv(ia)}; {b} ({ib['name']}) {fv(ib)}.")
 
 
+_CMP_NOT_CODES = re.compile(
+    r"\bapplication\s+information\b|\bthese\s+two\s+(?:records?|applications?|files?)\b|"
+    r"\bthe\s+other\s+application\b|\bregistration\s+(?:details?|documents?)\b|"
+    r"\bboth\s+applications?\b|\brejection\s+remarks?\b",
+    re.IGNORECASE,
+)
+_CMP_HAS_CODE_SIGNAL = re.compile(
+    r"\bisd\b|\bnisd\b|\bservice\s*code\b|\b0?1[0-9]{2}\b", re.IGNORECASE)
+
+
 def compare_codes(text: str, rows: List[dict], ta: bool = False,
                   codes_override: Optional[List[str]] = None) -> Optional[str]:
     """Two service codes side by side from the register. Any code that is not 0153 / 0154 was read as
-    ISD vs NISD before ("compare 0156 and 0153" answered ISD 29, NISD 28)."""
+    ISD vs NISD before ("compare 0156 and 0153" answered ISD 29, NISD 28).
+
+    Declines (never falls back to `codes_override`, however fresh it looks)
+    when the message itself names no code at all AND is unmistakably about
+    two APPLICATIONS instead -- "compare the application information for
+    these two records" named no service code anywhere, yet still produced a
+    stale 0153-vs-0167 file-count answer from whatever `codes_override` the
+    caller happened to be carrying. `_APP_NO.search(t)` just above already
+    declines when the message names application numbers directly; this
+    covers the follow-up phrasing that refers to them without repeating the
+    numbers."""
     t = text or ""
     if _APP_NO.search(t) or not _CMP_CODES.search(t):
+        return None
+    if _CMP_NOT_CODES.search(t) and not _CMP_HAS_CODE_SIGNAL.search(t):
         return None
     from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
     codes = []

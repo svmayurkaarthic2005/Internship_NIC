@@ -1,0 +1,10 @@
+{
+  "chain_id": "Chain5_012547",
+  "questions": [
+    "Please investigate application 2026/0154/02/012547. It relates to survey number 7 and existing patta 8232. I want a complete picture of the subdivision process: first explain the original ownership records, then identify the temporary subdivision recorded for this application, and finally show which proposed owners are associated with that subdivision. Also check the application status, rejection remarks and proposed field-visit information.",
+    "How many old-owner records are associated with the application?",
+    "Who appears in the proposed subdivision-owner records, and how are their relationships represented?",
+    "Does the proposed subdivision have an existing patta number or is that field blank?",
+    "What does the Tahsildar's recorded return remark say needs to be submitted?"
+  ]
+}

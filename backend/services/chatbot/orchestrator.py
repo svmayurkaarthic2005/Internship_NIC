@@ -38,6 +38,7 @@ from backend.config import (
 _DC_TANGLISH_RE = re.compile(r"\b(enapa|enna|oda|sollo|kudunga)\b", re.IGNORECASE)
 from backend.schemas import OfficerContext
 from . import attachment_qa
+from . import reasoning_qa as _reasoning_qa
 from .agent import AgentUnavailable, run_agent, run_agent_stream
 from backend.services.readonly_guard import chat_turn
 from . import neg_scope as _neg_scope
@@ -502,6 +503,34 @@ from .chat_pipeline import _bound
 # This module's own logger (pipeline log records are named backend.services.chatbot).
 logger = get_logger("backend.services.chatbot")
 
+# Single-word cues for the application-number-format explainer below, matched
+# on a WORD boundary. A bare `"format" in text` substring check also matches
+# inside ordinary words such as "inFORMATion" -- found live: "...whether the
+# proposed owner information is present..." was hijacked into the format
+# explainer and the real list query was never run. "look like" stays a plain
+# phrase substring (two words with a space -- no single English word
+# contains it), so it is listed separately below rather than forced through
+# the single-word \b regex.
+_APP_NUMBER_FORMAT_WORD_RE = re.compile(r"\b(?:format|structure|structured|pattern|வடிவம்|அமைப்பு)\b")
+
+
+def _asks_application_number_format(msg_lower: str) -> bool:
+    """True only for a genuine "what does an application number look like /
+    what is its format" question -- never for an ordinary sentence that
+    happens to contain "information", "informative", "reformat", etc."""
+    if any(p in msg_lower for p in [
+        "application number format", "format of application number", "format of an application number",
+        "application number structure", "structure of application number", "structure of an application number",
+        "application number look like", "application number pattern",
+        "how are application numbers structured", "how is an application number structured",
+        "விண்ணப்ப எண் வடிவம்", "விண்ணப்ப எண்ணின் அமைப்பு",
+    ]):
+        return True
+    names_app_number = any(w in msg_lower for w in ["application number", "app number", "விண்ணப்ப எண்"])
+    if not names_app_number:
+        return False
+    return "look like" in msg_lower or bool(_APP_NUMBER_FORMAT_WORD_RE.search(msg_lower))
+
 
 def _cb():
     from backend.services import chatbot
@@ -629,6 +658,106 @@ _STAGE_EVER_PHRASE_RE = re.compile(
 
 _PLURAL_REF_RE = re.compile(r"\b(?:they|their|them|those|these|all|each|every|ellam|ellaam|anaithu|avarrin|avatrin)\b"
                             r"|அவற்றின்|இவற்றின்|அனைத்து|எல்லா", re.IGNORECASE)
+
+
+_SERVER_HISTORY_LIMIT = 40   # same bound the frontend applies (chat.js CONTEXT_MESSAGE_LIMIT)
+
+
+def _ask_as_named(message, intent, resolution):
+    """A numberless turn the gate settled from server context ("show ITS workflow
+    history") but that no intent claimed is asked as if it named the application:
+    the number is appended and the intent re-read -- the same mechanism the
+    follow-up layer uses. Only for `general_query` (the LLM fallback), so every
+    turn a deterministic intent already owns is untouched."""
+    if (intent == "general_query" and resolution.get("verdict") == "ok"
+            and resolution.get("from_context") and resolution.get("app_number")):
+        named = f"{message} {resolution['app_number']}"
+        new_intent = parse_intent(named, prev_intent=intent)
+        if new_intent != "general_query":
+            return named, new_intent
+    return message, intent
+
+
+async def _server_transcript(db, session_id, officer_id, client_history=None):
+    """The conversation as the server recorded it, in the client's role/content shape.
+
+    `ChatRequest.chat_history` is client-supplied and unauthenticated: a stale or
+    edited copy used to select an application the session never discussed (P3.3).
+    Every history-scanning fallback reads THIS instead, so the only application a
+    numberless turn can resolve to is one this officer's session actually saw.
+    A missing, foreign or unreadable session yields [] -> the resolvers ask.
+    """
+    out: list = []
+    if db is not None and session_id:
+        try:
+            owner = (await db.execute(
+                select(ChatSession.officer_id).where(ChatSession.id == session_id))).scalar_one_or_none()
+            if owner is not None and (officer_id is None or str(owner) == str(officer_id)):
+                rows = (await db.execute(
+                    select(ChatMessage.role, ChatMessage.content)
+                    .where(and_(ChatMessage.session_id == session_id,
+                                messages_since_session_start(session_id)))
+                    # a turn's two rows can share a timestamp: assistant sorts first, so
+                    # after reversing, user precedes its answer
+                    .order_by(ChatMessage.created_at.desc(), ChatMessage.role.asc())
+                    .limit(_SERVER_HISTORY_LIMIT))).all()
+                out = [{"role": r, "content": c or ""} for r, c in reversed(rows)]
+        except Exception:  # pragma: no cover - fall back to "no context", never to the client copy
+            logger.warning("could not read the server transcript; continuing with no history")
+            out = []
+    # privacy-safe: counts and application numbers only, never message text
+    _client_ids = sorted({n for h in (client_history or []) if isinstance(h, dict)
+                          for n in _APP_NO_RE.findall(str(h.get("content") or ""))})
+    logger.info("history_source=server server_msgs=%d client_msgs=%d client_ignored=%s client_app_ids=%s",
+                len(out), len(client_history or []), bool(client_history), _client_ids)
+    return out
+
+
+_APP_NO_RE = re.compile(r"\b\d{4}/\d{4}/\d{2}/\d{6}\b")
+
+
+async def _historical_ref_turn(db, session_id, officer, message):
+    """P3.4: "compare C with the first application from our earlier comparison" names an application
+    by its place in the EARLIER comparison. Read against the newest server context (its `prior_pair`,
+    else the active pair) and rewritten into explicit numbers, so the ordinary explicit-ID path
+    resolves, orders and re-authorizes each one. None when the message has no such reference;
+    (rewritten, None) or (message, question) otherwise. The transcript keeps what was typed."""
+    if not fctx.has_historical_ref(message):
+        return None
+    ctx = await _load_followup_context(db, session_id, None, None,
+                                       officer_id=officer.officer_id if officer else None)
+    new, ask = fctx.rewrite_historical_refs(message, ctx, detect_language(message))
+    logger.info("historical_ref prior_pair=%s current=%s resolved=%s clarify=%s",
+                (ctx.filters or {}).get("prior_pair") if ctx else None,
+                getattr(ctx, "current_application", None), _APP_NO_RE.findall(new) if not ask else [], bool(ask))
+    if not ask and new != message:
+        _SAVE_AS.set(message)
+    return new, ask
+
+
+async def _clarification_turn(db, session_id, officer, message, text):
+    """Answer with a question and record the turn WITHOUT a follow-up context, so the
+    conversation's canonical state (focus, pair, prior pair) is exactly what it was."""
+    lang = detect_language(message)
+    await _cb().save_chat_messages(db=db, session_id=session_id, user_message=message,
+                                   assistant_message=text, language=lang, response_time_ms=0,
+                                   officer_id=officer.officer_id if officer else None)
+    return {"response": text, "language": lang, "intent": "clarification_required", "action": None,
+            "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(), "context_used": True,
+            "response_time_ms": 0, "table_data": None}
+
+
+def _log_entity_context(path, message, ctx):
+    """Per-turn resolution trace (P3.3): server focus / pair and the IDs the message itself names."""
+    logger.info("entity_context path=%s focus=%s pair=%s explicit_ids=%s", path,
+                getattr(ctx, "current_application", None),
+                list(getattr(ctx, "active_applications", None) or []),
+                _APP_NO_RE.findall(message or ""))
+
+
+def _log_entity_gate(path, intent, resolution):
+    logger.info("entity_gate path=%s intent=%s verdict=%s app=%s from_context=%s", path, intent,
+                resolution.get("verdict"), resolution.get("app_number"), resolution.get("from_context"))
 
 
 async def _load_followup_context(db, session_id, chat_history=None, message=None, officer_id=None):
@@ -961,13 +1090,14 @@ async def _record_field_turn(message, session_id, officer, db, chat_history):
             "The register keeps no created / updated date for ownership records; it holds the "
             "owner, share and type only.")
 
+    explicit_survey = extract_survey_number(message)
     app_no = extract_application_number(message)
-    if not app_no and ctx and ctx.application_numbers and ctx.entity in (fctx.ENTITY_APPLICATION,
+    if not app_no and not explicit_survey and ctx and ctx.application_numbers and ctx.entity in (fctx.ENTITY_APPLICATION,
                                                                         fctx.ENTITY_FIELD_VISIT):
         app_no = ctx.application_numbers[0]
-    if not app_no:
+    if not app_no and not explicit_survey:
         app_no = _extract_app_number_from_context(message, chat_history, allow_implicit_continuation=True)
-    survey_no = None
+    survey_no = explicit_survey
     if not app_no and field:
         survey_no = await _survey_ref(db, session_id, message, chat_history)
         if not survey_no and ctx and ctx.survey_numbers:
@@ -1161,6 +1291,15 @@ async def process_chat(
     """
     with chat_turn():
         _RAW_MESSAGE.set(message)
+        fctx.CANONICAL.set(None)   # request-scoped: never carried over from a previous turn
+        _SAVE_AS.set(None)         # ditto: the typed-text override below is per turn
+        chat_history = await _server_transcript(
+            db, session_id, officer.officer_id if officer else None, chat_history)
+        _hist = await _historical_ref_turn(db, session_id, officer, message)
+        if _hist is not None and _hist[1]:
+            return await _clarification_turn(db, session_id, officer, message, _hist[1])
+        if _hist is not None:
+            message = _hist[0]
         from .chat_shared import is_prohibit_listing, _prohibit_listing_reply
         if is_prohibit_listing(message):
             lang = detect_language(message)
@@ -1456,6 +1595,8 @@ async def _process_chat_impl(
         _followup_ctx = (await _cb()._load_followup_context(db, session_id, chat_history, _original_message,
                                                       officer_id=officer.officer_id if officer else None)
                          or _context_from_history(chat_history))
+        _log_entity_context("sync", _original_message, _followup_ctx)
+        fctx.CANONICAL.set(_followup_ctx)
 
         # Continuation handler (context-aware resumption, pagination, and elaboration)
         if _CONTINUATION_COMMAND_RE.match(_original_message.strip()):
@@ -1709,11 +1850,18 @@ async def _process_chat_impl(
         if _swap_msg is not None:
             logger.info(f"Status swap: '{_original_message}' -> '{_swap_msg}'")
             _original_message = message = _swap_msg
-        _cmp_msg = _compare_followup.rewrite(
-            _original_message,
-            list(_followup_ctx.application_numbers)
-            if (_followup_ctx and not (_followup_ctx.filters or {}).get("about_visit")) else [],
-            [m.get("content") or "" for m in (chat_history or []) if m.get("role") == "user"])
+        # An about_visit list is the field-visit queue, not two applications to
+        # compare -- skipped the same way _neg_scope.rewrite() above is, rather
+        # than calling rewrite() with an empty number list: with no numbers to
+        # work with, rewrite() falls to its own no-sides-found fallback and
+        # returns the bare word "compare", which pre-empted and overwrote a
+        # bare superlative ("which is oldest?") that the aggregate follow-up
+        # resolution below is the one meant to answer from the visit rows.
+        _cmp_msg = (None if (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))
+                    else _compare_followup.rewrite(
+                        _original_message,
+                        list(_followup_ctx.application_numbers) if _followup_ctx else [],
+                        [m.get("content") or "" for m in (chat_history or []) if m.get("role") == "user"]))
         if _cmp_msg is not None:
             logger.info(f"Comparative follow-up re-asked: '{_original_message}' -> '{_cmp_msg}'")
             _original_message = message = _cmp_msg
@@ -1894,7 +2042,8 @@ async def _process_chat_impl(
             _carried_nums = {n.upper() for n in
                              ((_followup_ctx.application_numbers or []) if _followup_ctx else [])}
             if (_legacy_num and (not _carried_nums or _legacy_num.upper() in _carried_nums)
-                    and not fctx.is_bare_deictic(_original_message)):
+                    and not fctx.is_bare_deictic(_original_message)
+                    and not fctx.is_other_ref(_original_message)):   # "other" is never the one in view (P3.4)
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
         # "What is my workload?" -> "show" / "show applications" / "list" /
@@ -2037,6 +2186,54 @@ async def _process_chat_impl(
                         f"{len(_followup.application_numbers)} listed application(s)")
             message = _multi_details_message(_followup.application_numbers)
             _followup = fctx.Resolution()
+        if (_followup.resolved and _followup.is_comparison
+                and len(_followup.application_numbers) == 2):
+            # "Both (of them)" / "show both again" / "compare them again" /
+            # "which one was submitted first?" after a two-application pair
+            # -- restore the FULL side-by-side comparison, reusing the exact
+            # comparator `_build_comparison()`/`_comparison_answer()` a fresh
+            # "compare A and B" already renders correctly, rather than
+            # falling into the generic list-table renderer below (which has
+            # no notion of the per-field comparison card at all). The
+            # ORIGINAL message is kept (with the two numbers appended, not
+            # replaced by a synthetic "compare A and B") so its own aspect
+            # word -- "first", "older", "longer", ... -- still reaches
+            # `rag.parse_comparison_query()`'s own aspect detection and the
+            # answer states the actual verdict, not just a bare table.
+            _pair_msg = f"{_original_message} ({_followup.application_numbers[0]} {_followup.application_numbers[1]})"
+            _cmp_sd = await _build_comparison(db, officer, _pair_msg, language in ("ta", "tanglish"))
+            if not _cmp_sd.get("found"):
+                # The aspect word didn't parse into a usable comparison --
+                # fall back to the plain side-by-side table rather than
+                # surfacing "I could not work that comparison out".
+                _pair_msg = f"compare {_followup.application_numbers[0]} and {_followup.application_numbers[1]}"
+                _cmp_sd = await _build_comparison(db, officer, _pair_msg, language in ("ta", "tanglish"))
+            _cmp_sd.setdefault("query_type", "Comparison")
+            _cmp_text = _comparison_answer(_cmp_sd, language in ("ta", "tanglish"))
+            _cmp_ctx = (fctx.build_context(
+                "compare_applications", _cmp_sd,
+                officer_id=str(officer.officer_id) if officer else None,
+                session_id=session_id)
+                if _cmp_sd.get("found") else _followup_ctx)
+            if _cmp_ctx is not None and _followup_ctx is not None and _followup_ctx.current_application:
+                # Restoring the pair ("both" / "show both again" / "which
+                # one was submitted first?") must not throw away whichever
+                # application was already the focus -- a later "the other
+                # application" still needs something to be "other" THAN.
+                import dataclasses as _dc_cmp
+                _cmp_ctx = _dc_cmp.replace(_cmp_ctx, current_application=_followup_ctx.current_application)
+            await _cb().save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_cmp_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_cmp_ctx.to_json() if _cmp_ctx else None)
+            return {
+                "response": _cmp_text, "language": language, "intent": "compare_applications",
+                "sources": [], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context_used": True, "response_time_ms": int((time.time() - start_time) * 1000),
+                "table_data": None,
+            }
         if _followup.resolved and _followup.entity == fctx.ENTITY_APPLICATION_LIST:
             # A question about the list already on screen is answered from
             # exactly those applications, re-read under the officer's
@@ -2129,16 +2326,7 @@ async def _process_chat_impl(
         # are exactly the kind of fact CLAUDE.md says must never be left to
         # the LLM, so this is answered deterministically instead.
         _msg_lower_fmt = message.lower()
-        if any(p in _msg_lower_fmt for p in [
-            "application number format", "format of application number", "format of an application number",
-            "application number structure", "structure of application number", "structure of an application number",
-            "application number look like", "application number pattern",
-            "how are application numbers structured", "how is an application number structured",
-            "விண்ணப்ப எண் வடிவம்", "விண்ணப்ப எண்ணின் அமைப்பு",
-        ]) or (
-            any(w in _msg_lower_fmt for w in ["application number", "app number", "விண்ணப்ப எண்"])
-            and any(w in _msg_lower_fmt for w in ["format", "look like", "structure", "structured", "pattern", "வடிவம்", "அமைப்பு"])
-        ):
+        if _asks_application_number_format(_msg_lower_fmt):
             is_ta_fmt = language in ("ta", "tanglish")
             if is_ta_fmt:
                 res_txt = (
@@ -2569,6 +2757,17 @@ async def _process_chat_impl(
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
             or attachment_qa.names_a_file(message)
+            # A bare follow-up ("what about the northern boundary?") names no
+            # file at all, so `names_a_file()` above cannot save it -- yet the
+            # conversation IS still about the attachment the previous turn
+            # answered from. Without this, every such follow-up fell through
+            # to `general_query` and the agent's document-corpus search
+            # instead of the file sitting right there, the same failure
+            # `names_a_file()` fixes for the explicit-filename case, just one
+            # turn later. `attachment_topic_active()` is the same "was the
+            # previous reply about a file" check `plan_answer()` itself
+            # already relies on elsewhere in this module.
+            or await attachment_qa.attachment_topic_active(db, session_id)
         )
         # Which antecedent a negative correction ("I don't think so", "not
         # that") disputes -- decided BEFORE the attachment layer gets a
@@ -3122,7 +3321,8 @@ async def _process_chat_impl(
         # malformed, nonexistent, out of jurisdiction or merely a near match
         # must never be treated as valid context downstream.
         _app_resolution = await resolve_application_reference(
-            db, message, chat_history, officer, intent, session_id=session_id
+            db, message, chat_history, officer, intent, session_id=session_id,
+            canonical_focus=getattr(_followup_ctx, "current_application", None),
         )
         if _app_resolution["verdict"] == "ask_number":
             # Dead end for the DB pipeline -- but if the officer has been
@@ -3161,6 +3361,18 @@ async def _process_chat_impl(
                     "citations": _att_fallback.citations,
                     "document_ids": _att_fallback.document_ids,
                 }
+        # A reasoning question about a register-only application (0158 ...)
+        # must still reach `_early_subdivision_answer`'s evidence-grounded
+        # path below, not the gate's own pre-rendered details card -- the
+        # gate's "register_only" verdict already proved the application
+        # exists and is inside the officer's jurisdiction (see
+        # `resolve_application_reference`), so this only changes which
+        # answer is built from an access decision already made, never the
+        # access decision itself.
+        if (_app_resolution["verdict"] == "register_only"
+                and _reasoning_qa.is_reasoning_question(message)):
+            _app_resolution = {"verdict": "ok", "app_number": _app_resolution.get("app_number"),
+                               "from_context": True}
         if _app_resolution["verdict"] not in ("ok", "none"):
             response_text = build_application_gate_message(_app_resolution, officer, language)
             logger.info(
@@ -3168,7 +3380,8 @@ async def _process_chat_impl(
                 f"number={_app_resolution.get('app_number') or _app_resolution.get('token')} "
                 f"intent={intent} officer={officer.officer_id if officer else None}"
             )
-            _gate_ctx = (fctx.build_context("application_status", {}, fallback_app_number=_app_resolution.get("app_number"))
+            _gate_ctx = (fctx.build_context("application_status", {}, fallback_app_number=_app_resolution.get("app_number"),
+                                            previous_context=_followup_ctx)
                          if _app_resolution["verdict"] == "register_only" else None)
             await _cb().save_chat_messages(
                 db=db, session_id=session_id,
@@ -3194,6 +3407,8 @@ async def _process_chat_impl(
         _gate_app_number = (
             _app_resolution.get("app_number") if _app_resolution["verdict"] == "ok" else None
         )
+        _log_entity_gate("sync", intent, _app_resolution)
+        message, intent = _ask_as_named(message, intent, _app_resolution)
 
         # Step 3: Execute structured database queries based on intent
         structured_data = {}
@@ -4124,8 +4339,18 @@ async def _process_chat_impl(
         # What this answer was about, recorded for the next turn to resolve a
         # bare follow-up against. Built only from the structured data a query
         # returned -- never from the wording of the answer.
+        # `previous_context=_followup_ctx` lets `build_context()` carry the
+        # prior turn's pair (`active_applications`) forward through a plain
+        # single-application answer ("what is its status?") -- without it,
+        # every such answer silently narrowed the pair down to the one
+        # application just asked about, so "show both applications again"
+        # one turn later had only that one application left to show. This
+        # was the actual point in the lifecycle where pair membership was
+        # lost (confirmed by reading `chat_messages.structured_data` after
+        # each turn in `scratch/trace_p31_lifecycle.py`).
         _out_ctx = fctx.build_context(intent, structured_data,
-                                      fallback_app_number=locals().get("app_number"))
+                                      fallback_app_number=locals().get("app_number"),
+                                      previous_context=_followup_ctx)
         # A patta-transfer-party answer is text set during the pre-empt, so
         # structured_data may have been overwritten by a later fetch branch
         # (e.g. application_status). Record the party explicitly so the next
@@ -4250,6 +4475,18 @@ async def process_chat_stream(
     """
     with chat_turn():
         _RAW_MESSAGE.set(message)
+        fctx.CANONICAL.set(None)   # request-scoped: never carried over from a previous turn
+        _SAVE_AS.set(None)         # ditto: the typed-text override below is per turn
+        chat_history = await _server_transcript(
+            db, session_id, officer.officer_id if officer else None, chat_history)
+        _hist = await _historical_ref_turn(db, session_id, officer, message)
+        if _hist is not None and _hist[1]:
+            import json as _json_hist
+            _r = await _clarification_turn(db, session_id, officer, message, _hist[1])
+            yield ("data: " + _json_hist.dumps({'content': _r['response']}) + "\n\n").encode('utf-8')
+            return
+        if _hist is not None:
+            message = _hist[0]
         from .chat_shared import is_prohibit_listing, _prohibit_listing_reply
         if is_prohibit_listing(message):
             import json as _json_prohibit
@@ -4492,6 +4729,8 @@ async def _process_chat_stream_impl(
         _followup_ctx = (await _cb()._load_followup_context(db, session_id, chat_history, _original_message,
                                                       officer_id=officer.officer_id if officer else None)
                          or _context_from_history(chat_history))
+        _log_entity_context("stream", _original_message, _followup_ctx)
+        fctx.CANONICAL.set(_followup_ctx)
 
         # Continuation handler (context-aware resumption, pagination, and elaboration) (STREAMING)
         if _CONTINUATION_COMMAND_RE.match(_original_message.strip()):
@@ -4726,11 +4965,18 @@ async def _process_chat_stream_impl(
         if _swap_msg is not None:
             logger.info(f"Status swap: '{_original_message}' -> '{_swap_msg}'")
             _original_message = message = _swap_msg
-        _cmp_msg = _compare_followup.rewrite(
-            _original_message,
-            list(_followup_ctx.application_numbers)
-            if (_followup_ctx and not (_followup_ctx.filters or {}).get("about_visit")) else [],
-            [m.get("content") or "" for m in (chat_history or []) if m.get("role") == "user"])
+        # An about_visit list is the field-visit queue, not two applications to
+        # compare -- skipped the same way _neg_scope.rewrite() above is, rather
+        # than calling rewrite() with an empty number list: with no numbers to
+        # work with, rewrite() falls to its own no-sides-found fallback and
+        # returns the bare word "compare", which pre-empted and overwrote a
+        # bare superlative ("which is oldest?") that the aggregate follow-up
+        # resolution below is the one meant to answer from the visit rows.
+        _cmp_msg = (None if (_followup_ctx and (_followup_ctx.filters or {}).get("about_visit"))
+                    else _compare_followup.rewrite(
+                        _original_message,
+                        list(_followup_ctx.application_numbers) if _followup_ctx else [],
+                        [m.get("content") or "" for m in (chat_history or []) if m.get("role") == "user"]))
         if _cmp_msg is not None:
             logger.info(f"Comparative follow-up re-asked: '{_original_message}' -> '{_cmp_msg}'")
             _original_message = message = _cmp_msg
@@ -4877,7 +5123,8 @@ async def _process_chat_stream_impl(
             _carried_nums = {n.upper() for n in
                              ((_followup_ctx.application_numbers or []) if _followup_ctx else [])}
             if (_legacy_num and (not _carried_nums or _legacy_num.upper() in _carried_nums)
-                    and not fctx.is_bare_deictic(_original_message)):
+                    and not fctx.is_bare_deictic(_original_message)
+                    and not fctx.is_other_ref(_original_message)):   # "other" is never the one in view (P3.4)
                 logger.info("Follow-up left to the existing resolution path")
                 _followup = fctx.Resolution()
         # "What is my workload?" -> "show" / "show applications" / "list" /
@@ -4975,6 +5222,39 @@ async def _process_chat_stream_impl(
                         f"{len(_followup.application_numbers)} listed application(s)")
             message = _multi_details_message(_followup.application_numbers)
             _followup = fctx.Resolution()
+        if (_followup.resolved and _followup.is_comparison
+                and len(_followup.application_numbers) == 2):
+            import json as _json
+            # Streaming twin of the non-streaming branch above: restore the
+            # full side-by-side comparison for "both" / "show both again" /
+            # "compare them again" / "which one was submitted first?",
+            # reusing the same comparator rather than the generic list
+            # renderer, and keeping the original aspect word so the answer
+            # states the real verdict (see the non-streaming twin's comment).
+            _pair_msg = f"{_original_message} ({_followup.application_numbers[0]} {_followup.application_numbers[1]})"
+            _cmp_sd = await _build_comparison(db, officer, _pair_msg, language in ("ta", "tanglish"))
+            if not _cmp_sd.get("found"):
+                _pair_msg = f"compare {_followup.application_numbers[0]} and {_followup.application_numbers[1]}"
+                _cmp_sd = await _build_comparison(db, officer, _pair_msg, language in ("ta", "tanglish"))
+            _cmp_sd.setdefault("query_type", "Comparison")
+            _cmp_text = _comparison_answer(_cmp_sd, language in ("ta", "tanglish"))
+            yield f"data: {_json.dumps({'content': _cmp_text})}\n\n".encode('utf-8')
+            _cmp_ctx = (fctx.build_context(
+                "compare_applications", _cmp_sd,
+                officer_id=str(officer.officer_id) if officer else None,
+                session_id=session_id)
+                if _cmp_sd.get("found") else _followup_ctx)
+            if _cmp_ctx is not None and _followup_ctx is not None and _followup_ctx.current_application:
+                import dataclasses as _dc_cmp
+                _cmp_ctx = _dc_cmp.replace(_cmp_ctx, current_application=_followup_ctx.current_application)
+            await _cb().save_chat_messages(
+                db=db, session_id=session_id, user_message=_original_message,
+                assistant_message=_cmp_text, language=language,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                officer_id=officer.officer_id if officer else None,
+                structured_context=_cmp_ctx.to_json() if _cmp_ctx else None)
+            yield b"data: [DONE]\n\n"
+            return
         if _followup.resolved and _followup.entity == fctx.ENTITY_APPLICATION_LIST:
             import json as _json
             # Same carve-out as the non-streaming path: don't re-apply the
@@ -5051,16 +5331,7 @@ async def _process_chat_stream_impl(
         # mirrors the non-streaming path (see there for why): application
         # numbers must never be left to the LLM to describe or invent.
         _msg_lower_fmt = message.lower()
-        if any(p in _msg_lower_fmt for p in [
-            "application number format", "format of application number", "format of an application number",
-            "application number structure", "structure of application number", "structure of an application number",
-            "application number look like", "application number pattern",
-            "how are application numbers structured", "how is an application number structured",
-            "விண்ணப்ப எண் வடிவம்", "விண்ணப்ப எண்ணின் அமைப்பு",
-        ]) or (
-            any(w in _msg_lower_fmt for w in ["application number", "app number", "விண்ணப்ப எண்"])
-            and any(w in _msg_lower_fmt for w in ["format", "look like", "structure", "structured", "pattern", "வடிவம்", "அமைப்பு"])
-        ):
+        if _asks_application_number_format(_msg_lower_fmt):
             import json as _json_fmt
             is_ta_fmt = language == "ta"
             if is_ta_fmt:
@@ -5404,6 +5675,7 @@ async def _process_chat_stream_impl(
             or attachment_qa.is_project_relevance_request(message)
             or attachment_qa.location_reference(message)
             or attachment_qa.names_a_file(message)
+            or await attachment_qa.attachment_topic_active(db, session_id)
         )
         # Same antecedent-routing decision as the non-streaming path, just
         # delivered as a single SSE chunk instead of a plain return value.
@@ -5796,7 +6068,8 @@ async def _process_chat_stream_impl(
         # handler, RAG lookup or LLM call, so both endpoints refuse and accept
         # the same application references for the same reasons.
         _app_resolution = await resolve_application_reference(
-            db, message, chat_history, officer, intent, session_id=session_id
+            db, message, chat_history, officer, intent, session_id=session_id,
+            canonical_focus=getattr(_followup_ctx, "current_application", None),
         )
         if _app_resolution["verdict"] == "ask_number":
             # See process_chat Step 2d for why: a dead-end SIS intent with
@@ -5823,6 +6096,15 @@ async def _process_chat_stream_impl(
                 )
                 yield b"data: [DONE]\n\n"
                 return
+        # See the non-streaming twin of this override above
+        # (`_process_chat_impl`) for the reasoning: a register-only
+        # application's gate verdict already proved access; a reasoning
+        # question about it must reach `_early_subdivision_answer` below
+        # instead of the gate's own pre-rendered details card.
+        if (_app_resolution["verdict"] == "register_only"
+                and _reasoning_qa.is_reasoning_question(message)):
+            _app_resolution = {"verdict": "ok", "app_number": _app_resolution.get("app_number"),
+                               "from_context": True}
         if _app_resolution["verdict"] not in ("ok", "none"):
             import json as _json_badapp
             _bad_msg = build_application_gate_message(_app_resolution, officer, language)
@@ -5832,7 +6114,8 @@ async def _process_chat_stream_impl(
                 f"intent={intent} officer={officer.officer_id if officer else None}"
             )
             yield f"data: {_json_badapp.dumps({'content': _bad_msg})}\n\n".encode('utf-8')
-            _gate_ctx = (fctx.build_context("application_status", {}, fallback_app_number=_app_resolution.get("app_number"))
+            _gate_ctx = (fctx.build_context("application_status", {}, fallback_app_number=_app_resolution.get("app_number"),
+                                            previous_context=_followup_ctx)
                          if _app_resolution["verdict"] == "register_only" else None)
             await _cb().save_chat_messages(
                 db=db, session_id=session_id,
@@ -5847,6 +6130,8 @@ async def _process_chat_stream_impl(
         _gate_app_number = (
             _app_resolution.get("app_number") if _app_resolution["verdict"] == "ok" else None
         )
+        _log_entity_gate("stream", intent, _app_resolution)
+        message, intent = _ask_as_named(message, intent, _app_resolution)
 
         # Step 3: Execute structured database queries based on intent
         structured_data = {}
@@ -6666,11 +6951,16 @@ async def _process_chat_stream_impl(
                     "town": ("town_name", "Town"),
                     "நகரம்": ("town_name", "Town"),
                     "nagaram": ("town_name", "Town"),
-                    # Stage
+                    # Stage / Desk
                     "stage": ("stage", "Current Stage"),
+                    "desk": ("stage", "Current Stage"),
+                    "current desk": ("stage", "Current Stage"),
+                    "at which desk": ("stage", "Current Stage"),
+                    "which desk": ("stage", "Current Stage"),
                     "கட்டம்": ("stage", "Current Stage"),
                     "kattam": ("stage", "Current Stage"),
                     "level": ("stage", "Current Stage"),
+                    "மேசை": ("stage", "Current Stage"),
                     # Type
                     "type": ("type", "Application Type"),
                     "வகை": ("type", "Application Type"),
@@ -7985,8 +8275,18 @@ async def _process_chat_stream_impl(
         # What this answer was about, recorded for the next turn to resolve a
         # bare follow-up against. Built only from the structured data a query
         # returned -- never from the wording of the answer.
+        # `previous_context=_followup_ctx` lets `build_context()` carry the
+        # prior turn's pair (`active_applications`) forward through a plain
+        # single-application answer ("what is its status?") -- without it,
+        # every such answer silently narrowed the pair down to the one
+        # application just asked about, so "show both applications again"
+        # one turn later had only that one application left to show. This
+        # was the actual point in the lifecycle where pair membership was
+        # lost (confirmed by reading `chat_messages.structured_data` after
+        # each turn in `scratch/trace_p31_lifecycle.py`).
         _out_ctx = fctx.build_context(intent, structured_data,
-                                      fallback_app_number=locals().get("app_number"))
+                                      fallback_app_number=locals().get("app_number"),
+                                      previous_context=_followup_ctx)
         # A patta-transfer-party answer is text set during the pre-empt, so
         # structured_data may have been overwritten by a later fetch branch
         # (e.g. application_status). Record the party explicitly so the next

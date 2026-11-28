@@ -1,0 +1,92 @@
+{
+  "P0-1_mandatory": [
+    {
+      "question": "Explain the application number format.",
+      "answer": "An application number follows the format **YEAR/SERVICE_CODE/DISTRICT_CODE/SERIAL_NUMBER** (e.g. 2026/0154/28/001167). The service code is 0154 for ISD, or 0153 for NISD; the district code is 2 digits (28 for Thoothukudi); the serial number is 6 digits."
+    },
+    {
+      "question": "What is the structure of an application number?",
+      "answer": "An application number follows the format **YEAR/SERVICE_CODE/DISTRICT_CODE/SERIAL_NUMBER** (e.g. 2026/0154/28/001167). The service code is 0154 for ISD, or 0153 for NISD; the district code is 2 digits (28 for Thoothukudi); the serial number is 6 digits."
+    },
+    {
+      "question": "Show applications under service code 0154 and whether owner information is present.",
+      "answer": "<div><strong>1. Show applications under service code 0154</strong></div>\n<div class='table-intro'>Found <strong>29</strong> application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Service Code</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012547')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012547</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012715')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012715</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012766')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012766</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012834')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012834</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012866')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012866</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/012979')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/012979</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013133')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013133</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013180')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013180</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013262')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013262</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013297')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013297</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013410')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013410</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013534')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013534</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013563')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013563</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013567')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013567</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013642')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013642</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013656')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013656</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/013710')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/013710</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/014614')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/014614</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/014646')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/014646</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015386')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015386</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015395')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015395</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015398')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015398</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015465')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015465</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015495')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015495</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015526')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015526</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015541')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015541</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015544')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015544</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015567')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015567</a></td><td>0154</td></tr><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0154/02/015568')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0154/02/015568</a></td><td>0154</td></tr></tbody></table>\n\n<div><strong>2. whether owner information is present</strong></div>\nWhich survey number or application should I look up the ownership for?"
+    },
+    {
+      "question": "I need information about application 2026/0154/02/012766.",
+      "answer": "Here are the details for 2026/0154/02/012766. Type: ISD, Status: Approved, Stage: COMPLETED, Applicant: Dhanalashmi, Survey No: 76."
+    },
+    {
+      "question": "Compare the application information for these two records.",
+      "answer": "0154 (Involving Subdivision): 29 files (9 rejected); 0153 (Not Involving Subdivision): 28 files (10 rejected). 0154 has 1 more."
+    },
+    {
+      "question": "Does the application number contain a service code?",
+      "answer": "The Service Code for 2026/0154/02/012766 is: 0154\n0154 = ISD (Involving Subdivision) — a patta transfer in which the parcel is split, so a field inspection and a sub-division sketch are required."
+    }
+  ],
+  "P0-1_chain19_repro": [
+    {
+      "question": "Show me the applications under service code 0154, but I am mainly interested in applications involving more than one temporary subdivision. For each matching application, include the application number, survey number, existing patta, number of subdivision rows, application status and whether the proposed owner information is present. Do not count owner rows as separate applications.",
+      "answer": "ISD 29, NISD 28 (of 57 in your jurisdiction). ISD leads NISD by 1."
+    }
+  ],
+  "P0-2_mandatory": [
+    {
+      "question": "Does a populated date column automatically mean a visit is required?",
+      "answer": "I do not know which application or list you mean — nothing has been shown in this conversation yet.\nGive an application number (for example 2026/0154/28/001197), or ask for a list first (\"my pending applications\", \"my approved applications\", \"applications from CSC\"), then ask this again."
+    },
+    {
+      "question": "Why should these two tables not automatically be treated as identical?",
+      "answer": "I'm not sure what you mean. Please ask about an application, survey number, service, field visit, or workflow."
+    },
+    {
+      "question": "Was the application automutated?",
+      "answer": "Please specify the application number you are asking about — for example 2026/0154/28/NNNNNN."
+    },
+    {
+      "question": "Show the automutated status for this application.",
+      "answer": "Please specify the application number you are asking about — for example 2026/0154/28/NNNNNN."
+    },
+    {
+      "question": "Is auto mutation recorded?",
+      "answer": "The model stopped responding, so this reply was cut short. Please ask again."
+    },
+    {
+      "question": "Show the application information and payment details.",
+      "answer": "<div><strong>1. Show the application information</strong></div>\nThis is taking longer than expected to answer. Please try again, or narrow the question (an application number, a survey number, a ward or a service code).\n\n<div><strong>2. payment details.</strong></div>\n<div class='table-intro'>ISD: as recorded, the newest 5 files with a fee show ₹650.00 (latest 2026/0154/02/014646, 2026-09-09). 10 newer file(s) have no fee recorded.<br>NISD: as recorded, the newest 1 files with a fee show ₹60.00 (latest 2026/0153/02/049891, 2026-09-24).<br>Fees can be revised dynamically; these are the amounts recorded in the database tables.</div><div class='table-intro'><strong>Newest ISD files with a fee recorded</strong></div><table class='data-table'><thead><tr><th>Application No.</th><th>Channel</th><th>Submitted</th><th>Fee</th><th>Payment mode</th></tr></thead><tbody><tr><td>2026/0154/02/014646</td><td>CSC</td><td>2026-09-09</td><td>₹650.00</td><td>treasury</td></tr><tr><td>2026/0154/02/014614</td><td>CSC</td><td>2026-09-09</td><td>₹650.00</td><td>treasury</td></tr><tr><td>2026/0154/02/013710</td><td>CSC</td><td>2026-08-24</td><td>₹650.00</td><td>treasury</td></tr><tr><td>2026/0154/02/013656</td><td>CSC</td><td>2026-08-24</td><td>₹650.00</td><td>treasury</td></tr><tr><td>2026/0154/02/013642</td><td>CSC</td><td>2026-08-22</td><td>₹650.00</td><td>treasury</td></tr></tbody></table><div class='table-intro'><strong>Newest NISD files with a fee recorded</strong></div><table class='data-table'><thead><tr><th>Application No.</th><th>Channel</th><th>Submitted</th><th>Fee</th><th>Payment mode</th></tr></thead><tbody><tr><td>2026/0153/02/049891</td><td>citizen</td><td>2026-09-24</td><td>₹60.00</td><td>CP</td></tr></tbody></table>"
+    }
+  ],
+  "P0-3_0158_sequence": [
+    {
+      "question": "Investigate application 2026/0158/02/000002. Trace its correction-modification desk recommendations and final approval information.",
+      "answer": "<div class='table-intro'>Yes -- 2 parcel-modification row(s) are held for 2026/0158/02/000002 (operation codes 01, 04).</div>"
+    },
+    {
+      "question": "When did the SIS recommendation occur?",
+      "answer": "<div class='table-intro'>SIS — recommendation: Recommended (Y); submitted on: 2026-01-19  [2026/0158/02/000002]</div>"
+    },
+    {
+      "question": "What happened at ZDT, SD and DIS after that?",
+      "answer": "The model stopped responding, so this reply was cut short. Please ask again."
+    },
+    {
+      "question": "Does an Approved remark automatically mean the entire application is closed?",
+      "answer": "<div class='table-intro'>No remark is recorded on the workflow of this application (a step with no note, or just &#x27;-&#x27;, is not a remark).</div>"
+    },
+    {
+      "question": "Check the UAREG records too.",
+      "answer": "I'm not sure what you mean. Please ask about an application, survey number, service, field visit, or workflow."
+    }
+  ],
+  "P0-3_mandatory_singletons": [
+    {
+      "question": "For application 2026/0153/02/045470, show the SIS recommendation and remarks.",
+      "answer": "<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0153/02/045470 (full-field transfer)</h3><span class='data-table-count'>2 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td>SIS recommendation</td><td>Not recommended (N)</td></tr><tr><td>SIS remarks</td><td>NO LINK</td></tr></tbody></table></div></div>"
+    },
+    {
+      "question": "For application 2026/0154/02/012766, show the workflow recommendation history.",
+      "answer": "<div class='table-intro'>No correction / modification workflow record is held for application 2026/0154/02/012766 (service code 0154). The desk-wise recommendation chain (SIS, ZDT, SD, DIS, Tahsildar, RDO, Collector/DRO, COSS, CLA) is recorded only for the correction / modification services (0158-0169), so nothing about it is recorded for this file.</div>"
+    }
+  ]
+}

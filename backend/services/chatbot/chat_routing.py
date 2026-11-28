@@ -296,7 +296,20 @@ async def _howto_turn(message, session_id, officer, db, chat_history):
                or await attachment_qa.any_active_documents(db, _oid, session_id))
     if _is_att:
         return None
-    if (re.search(r"\b(?:first|second|third|fourth|fifth|last|top)\s+(?:one|application|file)\b|\b(?:1st|2nd|3rd|4th|5th)\b", text, re.IGNORECASE)
+    # Checking only the CLIENT-supplied `chat_history` for an application
+    # number means a client that omits it (or a canonical-context-only
+    # session, per P3's own precedent) always looked like nothing had ever
+    # been shown -- even with a real pair sitting in the server-side
+    # `FollowupContext`. "Switch back to the first application." right
+    # after establishing a pair answered "Nothing has been shown in this
+    # conversation yet" purely because the live test happened to omit
+    # `chat_history`, even though the exact same turn resolves correctly
+    # with it sent. With no client history to check at all, this quick
+    # heuristic cannot tell "nothing shown" apart from "shown server-side
+    # only" -- so it stands aside and lets the ordinary pipeline (which
+    # reads the canonical, persisted context) decide instead of guessing.
+    if (chat_history
+            and re.search(r"\b(?:first|second|third|fourth|fifth|last|top)\s+(?:one|application|file)\b|\b(?:1st|2nd|3rd|4th|5th)\b", text, re.IGNORECASE)
             and not extract_application_number(text) and len(text.split()) <= 8
             and not any(re.search(r"\d{4}/\d{3,4}/\d{1,3}/\d+", str(m.get("content") if isinstance(m, dict) else m))
                         for m in (chat_history or [])[-8:])):
@@ -564,8 +577,10 @@ def _asked_ownership_field(message: str, has_owner_context: bool) -> Optional[st
     low = (message or "").lower()
     if not low.strip() or _is_mutation_request(low):
         return None
+    if re.search(r"\b(?:who|whose|whom|names?|பெயர்|யாரு?|யாருடைய)\b", low):
+        return None
     words = re.findall(r"[a-z]+", low)
-    about_ownership = _close_match(words, "ownership", 6, 0.8) or "உரிமை" in low
+    about_ownership = _close_match(words, "ownership", 7, 0.85) or "உரிமை" in low
     about_share = (_close_match(words, "share", 4, 0.75) or "percent" in low or "%" in low
                    or "பங்கு" in low or "pangu" in low)
     about_type = (_close_match(words, "type", 3, 0.75) or "sole" in words or "joint" in words
@@ -653,6 +668,11 @@ def _timestamp_reply(stamp: str, app_no, detail: dict, ta: bool) -> str:
             f"{app_no} was last updated on {updated} — the time of its latest workflow action.")
 
 
+_mc_WARD_NAMED_RE = re.compile(r"\bward\b", re.IGNORECASE)
+_mc_BARE_THERE_RE = re.compile(r"\bthere\b", re.IGNORECASE)
+_mc_WARD_IN_TEXT_RE = re.compile(r"\bward\s*0*(\d{1,3})\b", re.IGNORECASE)
+
+
 async def _answer_multi(plan, message, session_id, officer, db, chat_history):
     kind, what = plan
     if kind == "focus":
@@ -666,8 +686,34 @@ async def _answer_multi(plan, message, session_id, officer, db, chat_history):
                     "response_time_ms": 0, "table_data": None}
         return await _cb()._process_chat_impl(what, session_id, officer, db, chat_history)
     results = []
+    # "which ward has the most applications, and how many are rejected
+    # there" -- each clause is answered independently (this loop never
+    # threads one clause's answer into the next, unlike `_answer_big`), so a
+    # later clause's bare "there" referring to the ward the previous clause's
+    # own answer just named has nothing to resolve against and reads as "no
+    # application or list in view". Carried here the same way `_answer_big`
+    # carries it for its own split: the ward named by the most recent clause
+    # that itself named "ward" is substituted in for a later clause's bare
+    # "there".
+    _last_ward = None
     for clause in what:
-        results.append((clause, await _cb()._process_chat_impl(clause, session_id, officer, db, chat_history)))
+        if (_last_ward and _mc_BARE_THERE_RE.search(clause)
+                and not _mc_WARD_NAMED_RE.search(clause)):
+            clause = _mc_BARE_THERE_RE.sub(f"in ward {_last_ward}", clause, count=1)
+        # `_single_turn`, not `_process_chat_impl` directly -- `_answer_big`
+        # (the sibling split for one large message) already calls
+        # `_single_turn`, which chains through `_calc_turn`/`_howto_turn`/
+        # `_stats_turn`/etc. before falling back to `_process_chat_impl`.
+        # Calling `_process_chat_impl` here skipped that cascade entirely, so
+        # a clause like "sum of rejected in ward 001" -- answered correctly
+        # and fast on its own -- came back "Please specify the application
+        # number you are asking about" as the second half of a multi-request.
+        r = await _cb()._single_turn(clause, session_id, officer, db, chat_history)
+        if _mc_WARD_NAMED_RE.search(clause):
+            _m = _mc_WARD_IN_TEXT_RE.search(r.get("response") or "")
+            if _m:
+                _last_ward = _m.group(1).zfill(3)
+        results.append((clause, r))
     body = []
     for n, (clause, r) in enumerate(results, 1):
         body.append(f"<div><strong>{n}. {__import__('html').escape(clause)}</strong></div>\n{r.get('response') or ''}")

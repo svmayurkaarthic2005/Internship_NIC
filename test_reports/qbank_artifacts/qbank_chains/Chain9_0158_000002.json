@@ -1,0 +1,10 @@
+{
+  "chain_id": "Chain9_0158_000002",
+  "questions": [
+    "Investigate application 2026/0158/02/000002, associated with survey number 137 and patta 4295. This appears in both the correction-modification workflow and the UAREG modification records. Trace the chronological desk recommendations, remarks and dates, identify the final approval information, and compare it with the modification details. I want to know whether the application workflow and parcel modification evidence agree.",
+    "When did the SIS recommendation occur?",
+    "What happened after that at the ZDT, SD and DIS stages?",
+    "Which later stage recorded the final approval, and on what date?",
+    "Can you identify the approval file reference from the UAREG table and compare its date with the final workflow date?"
+  ]
+}

@@ -181,6 +181,13 @@ TA = {
 }
 
 # (topic, English cue, Tamil / Tanglish cue). A cue must name the thing asked about, so data questions are left alone.
+# A procedure question about one application type ({t} = isd / nisd): a "how / explain / what is"
+# verb plus workflow|process|procedure, in either order around the type word.
+# Never "my / its / status / pending" -- "the workflow status of MY NISD applications" is a data question.
+_PROC_DATA = r"(?!.*\b(?:my|status(?:es)?|current|pending|its|this\s+application)\b)"
+_PROC = (_PROC_DATA + r"\b(?:how\s+(?:does|do|is|are)|explain|describe|what\s+(?:is|are))\b.{{0,40}}\b{t}\b.{{0,30}}\b(?:workflow|process|procedure)\b|"
+         + _PROC_DATA + r"\b(?:how\s+(?:does|do|is|are)|explain|describe|what\s+(?:is|are))\b.{{0,25}}\b(?:workflow|process|procedure)\b.{{0,30}}\b{t}\b")
+
 _CUES: List[Tuple[str, str, str]] = [
     ("aadhaar_all", r"\b(?:aadhaar|aadhar)\b.{0,30}\b(?:all|every|each)\b|\b(?:all|every)\b.{0,30}\b(?:aadhaar|aadhar)\b|\b(?:aadhaar|aadhar)\s+numbers?\s+of\b",
      r"ஆதார்.{0,25}(?:அனைத்து|எல்லா)"),
@@ -213,9 +220,13 @@ _CUES: List[Tuple[str, str, str]] = [
                r"\b(?:does|do)\b.{0,10}\bthe\b.{0,20}\btemporary\b.{0,20}\b(?:number|subdivision)\b.{0,20}\bfinal\b|"
                r"\btemporary\s+numbers?\b.{0,20}\bbecome\b.{0,20}\bfinal\b",
      r"உட்பிரிவு\s*வரைபடம்|sub\s*division\s*sketch\s*(?:epdi|eppadi|ready)|sketch\s*(?:epdi|eppadi)"),
-    ("steps_nisd", r"\bsteps?\b.{0,40}\bnisd\b|\bnisd\b.{0,40}\bsteps?\b|\bnisd\b.{0,25}\b(?:process|procedure|workflow)\b.{0,20}\b(?:explain|steps|from)\b",
+    ("steps_nisd", r"\bsteps?\b.{0,40}\bnisd\b|\bnisd\b.{0,40}\bsteps?\b|\bnisd\b.{0,25}\b(?:process|procedure|workflow)\b.{0,20}\b(?:explain|steps|from)\b|"
+                   # "how does the workflow for an NISD application work?", "explain the NISD workflow",
+                   # "what is the workflow for an NISD application?" -- the procedure, not a listing
+                   + _PROC.format(t="nisd"),
      r"NISD.{0,25}(?:படிகள்|படி)"),
-    ("steps_isd", r"\bsteps?\b.{0,40}\bisd\b|\bisd\b.{0,40}\bsteps?\b(?!.*\bnisd\b)", r"ISD.{0,25}(?:படிகள்|படி)"),
+    ("steps_isd", r"\bsteps?\b.{0,40}\bisd\b|\bisd\b.{0,40}\bsteps?\b(?!.*\bnisd\b)|" + _PROC.format(t="isd"),
+     r"ISD.{0,25}(?:படிகள்|படி)"),
     ("docs", r"\b(?:documents?|docs)\b.{0,25}\b(?:needed|required|necessary|to\s+submit|do\s+i\s+need|for)\b.{0,30}\b(?:patta|transfer|sub[\s-]?division|isd|nisd)\b|"
              r"\bwhat\b.{0,15}\b(?:documents?|docs)\b.{0,20}\b(?:needed|required)\b",
      r"(?:ஆவணங்கள்?|documents?)\s*(?:என்ன\s*)?(?:தேவை|வேண்டும்|vendum|venum|thevai)|patta\s*transfer\s*ku\s*enna\s*documents?"),
@@ -265,12 +276,29 @@ def match(message: str, history_text: str = "") -> Optional[str]:
         if en.search(text) or ta.search(text):
             if topic == "field_visit" and _FV_FIELD.search(text):
                 continue              # "what is the (proposed) field visit date" asks for a value, not what a visit is
+            if topic == "rejection_reasons" and _SPECIFIC_APP_POINTER.search(text) and not _GENERIC_REJECTION_CUE.search(text):
+                continue              # "What was ITS rejection reason?" / "why was THIS APPLICATION rejected?" names
+                                       # one application (by pronoun, since _APP above only catches an explicit
+                                       # number) and wants ITS recorded remark, not the generic workflow-guide list
+                                       # this topic otherwise answers -- deferred to the per-application rejection
+                                       # lookup (P3.2), which resolves the pronoun through the ordinary P3/P3.1
+                                       # context chain this module has no part in.
             return topic
     return None
 
 
 _FV_FIELD = re.compile(r"\bproposed\b|\bfield\s*visit\w*\s+(?:date|dt|status|statuz|notes?|remarks?|schedul\w*|time|day|record|details?)\b"
                        r"|\b(?:date|status|notes|remarks)\s+(?:of|for)\s+(?:the\s+)?field\s*visit", F)
+
+# A pointer naming ONE application by pronoun rather than by number (the
+# number case is already excluded above, by `_APP`) -- "its", "this/that
+# application", "this/that file". Present alongside the bare "rejection
+# reason(s)" cue, and with none of the generic/plural markers below, the
+# question is about one recorded remark, not the common-causes list.
+_SPECIFIC_APP_POINTER = re.compile(
+    r"\bits\b|\b(?:this|that)\s+(?:application|file)\b|\bthe\s+application('s)?\b", F)
+_GENERIC_REJECTION_CUE = re.compile(
+    r"\b(?:common|usual|typical|frequent|possible|generally|usually|mostly|main|often)\b", F)
 
 
 def answer(message: str, ta: bool = False, history_text: str = "") -> Optional[Tuple[str, str]]:

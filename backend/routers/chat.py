@@ -4,7 +4,7 @@ Endpoints for chatbot interactions
 """
 from fastapi import (
     APIRouter, Depends, HTTPException, BackgroundTasks, status,
-    UploadFile, File, Form,
+    UploadFile, File, Form, Request,
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Any, Dict
 from datetime import datetime, timezone
 from uuid import UUID
+import json
 import asyncio
 import concurrent.futures as _cf
 
@@ -20,6 +21,14 @@ from backend.config import settings
 from backend.database import get_db
 from backend.schemas import StandardResponse, OfficerContext
 from backend.dependencies import get_current_officer
+from backend.services.security import (
+    detect_prompt_injection,
+    chat_rate_limiter,
+    sanitize_prompt_input,
+    hash_session_id,
+    verify_session_ownership,
+)
+from backend.services.observability import RequestMetrics, current_request_id, current_metrics
 from backend.services import attachment_store
 from backend.services import doc_extract
 from backend.services.chatbot import (
@@ -119,6 +128,7 @@ async def log_chat_interaction(
 async def send_chat_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
+    raw_request: Request,
     db: AsyncSession = Depends(get_db),
     current_officer: OfficerContext = Depends(get_current_officer)
 ):
@@ -140,6 +150,65 @@ async def send_chat_message(
                 detail="Invalid session_id format. Must be a valid UUID."
             )
         
+        metrics = RequestMetrics(
+            session_id_hash=hash_session_id(request.session_id),
+            officer_id=str(current_officer.officer_id),
+            officer_role=getattr(current_officer, "designation", "") or "SIS Officer",
+            jurisdiction_type=getattr(current_officer, "jurisdiction_type", "") or "",
+            language=request.language,
+        )
+        current_request_id.set(metrics.request_id)
+        current_metrics.set(metrics)     # LLM / retrieval / tool timings of this turn land here
+
+        # Rate limiting check
+        if not chat_rate_limiter.is_allowed(str(current_officer.officer_id)):
+            metrics.mark_failure("rate_limited", "Rate limit exceeded")
+            metrics.finalize()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please wait a moment before sending another message."
+            )
+
+        # Enforce session isolation: a session belonging to another officer is strictly forbidden
+        owner_id = (await db.execute(
+            select(ChatSession.officer_id).where(ChatSession.id == session_uuid)
+        )).scalar_one_or_none()
+        try:
+            verify_session_ownership(owner_id, current_officer.officer_id)
+        except HTTPException:
+            metrics.mark_failure("authorization_failure", "Cross-officer session access forbidden")
+            metrics.finalize()
+            raise
+
+        # Defend against adversarial prompt injection
+        is_injection, reason = detect_prompt_injection(request.message)
+        if is_injection:
+            logger.warning(
+                f"Blocked prompt injection from {current_officer.employee_id}: {reason}"
+            )
+            metrics.intent = "security_refusal"
+            metrics.mark_failure("prompt_injection", reason)
+            metrics.finalize()
+            refusal_msg = (
+                "உங்கள் செய்தியில் தடைசெய்யப்பட்ட அல்லது பொருத்தமற்ற கட்டளைகள் உள்ளன. தயவுசெய்து நில அளவை தொடர்பான கேள்விகளை மட்டும் கேட்கவும்."
+                if request.language in ("ta", "tanglish") else
+                "Your message contains prohibited instructions or prompt override attempts. Please ask only official survey and application related queries."
+            )
+            return StandardResponse.success_response(
+                data={
+                    "response": refusal_msg,
+                    "language": request.language,
+                    "session_id": request.session_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                    "intent": "security_refusal",
+                    "sources": [],
+                    "context_used": False,
+                    "response_time_ms": 5,
+                    "table_data": None
+                },
+                message="Security policy enforcement: Prompt injection blocked"
+            )
+
         # Process chat message
         result = await process_chat(
             message=request.message,
@@ -176,6 +245,8 @@ async def send_chat_message(
             "action": result.get("action")
         }
         
+        metrics.intent = result.get("intent")
+        metrics.finalize()
         return StandardResponse.success_response(
             data=response_data,
             message="Chat response generated successfully"
@@ -195,6 +266,7 @@ async def send_chat_message(
 async def stream_chat_message(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
+    raw_request: Request,
     db: AsyncSession = Depends(get_db),
     current_officer: OfficerContext = Depends(get_current_officer)
 ):
@@ -211,11 +283,74 @@ async def stream_chat_message(
                 detail="Invalid session_id format. Must be a valid UUID."
             )
             
+        # Rate limiting check
+        if not chat_rate_limiter.is_allowed(str(current_officer.officer_id)):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please wait a moment before sending another message."
+            )
+
+        # Enforce session isolation: a session belonging to another officer is strictly forbidden
+        owner_id = (await db.execute(
+            select(ChatSession.officer_id).where(ChatSession.id == session_uuid)
+        )).scalar_one_or_none()
+        verify_session_ownership(owner_id, current_officer.officer_id)
+
+        # Defend against adversarial prompt injection
+        is_injection, reason = detect_prompt_injection(request.message)
+        if is_injection:
+            logger.warning(
+                f"Blocked prompt injection in stream from {current_officer.employee_id}: {reason}"
+            )
+            refusal_msg = (
+                "உங்கள் செய்தியில் தடைசெய்யப்பட்ட அல்லது பொருத்தமற்ற கட்டளைகள் உள்ளன. தயவுசெய்து நில அளவை தொடர்பான கேள்விகளை மட்டும் கேட்கவும்."
+                if request.language in ("ta", "tanglish") else
+                "Your message contains prohibited instructions or prompt override attempts. Please ask only official survey and application related queries."
+            )
+            async def _refusal_stream():
+                payload = json.dumps({"content": refusal_msg, "done": False, "intent": "security_refusal"})
+                yield f"data: {payload}\n\n".encode("utf-8")
+                yield b'data: {"done": true}\n\n'
+
+            return StreamingResponse(_refusal_stream(), media_type="text/event-stream")
+
+        metrics = RequestMetrics(
+            session_id_hash=hash_session_id(request.session_id),
+            officer_id=str(current_officer.officer_id),
+            officer_role=getattr(current_officer, "designation", "") or "SIS Officer",
+            jurisdiction_type=getattr(current_officer, "jurisdiction_type", "") or "",
+            language=request.language,
+        )
+
         async def _with_end_marker(chunks):
-            # Lets the page tell a finished reply from one cut off mid-stream.
-            async for chunk in chunks:
-                yield chunk
-            yield b'data: {"done": true}\n\n'
+            # Lets the page tell a finished reply from one cut off mid-stream. Also the one place the
+            # stream's telemetry record is finalised: when it ends, is abandoned or is cancelled.
+            current_request_id.set(metrics.request_id)
+            current_metrics.set(metrics)   # set here: the generator runs in the response's own task
+            try:
+                async for chunk in chunks:
+                    if await raw_request.is_disconnected():
+                        logger.info(f"Client disconnected early for session {request.session_id}")
+                        metrics.mark_failure("client_disconnected", "Client disconnected mid-stream")
+                        break
+                    _raw = chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8")
+                    if metrics.intent is None and b'"intent"' in _raw:
+                        try:
+                            metrics.intent = json.loads(_raw.decode("utf-8").split("data: ", 1)[1]).get("intent")
+                        except (ValueError, IndexError, AttributeError):
+                            pass
+                    yield chunk
+                yield b'data: {"done": true}\n\n'
+            except asyncio.CancelledError:
+                logger.info(f"Stream task cancelled for session {request.session_id}")
+                metrics.mark_failure("cancelled", "Stream task cancelled")
+                raise
+            except Exception as exc:
+                metrics.mark_failure("stream_error", type(exc).__name__)
+                raise
+            finally:
+                metrics.intent = metrics.intent or "stream"
+                metrics.finalize()
 
         return StreamingResponse(
             _with_end_marker(process_chat_stream(

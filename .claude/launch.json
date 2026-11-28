@@ -8,6 +8,12 @@
       "port": 8000
     },
     {
+      "name": "sis-static-tests",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "http.server", "8766", "--bind", "127.0.0.1"],
+      "port": 8766
+    },
+    {
       "name": "sis-frontend",
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["serve_frontend.py"],

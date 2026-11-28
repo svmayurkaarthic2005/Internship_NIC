@@ -42,28 +42,28 @@ python serve_frontend.py       # Serves on http://localhost:3000
 # Database integrity checks
 python backend/sample_db/verify_sample_db.py   # CSV-shaped layer: structure, orphans, non-leakage
 python -m backend.sample_db.verify_identifiers # both layers: Aadhaar + CAN formats
-python check_missing_values.py                 # ORM layer: required fields not NULL
-python check_sis_chatbot_db_tables.py          # Lists every table + row count
-python check_login_credentials.py              # Prints the seeded officer logins
 
 # Rebuild the ORM projection (idempotent — truncates what it owns, re-derives)
 python -m backend.sample_db.build_app_tables
 
-# Run tests
-python -m backend.sample_db.test_intent_coverage   # routing, no DB/LLM (instant)
-python -m backend.sample_db.test_date_queries       # date phrases parse + answer correctly
-python -m backend.sample_db.test_channel_queries   # submission channel: routing, derivation, answers
-python -m backend.sample_db.test_channel_queries --fast   # skips the LLM cases
-python -m backend.sample_db.test_workflow_logic    # workflow invariants + answer consistency
-python -m backend.sample_db.test_questions         # answer quality (--fast skips LLM cases)
-python -m backend.sample_db.check_app_wiring --chat
-python test_comprehensive_suite.py
-python backend/test_200_suite.py
+# Run tests -- the suite is pytest under tests/ (needs PostgreSQL; no LLM for tests/unit)
+python -m pytest tests/unit -q                 # unit + live-DB pipeline tests
+python -m backend.sample_db.check_app_wiring --chat   # smoke test: app queries + a chat answer from this DB
+# tests/frontend/test_sanitize_bot_html.html   # open in a browser over http (launch config "sis-static-tests")
 ```
+
+The standalone `test_*.py` / `check_*.py` scripts this file used to list (`test_comprehensive_suite.py` *(removed)*,
+`backend/test_200_suite.py`, `backend/sample_db/test_*.py`, `check_missing_values.py`,
+`check_sis_chatbot_db_tables.py`, `check_login_credentials.py`, …) were removed in commit `39f9e25`.
+Where a section below still names one, it says so; `tests/unit` is the maintained suite.
 
 **API Docs** (dev only): http://localhost:8000/api/docs
 
-**Test login credentials**: officers are the SIS usernames seeded from the workflow chain, one ward each, in the form `<name>@sis.tn.gov.in` with password `Test@1234` — currently `csenthil@` (ward 002), `msivakumar@` (ward 102) and `muthulakshmis@` (ward 103). Run `python check_login_credentials.py` for the current list with each officer's jurisdiction. The old `arjun.kumar` / `priya.devi` / `ramesh.babu` / `lakshmi.narayanan` accounts no longer exist.
+**Test login credentials**: password `Test@1234` for the officers seeded in the live database (checked
+2026-11-28 against `sis_officers` / `officer_jurisdictions`): `arun_m@sis.tn.gov.in` (wards 001, 002, 008),
+`marun_chn@sis.tn.gov.in` (wards 001, 005, 009) and `sperumal_chn@sis.tn.gov.in` (wards 001, 007).
+`tests/conftest.py` uses `arun_m@` (and `marun_chn@` as the second officer). The `csenthil@` /
+`msivakumar@` / `muthulakshmis@` and older `arjun.kumar` … accounts no longer exist.
 
 ---
 
@@ -80,24 +80,26 @@ nic_internship/
 │   ├── dependencies.py       # get_current_officer() JWT dependency
 │   ├── ingest.py             # Document ingestion into pgvector (knowledge_embeddings)
 │   ├── schema.sql            # Raw SQL schema reference for the ORM tables
-│   ├── test_200_suite.py     # 200-question backend suite (+ test_200_results.json)
 │   ├── routers/
 │   │   ├── auth.py           # POST /auth/login
 │   │   ├── chat.py           # POST /api/v1/chat/stream, /chat/upload, GET /chat/history
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   └── survey.py         # Survey endpoints
 │   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~29000 lines) — entry point for all chat logic
-│   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
-│   │   ├── semantic_intent.py # Embedding-similarity detection of greetings / thanks / small talk
+│   │   ├── chatbot/          # THE chat package (was one ~29000-line chatbot.py):
+│   │   │   ├── orchestrator.py      # process_chat() / process_chat_stream() -- entry points
+│   │   │   ├── chat_*.py            # routing, follow-ups, corrections, small talk, application queries ...
+│   │   │   ├── *_qa.py              # record modules (appinfo, cmflow, howto, unheld, tslr, natham ...)
+│   │   │   ├── agent.py / agent_tools.py / agent_plan.py  # LLM tool-calling fallback
+│   │   │   ├── attachment_qa.py     # Which file, which entity, evidence or refusal
+│   │   │   └── semantic_intent.py   # Embedding-similarity greeting / thanks / small-talk detection
+│   │   ├── rag.py / rag_llm.py / rag_language.py  # Intent detection, LLM calls, language detection
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
-│   │   ├── agent.py          # LLM tool-calling loop (the general_query fallback)
-│   │   ├── followup_context.py # Reference context for implicit follow-ups
+│   │   ├── followup_context.py # Server-side conversation context: focus, pair, prior pair (P3-P3.4)
+│   │   ├── observability.py / security.py / reranker.py / llm_gate.py / overdue_refresh.py
 │   │   ├── doc_extract.py     # Uploaded file → located text segments + citations
 │   │   ├── attachment_store.py # Attachment tables, authorization, evidence retrieval
 │   │   ├── csv_ops.py         # Deterministic count/sum/min/max/group over CSV rows
-│   │   ├── attachment_qa.py   # Which file, which entity, evidence or refusal
-│   │   ├── agent_tools.py    # The 14 authorized domain tools the agent may call
 │   │   ├── readonly_guard.py # a chat turn may read the register, write only the transcript
 │   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
 │   │   ├── embeddings.py     # Embedding generation via Ollama
@@ -113,17 +115,12 @@ nic_internship/
 │   │   ├── build_app_tables.py    # Projects sample tables → the app's ORM tables
 │   │   ├── verify_sample_db.py / verify_identifiers.py  # Integrity checks
 │   │   ├── check_app_wiring.py    # Smoke test: app queries + chatbot answer from this DB
-│   │   ├── question_bank.py, appinfo_/workflow_action_/workflow_doc_question_bank.py  # Shared question sets
-│   │   ├── test_intent_coverage.py, test_workflow_logic.py, test_questions.py,
-│   │   │   test_question_bank.py, test_date_queries.py, test_channel_queries.py
-│   │   ├── generate_user_test_fixtures.py  # Builds backend/test_fixtures/user_tests
-│   │   ├── build_lora_dataset*.py # QLoRA training-set builders (see "Fine-tuning" below)
-│   │   ├── clean_ / redact_ / validate_lora_dataset.py, strip_bad_*.py,
-│   │   │   reinforce_glossary_facts.py   # dataset hygiene passes
+│   │   ├── reinforce_glossary_facts.py / audit_train_grounding.py / repair_train_labels.py  # LoRA data passes
 │   │   ├── run_eval_baseline.py + eval_set.jsonl  # held-out eval, never trained on
-│   │   ├── SIS_QLoRA_Training.ipynb   # Colab training notebook
+│   │   ├── watch_rebuild.py / install_autorebuild_triggers.py / migrate_attachment_unique_index.py
 │   │   └── README.md              # Source of truth for the DB layout
-│   ├── sample_table/         # TAMILNILAM urban CSV + master pg_dumps (gitignored; empty in a fresh clone)
+│   ├── sample_db_new/        # The pipeline that actually populated the live DB (see "Database Layout")
+│   ├── sample_table/         # TAMILNILAM urban CSV + master pg_dumps (gitignored; absent in a fresh clone)
 │   ├── documents/            # RAG corpus: workflow_guide.txt, faq_english/tamil.txt, land_rules.txt,
 │   │                         #   survey_manual.txt, district_codes.txt, sis_upload_checklist.txt,
 │   │                         #   database_structure_reference.txt, tamilnilam_urban_services_and_districts.txt
@@ -140,10 +137,11 @@ nic_internship/
 │                             #   table_renderer.js, lucide-fallback.js
 ├── var/attachments/          # Uploaded-file bytes (gitignored, outside anything served)
 ├── tools/                    # create_chatbot_test_fixtures.js
-├── test_*.py / test_questions_*.txt   # Top-level suites and question sets (see Testing)
-├── check_*.py, debug_*.py, trace_intent.py, query_channels.py   # One-off DB / routing probes
-├── serve_frontend.py, start_backend.ps1, quick_setup.py
-├── *.md reports              # AGENTS.md, README.md, *_FINDINGS.md, *_SUMMARY.md, DISTRICT_HANDLING.md ...
+├── tests/                    # pytest: unit/ (the maintained suite), evaluation/, ui/, frontend/
+├── test_reports/             # remediation baselines and reports (P0 ... P3.4) + qbank_artifacts/
+├── test_questions_*.txt      # question sets (100 / 200 / 206)
+├── serve_frontend.py, start_backend.ps1, quick_setup.py, setup_service_fees_table.py
+├── *.md                      # AGENTS.md, README.md, SKILL.md, CLAUDE.md
 ├── .env                      # Secrets (not committed)
 ├── .env.example              # Template
 ├── requirements.txt
@@ -219,11 +217,11 @@ build_lora_dataset*.py → clean / redact / reinforce_glossary_facts.py
 
 ## Semantic routing and name transliteration
 
-- `services/semantic_intent.py` classifies short, SIS-vocabulary-free messages as
+- `services/chatbot/semantic_intent.py` classifies short, SIS-vocabulary-free messages as
   greeting / farewell / thanks / small talk by `nomic-embed-text` similarity to
   prototype phrases. It never routes SIS questions and returns `None` on any failure,
-  so the deterministic parser carries on. `test_greeting_semantic.py`,
-  `test_semantic_router_eval.py`.
+  so the deterministic parser carries on. `test_greeting_semantic.py` *(removed)*,
+  `test_semantic_router_eval.py` *(removed)*.
 - `utils/translit.py` adds a readable Tamil or Latin form beside an applicant name of
   record, which is stored in whichever script the extract carried. It never replaces
   the stored name.
@@ -279,12 +277,12 @@ officer wanting that level of detail on an actual ISD/NISD file still uses
 it (ward-scoped, with optional `service_code` / `submission_channel` / `status`
 filters); `rag.py` routes to it as the `all_service_code_applications` intent,
 with an explicit regex for "F-Line application(s)" (`0178`) alongside the
-general "applications of/across all service codes" phrasing; `chatbot.py`
+general "applications of/across all service codes" phrasing; the `backend/services/chatbot/` package
 renders it as a flat table in both chat paths.
 
 **This whole feature is uncommitted, in-progress work** — `git status` shows
 large diffs against `HEAD` in `models.py`, `postgres.py`, `rag.py` and
-`chatbot.py`, plus an entirely new, untracked `backend/sample_db_new/`
+the `backend/services/chatbot/` package, plus an entirely new, untracked `backend/sample_db_new/`
 directory (its own CSVs including `f_line_service_urban_demo.csv`,
 `correction_modification_flow_demo.csv`, `uareg_modification_demo.csv`, …,
 `column_map.py`, `build_app_tables_new.py`, `load_sample_db_new.py`) that
@@ -310,7 +308,7 @@ type:
 
 | question | answered from |
 |---|---|
-| listing / count with a status, period, ward, block, channel, sort or "first N" ("show my pending applications", "how many are approved in June") | register, all service codes (`_register_listing()` in `chatbot.py`, routed by `rag._is_register_wide_listing()` wrapping `parse_intent`) |
+| listing / count with a status, period, ward, block, channel, sort or "first N" ("show my pending applications", "how many are approved in June") | register, all service codes (`_register_listing()` in the `backend/services/chatbot/` package, routed by `rag._is_register_wide_listing()` wrapping `parse_intent`) |
 | follow-ups on that list ("how many of them are CSC", "how many are 0158") | the rows on screen, register rows included (`get_applications_by_numbers`, `number_qa`) |
 | totals, per-month/year, percentages, completion rate, by block/ward, status/channel/ward/month/type comparisons | register (`get_analytics_rows`, `get_comparison`, `_register_completion`, `get_applications_by_block`) |
 | names ISD/NISD, or overdue / escalated / in progress / field visit / stage / workload / per-file fields / a survey or application number | the detailed ISD/NISD handlers, as before |
@@ -319,7 +317,7 @@ type:
 `parse_intent` returns `pending_applications` for ~30 phrasings; the widening
 is one rule on top of them, not 30 edits. Rejected files stay out of a list
 unless asked for, and the answer reports how many were left out.
-`python test_register_equal_treatment.py` (`--routing` skips the database).
+`test_register_equal_treatment.py` *(removed)* (`--routing` skips the database).
 
 **Equal-treatment audit (2026-10-11).** Of the 29 canonical `SIS_URBAN_SERVICES`
 codes, 11 carry live rows for this seed (0153, 0154, 0156, 0158, 0159, 0160,
@@ -387,8 +385,8 @@ A second pass over the paired-negation list turned up three more:
   field-presence modes and silently dropped the field filter entirely. Fixed
   by widening `parse_standalone_field_presence_request()` to also accept the
   imperative shape — but the first version of this fix was ITSELF a
-  regression, caught by the existing `test_sequence_c_table_ops.py` and
-  `test_row_slicing.py` suites: a plain column-selection sentence ("show
+  regression, caught by the then-existing `test_sequence_c_table_ops.py` *(removed)* and
+  `test_row_slicing.py` *(removed)* suites: a plain column-selection sentence ("show
   applications ... with application number, status, survey number,
   subdivision number...") also trivially contains "show...applications" + a
   bare "with" + the word "subdivision", and was misread as the same presence
@@ -401,7 +399,7 @@ A second pass over the paired-negation list turned up three more:
   answered as if it named one unspecified file. Routed to the existing
   catalog answer (`service_code_guide`) instead.
 
-`python test_servicecode_equal_treatment.py` (`--routing` skips the database).
+`test_servicecode_equal_treatment.py` *(removed)* (`--routing` skips the database).
 
 Three more live tables fit the same pattern — real data, no mention anywhere
 in this file, and no evident ORM/query/intent wiring found so far:
@@ -412,7 +410,7 @@ CLA, none of which besides SIS/SD/DIS/Tahsildar appear elsewhere in this file),
 operations `01`–`06` on the survey and natham-chitta registers), and
 `tslr_sketch_urban` / `chitta_temp_old_owner` / `sd_attachment` /
 `file_attachment`. Whether any of these already have handlers elsewhere in
-`chatbot.py` has not been checked; this note only records that they exist and
+the `backend/services/chatbot/` package has not been checked; this note only records that they exist and
 are unexplained here.
 
 **Layer 2 — the app's ORM tables** (`backend/models.py`), a projection built from layer 1 by `build_app_tables.py`:
@@ -500,6 +498,12 @@ name is therefore safe; changing a code is not.
 
 ### The seeded jurisdiction
 
+> **Superseded seed.** This subsection and the figures in "Database Layout", "Submission channels" and
+> "Workflow" describe the original `sample_db` seed (Thoothukudi, district `28`). The live database was
+> rebuilt from `backend/sample_db_new/`: application numbers carry district segment `02` (e.g.
+> `2026/0153/02/045470`) and the officers are `arun_m@`, `marun_chn@`, `sperumal_chn@` (see Dev Commands).
+> The counts below were not re-verified against the live database.
+
 One urban jurisdiction, matching the extracts: **Thoothukudi (district `28`)**, taluk `01`, town `001`, block `0015`, wards `002` / `102` / `103`, streets `0001`–`0008`. Survey numbers run in a 13xx series in ward 002 and low series in wards 102/103; each carries a patta number. Officers hold the wards that actually carry applications (`002` / `102` / `103` — the parcel register also covers `004`, which has no applications), so jurisdiction filtering has real effect in tests and every application is assigned to an officer who covers its ward.
 
 ### Dates
@@ -515,7 +519,7 @@ POST /api/v1/chat/stream
         ↓
   chat.py router
         ↓
-  chatbot.py → process_chat_stream()   ← MAIN ENTRY POINT
+  chatbot/orchestrator.py → process_chat_stream()   ← MAIN ENTRY POINT
         ↓
   rag.py → parse_intent()              ← classify the user message
         ↓
@@ -537,7 +541,7 @@ POST /api/v1/chat/stream
    word is a greeting. (The old exact list missed "hi there", "thanks a lot",
    "bye bye", "see you", "good night" and "romba nandri" — 25 of 46 ordinary
    openings and sign-offs — which then cost a 20-45 second LLM call apiece to
-   answer a message with no question in it.) The handler in `chatbot.py` tells
+   answer a message with no question in it.) The handler in the `backend/services/chatbot/` package tells
    the three cases apart: `_greeting_is_farewell` answers a sign-off with a
    sign-off (it used to answer "bye" with *"Hello! ... What can I assist you
    with today?"*), `_greeting_is_thanks` covers "thanks" **and** `nandri` /
@@ -584,7 +588,7 @@ POST /api/v1/chat/stream
    - "which **ward is** 2022/… **in**" is a field lookup → an application
      number rules the ward and month branches out entirely.
    - "how long did X **take**" on a decided file asks the turnaround, not
-     whether it is overdue — `_DURATION_RE` in `chatbot.py` steers it.
+     whether it is overdue — `_DURATION_RE` in the `backend/services/chatbot/` package steers it.
    - `_compare_periods()` keeps the two periods **apart**;
      `extract_month_scopes()` deliberately merges contiguous months, which is
      right for "June and July applications" and wrong for "compare June and
@@ -657,7 +661,7 @@ names the counter that issued it (15 digits CSC counter / 12 TN portal) and does
 not decide the channel; `CAN_LENGTHS` bounds what each channel may carry
 (`CSC` 15, `sub_registrar` 12, `citizen` either). `source_name` and `camp_flag`
 are carried into `applications` as `submission_source_name` /
-`submission_camp_flag`, and `_render_submission_channel_basis()` in `chatbot.py`
+`submission_camp_flag`, and `_render_submission_channel_basis()` in the `backend/services/chatbot/` package
 shows the derivation.
 
 Only one of the two citizen files is approved, so the citizen list is short;
@@ -688,7 +692,7 @@ An ISD parcel carries two sub-division numbers, both projected into
 approval (`proposed_sub_division_no`, e.g. `4` — it holds the temporary number
 while the file is open or was rejected, since no final number exists then).
 `get_application_detail()` returns both as `temporary_subdivision_number` /
-`final_subdivision_number`. `python test_temp_subdivision_queries.py` checks the
+`final_subdivision_number`. `test_temp_subdivision_queries.py` *(removed)* checks the
 CSV, both layers and the answers.
 
 ### Officer Hierarchy
@@ -772,7 +776,7 @@ applications carry none, and 21 carry a date that contradicts the workflow chain
 `decision_by`, and the `approval_date` / `rejection_date` aliases, whichever
 applies). It is `None` while the file is open -- the submission date is never a
 fallback, since answering the filing date to "when was this approved" is a wrong
-answer, not a vague one. `_asked_decision_date()` in `chatbot.py` routes those
+answer, not a vague one. `_asked_decision_date()` in the `backend/services/chatbot/` package routes those
 questions to `_decision_date_answer()` ahead of the field map, which otherwise
 sends every "when" and every "date" to `submission_date`.
 
@@ -815,7 +819,7 @@ above).** 41 ISD applications: 21 approved, 16 rejected, 4 pending. Their
   `16`.)
 
 So ISD in the seed = `SIS → SD → COMPLETED/REJECTED`. `workflow_history` never
-carries `DIS`, and the `DIS` entry in `chatbot.py`'s `_stage_labels` is
+carries `DIS`, and the `DIS` entry in the `backend/services/chatbot/` package's `_stage_labels` is
 unreachable from data. To make ISD follow the full chain, `build_app_tables.py`
 would need to synthesise the missing `8 → 12` (SD→DIS) and `12 → 16`
 (DIS→Tahsildar) hops when projecting `workflow_history` for `0154`.
@@ -846,7 +850,7 @@ Tahsildar (role 16), who signs and closes it.
 
 ### Time limits — two different clocks
 
-`backend/utils/sla.py` holds both, taken from the documents; `python test_sla_rules.py`
+`backend/utils/sla.py` holds both, taken from the documents; `test_sla_rules.py` *(removed)*
 checks the code against `land_rules.txt` / `workflow_guide.txt` and every boundary.
 
 | clock | rule | source |
@@ -904,7 +908,7 @@ database still carries it.
 
 ### Service Layer
 
-- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~29000 lines) by design; new intent handlers belong here or in `postgres.py`.
+- **`backend/services/chatbot/`** is the single orchestration layer — all chat logic flows through it. It used to be one ~29000-line the `backend/services/chatbot/` package; it is now a package (`orchestrator.py` holds `process_chat` / `process_chat_stream`, the `chat_*.py` modules the shared helpers, the `*_qa.py` modules the record answers). New intent handlers belong in it or in `postgres.py`.
 - **`postgres.py`** contains *only* database query functions. No LLM calls, no intent logic.
 - **`rag.py`** contains *only* NLP utilities: intent detection, language detection, extraction helpers, LLM calls, and prompt builders.
 - Numeric/count data **always** comes from the database directly. Never let the LLM generate counts or application numbers — this prevents hallucination.
@@ -921,6 +925,12 @@ database still carries it.
 - Vanilla JS only — no frameworks, no npm.
 - Chat uses **SSE (Server-Sent Events)** via `EventSource` for streaming.
 - All API calls include `Authorization: Bearer <token>` header (JWT stored in `sessionStorage`).
+- **Bot messages never reach `innerHTML` unsanitized.** `formatBotMessage()` in `chat.js` runs every
+  answer through `sanitizeBotHtml()`, an allowlist: the tags and attributes the backend emits are kept;
+  script / style / iframe / svg / img / form tags are dropped; `on*` handlers survive only in the three
+  exact shapes the backend writes (`window.copyTableData(this)`, `window.handleAppClick('<app no>')`,
+  `handleApplicationClick('<app no>'); return false;`); `href` only `#` / `javascript:void(0)`. A backend
+  change that emits a new tag, attribute or handler must add it there. Check: `tests/frontend/test_sanitize_bot_html.html`.
 
 ---
 
@@ -954,7 +964,7 @@ database still carries it.
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
 
-3. **`chatbot.py` is very large** — use IDE symbol search to navigate. Key entry points:
+3. **The `backend/services/chatbot/` package is very large** (it replaced the old ~29000-line the `backend/services/chatbot/` package) — use IDE symbol search to navigate. Key entry points (in `orchestrator.py` unless noted):
    - `process_chat_stream()` — streaming chat
    - `process_chat()` — non-streaming chat
    - `create_chat_session()` — session creation
@@ -975,7 +985,7 @@ database still carries it.
      from history as usual.
    - *List* — "how many of **them** are approved", "which of them are ISD",
      "do they have an IGRS number", and the pronoun-less "how many are
-     approved". `_rescope_list_followup()` in `chatbot.py` folds these back
+     approved". `_rescope_list_followup()` in the `backend/services/chatbot/` package folds these back
      into the question they continue — the same mechanism as the bare-date
      re-scope beside it — so the channel / status / type scope survives
      instead of resetting to the officer's whole open queue. A plural pronoun
@@ -987,11 +997,12 @@ database still carries it.
    the table: `_igrs_over_list_note()` answers "do they have an IGRS number?"
    from the channel of each row.
 
-6. **Application number extraction** follows a fallback chain:
-   - Explicit: `"APP-2024-000001"` → matched directly
-   - Reference: `"this application"` → checks last 2 messages in history
-   - Field query: `"what is the name?"` → checks conversation context
-   - No reference found → chatbot asks user to specify
+6. **Which application a message means** (P3–P3.4; see "Conversation context is server-side" below):
+   - Explicit numbers in the message win (two → a comparison, in the order given).
+   - "the first / second application from our earlier comparison" → that member of the earlier pair.
+   - "the other one / first / second / both" → the active pair; "its / this application" → the current focus.
+   - Otherwise the server transcript, tie-broken by the canonical context; nothing usable → ask.
+   - The client's `chat_history` never selects an application.
 
 7. **CORS_ORIGINS** in `.env` must be a valid JSON array string, e.g.:
    ```
@@ -1007,10 +1018,33 @@ database still carries it.
 
 ---
 
+## Conversation context is server-side (P3 – P3.4)
+
+`process_chat` / `process_chat_stream` (in `backend/services/chatbot/orchestrator.py`) replace the
+client-supplied `ChatRequest.chat_history` with `_server_transcript()` -- this officer's own stored
+transcript for the session (40 messages, respects "clear", empty for a foreign or unknown session). The
+API field is kept and logged by count only. Every history-scanning helper downstream therefore reads
+server text; a stale or forged client copy cannot pick an application, and a fresh session asks.
+
+The stored `FollowupContext` (`followup_context.py`) is loaded once per turn and published as the
+request-scoped `followup_context.CANONICAL`:
+
+| field | meaning |
+|---|---|
+| `current_application` | the one application in focus ("its", "this application") |
+| `active_applications` | the set in view; a two-member set is the pair ("the other one", "both") |
+| `filters["prior_pair"]` | the last comparison pair the officer established, kept beside a new application; read only by explicit references ("both … again", "the second application from our earlier comparison") |
+
+Helpers: `canonical_tiebreak()` (a number recovered from text, checked against the canonical set),
+`singular_target()` ("its" over a set: focus or ask), `rewrite_historical_refs()` (earlier-comparison
+references → explicit numbers, which then re-pass the jurisdiction gate). Singular questions with no
+focus ask which one; "the other one" after an unrelated application asks. Reports:
+`test_reports/P3_CANONICAL_CONTEXT_REPORT.md` … `P3_4_HISTORICAL_PAIR_REFERENCE_REPORT.md`.
+
 ## Implicit follow-ups — the reference context
 
 `backend/services/followup_context.py`, plus `_load_followup_context()` /
-`_scoped_list_answer()` in `chatbot.py` and `get_applications_by_numbers()` in
+`_scoped_list_answer()` in the `backend/services/chatbot/` package and `get_applications_by_numbers()` in
 `postgres.py`.
 
 **The gap it closes.** An officer rarely repeats themselves. After "show my
@@ -1111,10 +1145,10 @@ handful of nouns. "What is the CAN number of the previous question?" matched
 none of them and was answered *"Your previous message was: …"* — a correct
 answer to a question nobody asked. `_RECALL_DATA_WORDS` now carries the field
 nouns (`can`, `name`, `ward`, `fee`, `date`, `igrs`, …) in English and Tamil.
-`python test_can_context_fix.py` covers it.
+`test_can_context_fix.py` *(removed)* covers it.
 
 
-`python test_followup_context.py` (~110 checks, no LLM); `--routing` skips the
+`python -m pytest tests/unit/test_followup_context.py` (~110 checks, no LLM); `--routing` skips the
 database.
 
 ---
@@ -1122,9 +1156,9 @@ database.
 ## Service codes — what a code means is a lookup, not a generation
 
 `SIS_URBAN_SERVICES` / `describe_service_code()` / `service_code_one_liner()` in
-`backend/utils/helpers.py`; `_service_code_lookup_answer()` in `chatbot.py`;
+`backend/utils/helpers.py`; `_service_code_lookup_answer()` in the `backend/services/chatbot/` package;
 the `service_code_lookup` rule in `parse_intent`.
-`python test_service_code_queries.py` (routing + answers, no LLM);
+`test_service_code_queries.py` *(removed)* (routing + answers, no LLM);
 `--routing` skips the answers.
 
 **"what is 0153?" was answered "The service code is 0153."** — the question
@@ -1167,7 +1201,7 @@ a table lookup and is now answered without the model.
 
 ## IGRS and CAN questions
 
-`python test_igrs_can_queries.py` (37 checks, no LLM). It recomputes every
+`test_igrs_can_queries.py` *(removed)* (37 checks, no LLM). It recomputes every
 expectation from the register, so it still means something after a reseed.
 
 **An IGRS question is a Sub-Registrar question.** Only a Sub-Registrar referral
@@ -1207,7 +1241,7 @@ was no better: **"SRO" appeared nowhere in the corpus**, so "what is SRO" came
 back as *"the query was refused, which means it is outside the jurisdiction of
 the officer"* — not even the right kind of answer. Fixed in three places:
 
-* `_igrs_can_rule_topic()` / `_igrs_can_rule_answer()` in `chatbot.py` answer
+* `_igrs_can_rule_topic()` / `_igrs_can_rule_answer()` in the `backend/services/chatbot/` package answer
   six rule topics deterministically (`igrs_absent`, `igrs_who`,
   `igrs_equals_can`, `can_length`, `can_what`, `sro_what`), in English and
   Tamil. These are documented invariants, not counts, so they are stated in
@@ -1248,9 +1282,9 @@ the officer"* — not even the right kind of answer. Fixed in three places:
 ## Owner-record fields the register does not carry
 
 `_UNTRACKED_OWNER_FIELDS` / `_asked_untracked_owner_field()` /
-`_untracked_owner_field_answer()` in `chatbot.py`, run in **both** chat paths
+`_untracked_owner_field_answer()` in the `backend/services/chatbot/` package, run in **both** chat paths
 right after `_gate_app_number` is resolved and before the `survey_owners`
-branch. `python test_owner_field_queries.py` (routing + answers, no LLM;
+branch. `test_owner_field_queries.py` *(removed)* (routing + answers, no LLM;
 `--routing` skips the DB).
 
 **The gap it closed.** `build_app_tables.py` projects only a handful of the
@@ -1321,11 +1355,11 @@ relationship does the owner have" route correctly.
 ## Parcel-register fields the survey projection does not carry
 
 `_UNTRACKED_PARCEL_FIELDS` / `_asked_untracked_parcel_field()` /
-`_untracked_parcel_field_answer()` in `chatbot.py`, checked in **both** chat
+`_untracked_parcel_field_answer()` in the `backend/services/chatbot/` package, checked in **both** chat
 paths right after the owner-field guard and before the `survey_detail` branch —
 survey-scoped, and skipped when an application number is in view (that sends the
 same words to `_UNTRACKED_SOURCE_FIELDS` on the field-lookup path instead).
-`python test_parcel_field_followups.py` (routing + classifier + answer, no LLM).
+`test_parcel_field_followups.py` *(removed)* (routing + classifier + answer, no LLM).
 
 **The gap.** `build_app_tables.py` carries a `uareg_demo` row's
 geography, `survey_number`, `subdivision_number`, `patta_number`,
@@ -1482,7 +1516,7 @@ raw-file storage and its directory.
 `survey_subdivision_pairs()` / `_render_survey_pairs_answer()` /
 `_render_survey_subdivision_table()` in `attachment_qa.py`; the same
 column-pairing rule in `csv_ops.py`'s `_sibling_subdivision_column()` /
-`execute()`. `python SIS_Upload_Regression_Tests/test_survey_subdivision_pairing.py`
+`execute()`. `test_survey_subdivision_pairing.py` *(removed)*
 (22 checks, no LLM). Full writeup: `SIS_Survey_Subdivision_Pairing_Fix_Report.md`.
 
 Whenever an uploaded document or CSV answer names a survey number, it now
@@ -1516,7 +1550,7 @@ to the ORM-backed `survey_detail` intent.
 
 ## Agent layer — LLM tool calling
 
-`backend/services/agent.py` + `backend/services/agent_tools.py`.
+`backend/services/chatbot/agent.py` + `backend/services/chatbot/agent_tools.py`.
 
 **Where it runs.** Exactly one place: the point in `process_chat()` /
 `process_chat_stream()` where every deterministic handler has passed and the
@@ -1542,7 +1576,7 @@ parse_intent → deterministic handler ─────────────�
 ```
 
 **Authorization is never the model's.** Three rules, enforced in
-`agent_tools.py` and asserted by `test_agent_layer.py`:
+`agent_tools.py` and asserted by `test_agent_layer.py` *(removed)*:
 
 1. **The officer is not a parameter.** `ToolContext` binds the JWT-derived
    `OfficerContext` and the `AsyncSession` out of band. No tool schema declares
@@ -1603,7 +1637,7 @@ streaming hook pulls the agent's first chunk before writing anything, which is
 what makes that guarantee hold.
 
 **What llama3.1:8b actually does, and what was built to absorb it.** Four
-behaviours showed up repeatedly in `test_agent_layer.py` and each is handled in
+behaviours showed up repeatedly in `test_agent_layer.py` *(removed)* and each is handled in
 code rather than by hoping the prompt holds:
 
 * **It copies its own system prompt back as arguments.** When the tool-selection
@@ -1658,7 +1692,7 @@ the officer is a survey officer, not an operator of this system.
 ## The chatbot cannot change the data
 
 `backend/services/readonly_guard.py`; armed around both entry points in
-`chatbot.py`; `python test_readonly_guard.py` (36 checks).
+the `backend/services/chatbot/` package; `python -m pytest tests/unit/test_readonly_guard.py` (36 checks).
 
 **The rule: a chat turn may read the department's register and write nothing
 but the conversation.** Applications, field visits, owners, survey numbers,
@@ -1719,7 +1753,7 @@ action, because it is believed and acted on.
 
 So a request to change something is refused **deterministically**, before any
 handler or the agent can improvise an answer: `_is_mutation_request()` /
-`_mutation_refusal()` in `chatbot.py`, in both chat paths. The refusal says
+`_mutation_refusal()` in the `backend/services/chatbot/` package, in both chat paths. The refusal says
 what is true (nothing was changed, and the assistant cannot change anything)
 and names who can — the TAMILNILAM portal — because "I cannot" without "here is
 where you can" just moves the officer's problem.
@@ -1734,7 +1768,7 @@ imperative, which merely falls through to the ordinary read-only path. The
 agent's answer prompt carries the same rule as a second line, for a phrasing
 the matcher does not catch.
 
-`test_readonly_guard.py` proves the refusal rather than the absence: it
+`tests/unit/test_readonly_guard.py` proves the refusal rather than the absence: it
 attempts an ORM update, an ORM delete, an ORM insert, Core `DELETE`/`UPDATE`,
 raw `TRUNCATE knowledge_embeddings`, `DROP TABLE applications` and
 `DELETE FROM field_visits`, and both corpus mutators -- every one is refused.
@@ -1802,7 +1836,7 @@ question:
 
 ## Messages that ask nothing
 
-`_contentless_message()` / `_contentless_reply()` in `chatbot.py`, answered in
+`_contentless_message()` / `_contentless_reply()` in the `backend/services/chatbot/` package, answered in
 both chat paths before intent routing.
 
 `parse_intent` routes everything it does not recognise to `general_query`,
@@ -1826,7 +1860,7 @@ These are answered deterministically: no LLM call, no tool call. Three kinds:
 sentences. `clear`, `clear chat` and `clear conversation` matched; "clear the
 conversation", "clear chat history", "delete this chat" and "chat history
 clear" did not, and were answered as questions. `_is_clear_command()` in
-`chatbot.py` recognises the command by **shape** instead: a wipe verb
+the `backend/services/chatbot/` package recognises the command by **shape** instead: a wipe verb
 (`clear` / `reset` / `wipe` / `erase` / `delete` / `remove` / `flush` /
 `clean`, and their gerund forms `clearing` / `resetting` / …), and every other
 token filler or a word for the transcript itself (`chat`, `conversation`,
@@ -1884,10 +1918,10 @@ and a streamed `clear_chat` bump `conversationGen` and abort the in-flight
 stream, so a late answer from the old conversation writes nothing to the page or
 localStorage; `currentSessionId` is null (send disabled) until the server
 confirms the new session, a failed creation shows a retry, and a second click
-joins the transition already running. `python test_clear_chat.py`
+joins the transition already running. `test_clear_chat.py` *(removed)*
 (`--routing` skips the DB; runs `node test_clear_chat_frontend.js`).
 
-`python test_clear_command.py` (117 classification cases — 70 wordings that must
+`test_clear_command.py` *(removed)* (117 classification cases — 70 wordings that must
 wipe, 13 register-mutation requests that must not, 13 ordinary questions, 2 long
 real Tamil/English questions, plus other contentless kinds; and an end-to-end
 turn on both chat paths — the action, the confirmation, and that a clear turn
@@ -1897,8 +1931,8 @@ way: a contentless turn is answered before any model is reached.
 ## Off-topic questions, and "what can you do"
 
 `_is_out_of_scope()` / `_is_capability_question()` / `_scope_reply()` in
-`chatbot.py`, answered in **both** chat paths right after the mutation guard and
-before intent routing. `python test_out_of_scope.py` (49 checks, no LLM).
+the `backend/services/chatbot/` package, answered in **both** chat paths right after the mutation guard and
+before intent routing. `test_out_of_scope.py` *(removed)* (49 checks, no LLM).
 
 **The gap.** `parse_intent` sends anything it does not recognise to
 `general_query` → the agent / RAG fallback, and llama3.1:8b there will happily
@@ -1923,14 +1957,14 @@ and Tanglish.
 application / ward routes to a *deterministic* handler (`application_status`,
 `survey_detail`, `survey_owners`, `litigation_check`, …), which returns
 `{"found": False}` / a jurisdiction refusal — the LLM never sees it, so there
-is nothing to hallucinate from. `test_out_of_scope.py` re-checks that those
+is nothing to hallucinate from. `test_out_of_scope.py` *(removed)* re-checks that those
 questions still land on a deterministic intent and are not swept up by the
 scope guard.
 
 ## Every way an officer asks for a channel
 
 `_CHANNEL_FUZZY` / `_CHANNEL_FUZZY_NEVER` / `names_only_a_channel()` and the
-channel-listing gate in `rag.py`. Covered by `test_answer_number_guard.py`
+channel-listing gate in `rag.py`. Covered by `test_answer_number_guard.py` *(removed)*
 section 3a.
 
 A sweep of ~180 phrasings against the canonical `show <channel> applications`
@@ -2023,13 +2057,13 @@ listing used, so it is as scoped as the empty list it explains.
 ## A type scope is a register question, not a desk one
 
 `get_pending_applications()` in `postgres.py`; the `status_filter` block in both
-chat paths in `chatbot.py`.
+chat paths in the `backend/services/chatbot/` package.
 
 "Show my ISD applications" answered **2** to an officer holding 9, and "show my
 NISD applications" answered **1** to an officer holding 58. Two filters were
 stacked on the same question, at two layers:
 
-- `chatbot.py` defaulted `status_filter` to `"pending"` for any listing that
+- the `backend/services/chatbot/` package defaulted `status_filter` to `"pending"` for any listing that
   named no status; neither type was exempt.
 - `get_pending_applications()` then re-applied `ACTIVE_STATUSES` whenever
   `status is None`. The exemption list there named `submission_channel` but not
@@ -2054,7 +2088,7 @@ overdue ones kept it.
 ## "Applicant details" asks about the people
 
 `_asks_applicant_focus()` / `_carried_details_message()` and the
-`detail_focus` branch of the multi-application renderer in `chatbot.py`.
+`detail_focus` branch of the multi-application renderer in the `backend/services/chatbot/` package.
 
 After a listing, "applicant details" was answered *"Here are the details for 2
 application(s): … (Status: Pending, Stage: SIS)"* — the application card, for a
@@ -2075,7 +2109,7 @@ The rewrite now carries two things forward instead of discarding them:
 ## An answer may not carry a number the register does not
 
 `_verify_answer_numbers()` / `_reconcile_count_claims()` /
-`_scrub_unverified_app_numbers()` in `chatbot.py`, applied in both chat paths to
+`_scrub_unverified_app_numbers()` in the `backend/services/chatbot/` package, applied in both chat paths to
 the **LLM-written answer only** — every other answer is rendered from the query
 result and has nothing to disagree with.
 
@@ -2108,8 +2142,8 @@ still not a channel.
 
 ## Negation over application lists
 
-`backend/services/neg_scope.py`; hooks in `chatbot.py` right after the follow-up context is
-loaded (both chat paths) and just before `_apply_result_limit`. `python test_negation_scope.py`
+`backend/services/chatbot/neg_scope.py`; hooks in the `backend/services/chatbot/` package right after the follow-up context is
+loaded (both chat paths) and just before `_apply_result_limit`. `test_negation_scope.py` *(removed)*
 (`--stream` too; ~40 chains, English / Tamil / Tanglish, no LLM).
 
 `parse_intent` reads ONE status / type / channel, so "I don't want NISD" was answered with the
@@ -2128,8 +2162,8 @@ visit-table questions stay with the field-visit follow-up layer.
 
 ## A list request with a word nothing can filter by
 
-`backend/services/qualifier_guard.py`, answered through `_special_scope_kind()` (`unknown_from`,
-`unknown_qualifier`) in both chat paths. `python test_date_table_followups.py` carries the chains.
+`backend/services/chatbot/qualifier_guard.py`, answered through `_special_scope_kind()` (`unknown_from`,
+`unknown_qualifier`) in both chat paths. `test_date_table_followups.py` *(removed)* carries the chains.
 
 "display applications ftom sri", "show applications in xyz", "show urgent applications" were
 answered with the officer's default desk queue: `parse_intent` reads the words it knows and drops
@@ -2144,101 +2178,40 @@ re-run that (`ab.py`-style: `unknown_words()` over the files) after touching the
 
 ## Testing
 
+The maintained suite is pytest (`pytest.ini`, `tests/conftest.py`). It needs the live
+PostgreSQL (`sis_chatbot_db`) and the seeded officers; `tests/unit` does not call the LLM.
+
 ```powershell
-# IGRS Form 6 and CAN number questions (invariants, answers, both scripts)
-python test_igrs_can_queries.py            # everything (DB, no LLM)
-python test_igrs_can_queries.py --data     # invariants + routing only
-
-# Service code meanings -- "what is 0153?", "which service code is <app>?"
-python test_service_code_queries.py            # routing + answers (no LLM)
-python test_service_code_queries.py --routing  # routing only
-
-# Owner-record fields -- ration card, voter ID, PIN, occupation/relation code
-python test_owner_field_queries.py            # routing + answers (DB, no LLM)
-python test_owner_field_queries.py --routing  # cue detection only, no DB
-
-# Owner sub-fields as follow-ups -- gender / relationship / share / aadhaar
-python test_owner_field_followups.py          # classification + render (no LLM)
-
-# Parcel-register fields the survey projection drops -- soil, tax, flags,
-# old survey number, Form 6-8, door / street code
-python test_parcel_field_followups.py         # routing + classifier + answer (no LLM)
-
-# The LLM number guard, the type scope, and "applicant details"
-python test_answer_number_guard.py            # everything (DB, no LLM)
-python test_answer_number_guard.py --routing  # the guard only, no database
-
-# Off-topic questions ("weather", "write a poem") + "what can you do";
-# and that unseen-data questions still reach a deterministic handler
-python test_out_of_scope.py                    # classification + routing (no LLM)
-
-# Implicit follow-ups -- "which is oldest?", "when was it scheduled?"
-python test_followup_context.py            # everything (DB, no LLM)
-python test_followup_context.py --routing  # classification only, no DB
-
-# Chat attachments -- extraction, citations, deterministic CSV, grounding,
-# authorization, persistence
-python test_attachments.py            # everything (DB + Ollama)
-python test_attachments.py --fast     # skips the live-model cases
-python test_attachments.py --no-db    # extraction / CSV / prompts only
-
-# Agent layer -- tool calling, authorization, grounding, follow-ups
-python test_agent_layer.py            # everything (needs Ollama + the DB)
-python test_agent_layer.py --fast     # skips every case that calls the LLM
-python test_agent_layer.py --no-db    # schema + validation only
-
-# Comprehensive suite (top-level)
-python test_comprehensive_suite.py
-
-# 200-question suite (backend-focused)
-python backend/test_200_suite.py
-
-# Fee / service-charge / money questions (routing, DB aggregate, answers)
-python test_fee_queries.py            # all three layers (needs Ollama)
-python test_fee_queries.py --fast     # routing + data only
-
-# Submission-channel questions (routing, derivation from layer 1, answers)
-python -m backend.sample_db.test_channel_queries
-python -m backend.sample_db.test_channel_queries --fast
-
-# "My last / previous application" (routing, DB lookup, answers, follow-ups)
-python test_last_application.py            # everything (no LLM needed)
-python test_last_application.py --routing  # routing only, no database
-
-# Temporary sub-division numbers ({subdiv}/T{seq}) -- CSV, both DB layers, answers
-python test_temp_subdivision_queries.py            # everything (no LLM needed)
-python test_temp_subdivision_queries.py --csv      # CSV vs backend/documents claims
-python test_temp_subdivision_queries.py --routing  # routing only, no database
-
-# Per-application field-visit follow-ups ("is field visit scheduled?")
-python test_field_visit_followups.py            # routing + answers (no LLM needed)
-python test_field_visit_followups.py --routing  # routing only, no database
-
-# Completed (approved / rejected) applications -- block, applied date,
-# decision date, status
-# Comparison questions -- "which is older A or B", "ISD vs NISD",
-# "which took the longest to approve"
-python test_comparison_queries.py            # routing + data + answers (no LLM)
-python test_comparison_queries.py --routing  # routing only, no database
-
-python test_completed_applications.py            # routing + data + answers (no LLM)
-python test_completed_applications.py --routing  # routing only, no database
-python test_completed_applications.py --data     # routing + data, no answers
-
-# "Which application should I field visit next, and where?" (routing, plan, answers)
-python test_visit_plan_queries.py            # everything (no LLM needed)
-python test_visit_plan_queries.py --routing  # routing only, no database
-
-# Negation over lists -- not X / except X and Y / neither ... nor / without a field visit
-python test_negation_scope.py [--stream]
-
-# The typed "clear" command -- what counts as one, and what it does
-python test_clear_command.py            # classification + end-to-end (DB, no LLM)
-python test_clear_command.py --routing  # classification only, no database
-
-# Test question sets (plain text, one question per line)
-# test_questions_100.txt, test_questions_200.txt, test_questions_206.txt
+python -m pytest tests/unit -q                       # everything under tests/unit
+python -m pytest tests/unit/test_followup_context.py # one file
+python -m pytest tests/unit -q -k pair               # by keyword
 ```
+
+| area | file in `tests/unit` |
+|---|---|
+| explicit-ID precedence, canonical server context (P3) | `tests/unit/test_canonical_conversation_context.py` |
+| pair persistence (P3.1) | `tests/unit/test_pair_context_persistence.py` |
+| application rejection reason (P3.2) | `tests/unit/test_application_rejection_reason.py` |
+| client-history isolation, focus, workflow history (P3.3) | `tests/unit/test_canonical_entity_resolution.py`, `tests/unit/test_focused_application_handlers.py`, `tests/unit/test_application_workflow_history.py` |
+| historical pair references (P3.4) | `tests/unit/test_historical_pair_references.py` |
+| semantic routing (P2) | `tests/unit/test_semantic_intent.py`, `tests/unit/test_semantic_routing_edge_cases.py` |
+| routing fixes, intent parsing, language | `tests/unit/test_p0_routing_fixes.py`, `tests/unit/test_intent_parsing.py`, `tests/unit/test_language_detection.py`, `tests/unit/test_query_understanding.py` |
+| follow-up context | `tests/unit/test_followup_context.py`, `tests/unit/test_p1_context_and_reasoning.py`, `tests/unit/test_p1_evidence_reasoning.py` |
+| read-only guard, security, jurisdiction | `tests/unit/test_readonly_guard.py`, `tests/unit/test_security_hardening.py`, `tests/unit/test_jurisdiction_scoping.py`, `tests/unit/test_tool_scoping.py` |
+| agent layer | `tests/unit/test_agent_plan.py`, `tests/unit/test_agent_tools_registry.py`, `tests/unit/test_agent_tools_security.py` |
+| retrieval / answers / FMB policy | `tests/unit/test_hybrid_rag.py`, `tests/unit/test_response_generator.py`, `tests/unit/test_fmb_policy.py` |
+
+Frontend: `tests/frontend/test_sanitize_bot_html.html` is a self-checking page for the bot-message
+sanitizer (`sanitizeBotHtml` in `chat.js`). Serve the repo over http (launch config `sis-static-tests`,
+port 8766) and open `/tests/frontend/test_sanitize_bot_html.html`; the page title becomes PASS or FAIL.
+
+`test_reports/` holds each remediation's baseline and report; `test_reports/qbank_artifacts/` holds the
+live-API scripts they ran (real server, real JWT).
+
+**Removed scripts.** The standalone `test_*.py` / `check_*.py` scripts (and `backend/sample_db/test_*.py`,
+`test_comprehensive_suite.py` *(removed)*, `backend/test_200_suite.py`) were deleted in commit `39f9e25`. Feature
+sections in this file still name the script that used to cover them, marked *(removed)*; where an
+equivalent exists in `tests/unit` it is named instead. Those behaviours are not all re-covered.
 
 ---
 
@@ -2248,9 +2221,9 @@ Developed for **National Informatics Centre (NIC)** internship — Tamil Nadu Su
 
 ## Sub-division plot fields of one application
 
-`backend/services/subdivision_qa.py`, hooked by `_early_subdivision_answer()` in
-`chatbot.py` (both chat paths, ahead of the "not held in your register" guards).
-`python test_subdivision_qa.py` (no DB, no LLM).
+`backend/services/chatbot/subdivision_qa.py`, hooked by `_early_subdivision_answer()` in
+the `backend/services/chatbot/` package (both chat paths, ahead of the "not held in your register" guards).
+`test_subdivision_qa.py` *(removed)* (no DB, no LLM).
 
 Answers temporary / new sub-division number, existing / new patta, area, land type / use,
 tax, plot, soil, group numbers and owners from the plot rows in `areg_temp_subdivclub`
@@ -2263,8 +2236,8 @@ a turn routed to a listing intent, which then becomes `application_status`.
 
 ## Old-owner record (`chitta_temp_old_owner`) and its comparison with the sub-division record
 
-`backend/services/oldowner_qa.py`, hooked first inside `_early_subdivision_answer()`;
-`python test_oldowner_qa.py` (no DB, no LLM). Answers old-owner name, patta, relative
+`backend/services/chatbot/oldowner_qa.py`, hooked first inside `_early_subdivision_answer()`;
+`test_oldowner_qa.py` *(removed)* (no DB, no LLM). Answers old-owner name, patta, relative
 (father / husband), relation / relation code, owner no, share, extent u1-u3, survey /
 sub-division no, status code, gender, "is there an old-owner record" and a full card, and
 compares the old-owner row with `areg_temp_subdivclub` field by field (survey, sub-division,
@@ -2278,8 +2251,8 @@ forces `intent = application_status` so a later listing branch cannot overwrite 
 
 ## Desk recommendations, change flags and application-information fields
 
-`backend/services/cmflow_qa.py` and `backend/services/appinfo_qa.py`, both answered from
-`_early_subdivision_answer()` (`python test_record_qa.py`, no DB, no LLM).
+`backend/services/chatbot/cmflow_qa.py` and `backend/services/chatbot/appinfo_qa.py`, both answered from
+`_early_subdivision_answer()` (`test_record_qa.py` *(removed)*, no DB, no LLM).
 
 * **`cmflow_qa`** reads `correction_modification_flow`: SIS / ZDT / SD / DIS / Tahsildar / RDO /
   Collector-DRO / DRO / COSS / CLA recommendation (Y / N), remarks and submit date; reason code,
@@ -2292,7 +2265,7 @@ forces `intent = application_status` so a later listing branch cannot overwrite 
   amount, status / reject-reason code, proposed field-visit date and remarks, missing documents,
   enclosures, SRO, CSC name, permanent address, mother / father, gender, DOB. A blank column is
   "not recorded" with the rule that explains it (no SRO on a CSC file).
-* **Plumbing** (`_cm_strong()` in `chatbot.py`): a claimed message is forced to `application_status`,
+* **Plumbing** (`_cm_strong()` in the `backend/services/chatbot/` package): a claimed message is forced to `application_status`,
   skips the multi-request splitter, the `workflow_remarks` early handler, the channel-clarification
   guard and the pending-list routing; `_hook_done` stops the later application_status branches from
   overwriting the answer. A service code other than 0153 / 0154 is not in `applications`: the gate
@@ -2301,7 +2274,7 @@ forces `intent = application_status` so a later listing branch cannot overwrite 
   application's status (`_bare_app_status()`), not the pending list. The gate looks back 8 officer
   turns for the application number.
 
-**Details of an application under any other service code** (`backend/services/othercode_detail.py`):
+**Details of an application under any other service code** (`backend/services/chatbot/othercode_detail.py`):
 "show details of 2026/0158/02/000905" (any code but 0153 / 0154, which have no row in `applications`)
 returns one card assembled by `appl_id` from the register entry, `appl_log_urban`, the workflow log,
 `correction_modification_flow`, `uareg_modification` / `uchitta_natham_modification` (the parcel and
@@ -2310,7 +2283,7 @@ extract (applicant, challan, amount, proposed visit). Built in `resolve_applicat
 (`register_only` verdict); a number that exists in the register but outside the officer's ward is
 refused as out of jurisdiction, not reported as non-existent. Attachment bodies are never read.
 
-**F-Line (0178) record** (`backend/services/fline_qa.py`, tested in `test_record_qa.py`): survey / sub-division /
+**F-Line (0178) record** (`backend/services/chatbot/fline_qa.py`, tested in `test_record_qa.py` *(removed)*): survey / sub-division /
 patta, land type and extent, govt / private code, transaction status, total boundaries, sketch available (the
 base64 body is never read), SIS and DIS recommendation / remarks / reason / verify date / user, scheduled date,
 applicant type, from `f_line_service_urban`. For an F-Line application every field is answered from that row;
@@ -2341,13 +2314,13 @@ earlier ISD one. A Tamil cue that is a substring of another word is a trap here 
 "no MERGE service code (0155)" line no longer names a code. A merge is only `applications.merged_application_id`
 (source `merge_applid` in the application-information extracts; one ISD file, 2026/0154/02/013642, carries one, merged
 with 2026/0154/02/011886). Forward ("merge id of X", "with which application is it merged", "merge applid enna") is a
-field answered by `appinfo_qa`; `backend/services/merge_qa.py` adds the reverse ("which applications are merged with X")
+field answered by `appinfo_qa`; `backend/services/chatbot/merge_qa.py` adds the reverse ("which applications are merged with X")
 and the overview ("which applications have a merge id", "how many merged applications"), each re-checked against the
 officer's jurisdiction (a parent outside it is never confirmed) and recorded as the carried list, so "show details of the
 first one" and "how many of them are approved" continue it. A generic "what is the merge service code" / "can I merge
 two applications" is answered by saying merging is a merge id on an ISD file, not a service.
 
-**Cross-checks** (`backend/services/crosscheck_qa.py`, parse tested in `test_record_qa.py`): comparisons of one
+**Cross-checks** (`backend/services/chatbot/crosscheck_qa.py`, parse tested in `test_record_qa.py` *(removed)*): comparisons of one
 application against its other records, computed from the rows -- applicant vs the chitta old owner (names compared
 through `utils/translit`, so Tamil and Latin spellings meet), a full mismatch report (patta, survey, ward, block),
 application status vs the correction / modification flow, address / mobile shared with other applications (only
@@ -2359,7 +2332,7 @@ owner correction reason and automutated are NISD-only) the answer says so. The a
 means is the one an answer is ABOUT: its trailing "[number]", else the number it opens with (`_LastAppNo`), never a
 number quoted inside it.
 
-**IGRS owner records** (`backend/services/igrs_owner_qa.py`, tested in `test_record_qa.py`): the owners a Sub-Registrar
+**IGRS owner records** (`backend/services/chatbot/igrs_owner_qa.py`, tested in `test_record_qa.py` *(removed)*): the owners a Sub-Registrar
 (IGRS) referral names, from `full_field_patta_transfer_igrs_owner` (9 rows, 6 NISD files, none of which also has a chitta
 old-owner row -- the two owner records never coexist on one file). Fields: owner (Tamil / English), patta, door, relative
 and relation, owner / relative no, share, address and pincode, IGRS form 6 no, form 6 and assignment no, ration card,
@@ -2371,7 +2344,7 @@ an owner question without the word IGRS goes to the other owner handlers unless 
 topic asked, and say when the chitta side does not exist. The owner-photo refusal and the record-field handler step
 aside for these questions.
 
-**New-owner records and UDS** (`backend/services/newowner_qa.py`, tested in `test_record_qa.py`): the owners a full-field
+**New-owner records and UDS** (`backend/services/chatbot/newowner_qa.py`, tested in `test_record_qa.py` *(removed)*): the owners a full-field
 patta transfer (NISD) gives the land to, from `full_field_patta_transfer_new_owner` (30 rows, 16 NISD files; the old
 owners of those files are in `full_field_patta_transfer_old_owner`, not in the chitta table, which is ISD's). Fields:
 name (Tamil / English), relationship and relative, extent, patta, owner and relative no, owner-record status code (raw:
@@ -2399,7 +2372,7 @@ record is held for this application (the table holds no records for any applicat
 "why was it returned" answer adds that the record has no reason column and quotes the application's own remarks, and an
 "overall status" question adds the application's status. When rows do exist the same functions render them (fields, update
 date, status and owner-status code, geography) and compare returned vs old / new / IGRS by name, patta, share, extent, UDS
-and relative -- exercised against fake rows in `test_record_qa.py`.
+and relative -- exercised against fake rows in `test_record_qa.py` *(removed)*.
 
 **Context rules the owner / record modules rely on** (checked across mixed conversations, three officers, both chat paths):
 a register-only application (0158 ... 0178) carried along from an earlier turn does not answer a question that names a
@@ -2407,7 +2380,7 @@ survey number ("who is the owner of survey 20" stays a survey question); "and th
 changed between them?" after an owner answer compares those owners (`_owner_ctx_compare`); every module re-checks the
 officer's jurisdiction, so another officer asking about the same file is refused with nothing shown.
 
-**The full-field transfer record** (`backend/services/fulltransfer_qa.py`, tested in `test_record_qa.py`): the NISD
+**The full-field transfer record** (`backend/services/chatbot/fulltransfer_qa.py`, tested in `test_record_qa.py` *(removed)*): the NISD
 patta-transfer main row in `full_field_patta_transfer_urban` (46 rows, one per NISD file; no ISD file has one): survey,
 sub-division, old patta, land type code, extent (u1 ha / u2 ares / u3 sq.m; the extent-in-ares column is blank, so it is
 computed), registration document / place / date / year, reason (Sale / Settlement deed), ZDT patta / order / remarks,
@@ -2421,7 +2394,7 @@ On the sample, the ZDT patta of 048323 (84103) differs from the new owner's reco
 tables carry. A question that names a survey number and no application is never claimed by any record module
 (`_cm_strong` returns False), so "tax rate of survey 5" stays with the survey handlers.
 
-**SD attachments** (`backend/services/sdattach_qa.py`, tested in `test_record_qa.py`): the Senior Draughtsman's sketch PDFs
+**SD attachments** (`backend/services/chatbot/sdattach_qa.py`, tested in `test_record_qa.py` *(removed)*): the Senior Draughtsman's sketch PDFs
 kept against an ISD file in `sd_attachment` (52 rows, 29 files; 015395 has two, both survey / sub-division `120/1`). Answers:
 exists / how many / which files / sl no / survey-sub-division per attachment / missing / duplicates (compared by content hash)
 / complete details, and the cross-checks against the application's survey and temp sub-division record. The rows carry NO file
@@ -2430,7 +2403,7 @@ shown. F-Line and full-field records never exist for an ISD file, so those compa
 name an application (or follow an SD answer, `_sd_parse`) -- a chat-uploaded file ("the attached file", "register.csv") still
 goes to `attachment_qa`.
 
-**TSLR sketch records** (`backend/services/tslr_qa.py`, tested in `test_record_qa.py`): `tslr_sketch_urban` carries the
+**TSLR sketch records** (`backend/services/chatbot/tslr_qa.py`, tested in `test_record_qa.py` *(removed)*): `tslr_sketch_urban` carries the
 survey / sub-division, old patta, door, type (e-category), land type code, extent (u1 ha / u2 ares / u3 sq.m), submit time,
 challan / payment (treasury, bank, mode, amount) and CAN of a TSLR-sketch application (service code **0156**; 22 rows, 11
 files, usually two per file). It is a register-only service, so the question is answered with an access check through the
@@ -2439,7 +2412,7 @@ records do not exist for a 0156 file; the TSLR rows are compared with the regist
 (all ✔ on the sample). The details card of a 0156 file now lists its TSLR rows. A bare follow-up ("and the sub division no?")
 after a TSLR answer continues it (`_tslr_parse`); an ISD file such as 015395 has none and says so.
 
-**Parcel-register modifications** (`backend/services/uamod_qa.py`, tested in `test_record_qa.py`): `uareg_modification` (134
+**Parcel-register modifications** (`backend/services/chatbot/uamod_qa.py`, tested in `test_record_qa.py` *(removed)*): `uareg_modification` (134
 rows, 72 files, services 0158 / 0159 / 0160 / 0162 / 0164 / 0169) -- what a correction / modification application changes in
 the survey register: survey / sub-division and old survey no, door, govt / private, land type and use, irrigation, tax, soil,
 extent, patta numbers, remarks, forms, relinquishment / assignment, alienation / acquisition, assessed / cultivable,
@@ -2454,8 +2427,7 @@ only this record has) must be in the question, or it must follow a parcel-modifi
 turn "approved" into "approval" (`test_register_equal_treatment` caught that). An ISD / NISD file says it has no
 parcel-modification record.
 
-**One large message with many questions** (`_big_plan()` / `_answer_big()` / `_single_turn()` in `chatbot.py`, `python
-test_big_message.py`). A message of 14+ words that is a numbered list ("1) ... 2) ..."), "<head> : f1, f2, f3", "tell me /
+**One large message with many questions** (`_big_plan()` / `_answer_big()` / `_single_turn()` in the `backend/services/chatbot/` package, `test_big_message.py` *(removed)*). A message of 14+ words that is a numbered list ("1) ... 2) ..."), "<head> : f1, f2, f3", "tell me /
 give me / show me f1, f2, f3 ...", "<application no> f1, f2, f3 ...", "details of A, B, C including f1, f2 ..." or several
 "?" questions is split into its own questions BEFORE any handler sees it; each question goes through the ordinary pipeline
 in the same order `process_chat` uses (`_single_turn`), and every answer joins the history the next question sees, so "its
@@ -2467,7 +2439,7 @@ one details card per application); a qualified field ("IGRS owner name") hands i
 from the list. One failing question gives "(could not answer this part)" instead of losing the others. A message with
 fewer than 14 words, or no list shape, is never split.
 
-**Natham-chitta modifications** (`backend/services/natham_qa.py`, tested in `test_record_qa.py`): `uchitta_natham_modification`
+**Natham-chitta modifications** (`backend/services/chatbot/natham_qa.py`, tested in `test_record_qa.py` *(removed)*): `uchitta_natham_modification`
 (121 rows, 43 files, services 0158 / 0159 / 0160 / 0164 / 0169) -- the owners a modification application records against a natham
 patta: owner and relative (Tamil / English), relationship, patta and "S patta" (blank), door, share (blank), address, ID numbers
 (all blank; Aadhaar never shown), sex, status, operation, full data, flow type (blank), update time. A file has several rows tagged
@@ -2477,23 +2449,23 @@ follows a Natham answer). Comparisons with IGRS / chitta / TSLR / full-field / n
 such a file; patta, status, operation and geography are compared with the parcel-modification rows (`uareg_modification`) of the
 same file (patta matches). An ISD / NISD file says it has no Natham-chitta modification record.
 
-**Negated record questions** (`backend/services/negq.py`, `python test_negq.py`, no DB / LLM): "is there no new owner record", "tslr sketch illaya", "which fields are not recorded", "which fields did not change", "doesn't the ZDT patta match", "who has not recommended it", "natham patta match aagala". A record module answers a positive question, so `negq.rewrite()` (both chat paths, ahead of `neg_scope`) takes the negation out and names the record in the form each module reads: existence -> `<record> everyfield` / `complete details`, blank fields -> the same card, kept to the "not recorded" lines, "did not change" -> "which fields changed" kept to the ✔ lines, "not matching" -> the compare question with a "Correct, they do not match" / "No, they match" lead, "not recommended" -> `missing recommendation`. `_early_subdivision_answer()` is a wrapper that applies `negq.shape()` / `lead()` (a contextvar carries the kind). Fenced: it fires only with an application number in the message or the last 8 turns, never on lists / visits / documents / status words (`neg_scope` owns those), "door no" is a number not a negation, Tamil-script plain negations are left to the modules. A/B over the 7786 bank questions rewrites 0. Each record module's `parse()` has a sentinel (`everyfield`, plus its own record word) that returns every column. A file of another service code asked for an IGRS / new / old owner / full-field record answers "no such record" (`_other_code_absent`). Also fixed: a listing on screen no longer supplies "the application" to a numberless record question (`_LastAppNo` returns None for 3+ numbers, strips markup, prefers the first number), and the stream path no longer overwrites a hook answer with the application_status "not found" card.
+**Negated record questions** (`backend/services/chatbot/negq.py`, `test_negq.py` *(removed)*, no DB / LLM): "is there no new owner record", "tslr sketch illaya", "which fields are not recorded", "which fields did not change", "doesn't the ZDT patta match", "who has not recommended it", "natham patta match aagala". A record module answers a positive question, so `negq.rewrite()` (both chat paths, ahead of `neg_scope`) takes the negation out and names the record in the form each module reads: existence -> `<record> everyfield` / `complete details`, blank fields -> the same card, kept to the "not recorded" lines, "did not change" -> "which fields changed" kept to the ✔ lines, "not matching" -> the compare question with a "Correct, they do not match" / "No, they match" lead, "not recommended" -> `missing recommendation`. `_early_subdivision_answer()` is a wrapper that applies `negq.shape()` / `lead()` (a contextvar carries the kind). Fenced: it fires only with an application number in the message or the last 8 turns, never on lists / visits / documents / status words (`neg_scope` owns those), "door no" is a number not a negation, Tamil-script plain negations are left to the modules. A/B over the 7786 bank questions rewrites 0. Each record module's `parse()` has a sentinel (`everyfield`, plus its own record word) that returns every column. A file of another service code asked for an IGRS / new / old owner / full-field record answers "no such record" (`_other_code_absent`). Also fixed: a listing on screen no longer supplies "the application" to a numberless record question (`_LastAppNo` returns None for 3+ numbers, strips markup, prefers the first number), and the stream path no longer overwrites a hook answer with the application_status "not found" card.
 
 **What-if questions** (`negq.rewrite()` wrapper, same module): "what if there is no IGRS owner", "what if the challan is not paid", "suppose the DIS recommendation is blank", "sis recommend pannalana enna aagum", "ஒருவேளை … என்றால் என்ன ஆகும்". The register cannot simulate a change, so the wrapper is taken off, the underlying (possibly negated) question is answered from the record as it stands, and the answer opens with a note saying it is not a prediction (`HYP`, `HYP_NOTE`); polarity leads ("Correct, …") are dropped for a what-if. With no application in the message or the last 8 turns the what-if is left to the ordinary handlers. TSLR "payment" alone now asks challan no / payment mode / amount.
 
-**Mixed, long and unsupported questions.** `_big_plan()` now also splits (a) one sentence holding two questions ("which tslr fields are blank and which are the same as the application": `_compound_split`, the second keeps the record the first named; "whether / if" count as question starts), (b) several applications and one question each (`_multi_app_plan`: "compare A and B on status, applicant ..." asks each field of each file; "A, B and C: which has a new owner record, which has no old owner record" asks "does it have ..." of each), and (c) long prose of comma-joined questions (`_prose_plan`: each piece is asked of the application named most recently BEFORE it, greetings / "thanks" / "give the same for" dropped; English and Tanglish). `backend/services/unheld_qa.py` answers what no table holds -- caste / religion, market / guideline value, sale amount, stamp duty, acres / cents, an officer's name, age, income -- with "not held" and what IS held (Aadhaar: "never shown"); it runs ahead of the record modules and needs an application in view. "court case / litigation ... against it" carries the application and goes to the litigation handler. Staleness: `unheld_qa.context_app()` returns nothing when the newest answer is a listing (3+ applications) so a singular follow-up never lands on a list row; no record module caches anything (every turn re-reads its table). `test_negq.py` carries the plan cases. Audit: every application number in ~300 answers exists in the register (the only others are the deliberately fake numbers echoed in "does not exist").
+**Mixed, long and unsupported questions.** `_big_plan()` now also splits (a) one sentence holding two questions ("which tslr fields are blank and which are the same as the application": `_compound_split`, the second keeps the record the first named; "whether / if" count as question starts), (b) several applications and one question each (`_multi_app_plan`: "compare A and B on status, applicant ..." asks each field of each file; "A, B and C: which has a new owner record, which has no old owner record" asks "does it have ..." of each), and (c) long prose of comma-joined questions (`_prose_plan`: each piece is asked of the application named most recently BEFORE it, greetings / "thanks" / "give the same for" dropped; English and Tanglish). `backend/services/chatbot/unheld_qa.py` answers what no table holds -- caste / religion, market / guideline value, sale amount, stamp duty, acres / cents, an officer's name, age, income -- with "not held" and what IS held (Aadhaar: "never shown"); it runs ahead of the record modules and needs an application in view. "court case / litigation ... against it" carries the application and goes to the litigation handler. Staleness: `unheld_qa.context_app()` returns nothing when the newest answer is a listing (3+ applications) so a singular follow-up never lands on a list row; no record module caches anything (every turn re-reads its table). `test_negq.py` *(removed)* carries the plan cases. Audit: every application number in ~300 answers exists in the register (the only others are the deliberately fake numbers echoed in "does not exist").
 
-**One look for every answer** (`backend/services/card_html.py`): the ISD / NISD details render as a titled FIELD | DETAILS card with a Copy button, while the record modules, register-only cards (0156, 0158 ... 0178) and "not held" answers were plain text bullets, so the same kind of question looked different. `_early_subdivision_answer()` (and the register-only card) now return the same card markup (`data-table-card`, styles already in `table_styles.css`; Copy falls back to the DOM rows); a one-line answer becomes the `table-intro` sentence. Text is escaped; nothing is added. `_LastAppNo` strips markup so follow-ups still find the application, and `negq._hint` ignores "No ..." absence answers when guessing which record "which fields are blank" means.
+**One look for every answer** (`backend/services/chatbot/card_html.py`): the ISD / NISD details render as a titled FIELD | DETAILS card with a Copy button, while the record modules, register-only cards (0156, 0158 ... 0178) and "not held" answers were plain text bullets, so the same kind of question looked different. `_early_subdivision_answer()` (and the register-only card) now return the same card markup (`data-table-card`, styles already in `table_styles.css`; Copy falls back to the DOM rows); a one-line answer becomes the `table-intro` sentence. Text is escaped; nothing is added. `_LastAppNo` strips markup so follow-ups still find the application, and `negq._hint` ignores "No ..." absence answers when guessing which record "which fields are blank" means.
 
 **Plain-text answers on the page** (`frontend/js/chat.js`, `plainToCard()`): any plain answer made of bullets or "Label: value" lines (the field-visit plan, workload, "not held" answers ...) is drawn as the same titled FIELD | DETAILS (or APPLICATION | DETAILS) card as the details, whichever backend path produced it, including streamed ones; prose and answers with long lines are left as text. The old bullet conversion ran after newlines had become `<br>` and never matched; lists are converted first now. `chatbot.html` bumps `?v=` for `chat.js` (20261003_002) -- bump it again on any change.
 
 **"Overdue" has two meanings, and the answers now say which.** The documented overdue rule is the 15-working-day field-visit deadline (`backend/utils/sla.py`, `applications.is_overdue`); a visit past its *scheduled date* is a different, earlier state. "Which applications are overdue" with none past the deadline now says so with the oldest open ISD file's age and how many visits are past their scheduled date (`postgres._no_overdue_note`); the field-visit summary says "N past the scheduled date", not "overdue"; "which visits are past scheduled date / missed the date" routes to `fv_overdue_inspections`. Bug found by cross-checking answers against SQL: that handler built its jurisdiction filter with `and_(*conditions)` (every ward required at once) instead of `or_`, so it reported "no field visit is past its scheduled date" while three were. A count in a ward / block ("how many applications in ward 001") is over the register, not narrowed to pending.
 
-**Calculations over the whole register** (`backend/services/calc_qa.py`, `_calc_turn()` ahead of `_stats_turn` in both chat paths, `python test_calc.py`): "pending plus approved", "approved minus rejected", "how many more approved than rejected", "ratio of approved to rejected", "what percentage of 0158 applications are approved", "sum of pending in ward 001", "which service code / ward / channel / month has the most / least", "top 3 wards", "average applications per day / week", and plain arithmetic ("47 plus 17", "20 percent of 150", via a whitelisted `ast` evaluator). The operands are counted from `get_all_service_code_applications(hide_rejected=False)` -- every service code, ISD / NISD being two of them -- and shown beside the result. The register's coarse status has three values; "pending" is its open status (it already holds files in progress), so a pending count is 47 everywhere. Bare "how many are approved" and a percentage with no noun stay follow-ups over the list on screen (`number_qa`); a ratio over a list of one kind compares the register instead. A bare status request ("i m asking abt pending", "pending ones only") is a register-wide listing like "show my pending applications" (it used to fall to the 17-row ISD/NISD desk queue).
+**Calculations over the whole register** (`backend/services/chatbot/calc_qa.py`, `_calc_turn()` ahead of `_stats_turn` in both chat paths, `test_calc.py` *(removed)*): "pending plus approved", "approved minus rejected", "how many more approved than rejected", "ratio of approved to rejected", "what percentage of 0158 applications are approved", "sum of pending in ward 001", "which service code / ward / channel / month has the most / least", "top 3 wards", "average applications per day / week", and plain arithmetic ("47 plus 17", "20 percent of 150", via a whitelisted `ast` evaluator). The operands are counted from `get_all_service_code_applications(hide_rejected=False)` -- every service code, ISD / NISD being two of them -- and shown beside the result. The register's coarse status has three values; "pending" is its open status (it already holds files in progress), so a pending count is 47 everywhere. Bare "how many are approved" and a percentage with no noun stay follow-ups over the list on screen (`number_qa`); a ratio over a list of one kind compares the register instead. A bare status request ("i m asking abt pending", "pending ones only") is a register-wide listing like "show my pending applications" (it used to fall to the 17-row ISD/NISD desk queue).
 
 **Workflow history for every service code, one shape.** "workflow history of X", "workflow of X", "workflow steps for X", "where is it" / "who has it now" give the same answer for ISD / NISD and every other service code: "Workflow history for X (N step(s)):" then one dated line per step ("Submission → Sub Inspector Surveyor", `[recommended]`, ` · "remark"`) and where the file is now. Files under 0156 / 0158 / 0178 ... read `application_workflow` by `appl_id` (`othercode_detail.workflow()`, hooked by `_other_code_workflow()`); role ids use the ISD / NISD names (1 Submission, 41 / 42 / 44 Sub Inspector Surveyor, 8 Senior Draughtsman, 12 Deputy Inspector Surveyor, 16 Zonal Level Tahsildar, 0 Completed). Before, those codes answered the whole details card and "workflow of X" on an ISD / NISD file did the same.
 
-**Policy / how-to questions are answered from the documents, not by the model** (`backend/services/howto_qa.py`, `_howto_turn()` first in the turn chain, `python test_howto.py`): "what documents are needed for a patta transfer", "explain the 15 working day rule", "is it allowed to approve without a field visit", "how is a sub-division sketch prepared", "steps from application to patta order", "what is a field visit / what should I check", "what if the applicant does not turn up", "how many days does the Tahsildar take", "how can I speed up my pending files", "write a note to an applicant with incomplete documents", "Aadhaar numbers of all owners" (refused), F-Line / other-code fees (the documents give a fee only for 0153 and 0154; the F-Line amounts actually paid are quoted from the register), "anything suspicious or duplicated" (survey numbers with more than one open application), "applicants with more than one application" (matched by name + mobile). Each answer restates `workflow_guide.txt` / `land_rules.txt` and says so where they are silent; Tamil and Tanglish cues have Tamil answers. A how-to question is never split by `_big_plan` / `_plan_requests`. `unheld_qa.intent_alias()` maps "how busy am I", "summarise my day" to the workload and "which of my files should I worry about first" (any language) to the field-visit plan. The LLM (`LLM_MODEL=sis-assistant:latest`, the SIS fine-tune) is now reached by about 5 of 42 open questions and the mean answer time on that set dropped from 13.6 s to 3.1 s. Do not put `<...>` placeholders in answer text: the page treats anything tag-shaped as HTML.
+**Policy / how-to questions are answered from the documents, not by the model** (`backend/services/chatbot/howto_qa.py`, `_howto_turn()` first in the turn chain, `test_howto.py` *(removed)*): "what documents are needed for a patta transfer", "explain the 15 working day rule", "is it allowed to approve without a field visit", "how is a sub-division sketch prepared", "steps from application to patta order", "what is a field visit / what should I check", "what if the applicant does not turn up", "how many days does the Tahsildar take", "how can I speed up my pending files", "write a note to an applicant with incomplete documents", "Aadhaar numbers of all owners" (refused), F-Line / other-code fees (the documents give a fee only for 0153 and 0154; the F-Line amounts actually paid are quoted from the register), "anything suspicious or duplicated" (survey numbers with more than one open application), "applicants with more than one application" (matched by name + mobile). Each answer restates `workflow_guide.txt` / `land_rules.txt` and says so where they are silent; Tamil and Tanglish cues have Tamil answers. A how-to question is never split by `_big_plan` / `_plan_requests`. `unheld_qa.intent_alias()` maps "how busy am I", "summarise my day" to the workload and "which of my files should I worry about first" (any language) to the field-visit plan. The LLM (`LLM_MODEL=sis-assistant:latest`, the SIS fine-tune) is now reached by about 5 of 42 open questions and the mean answer time on that set dropped from 13.6 s to 3.1 s. Do not put `<...>` placeholders in answer text: the page treats anything tag-shaped as HTML.
 
 **Four gaps closed.** (1) "difference between 0153 and 0154" is the service-code definition (like ISD / NISD); "how many more 0154 than 0153" stays a count. (2) "what does litigation imply for new applications" (and the bare "what does that imply" right after a litigation answer) is answered from the rules (`howto_qa` topic `litigation_implies`); a how-to question that contains a survey number is a data question and is split, not answered whole. (3) "compare ... this week and last week" counts applications filed in each Monday-Sunday week from the register (`calc_qa`). (4) An LLM-written sentence that states a total ("You have 2 open applications") whose figure is nowhere in the data it was written from is dropped (`_scrub_unverified_counts`, inside `_verify_answer_numbers`, both chat paths) -- never corrected, since there is no telling which count was meant.
 
@@ -2503,12 +2475,12 @@ same file (patta matches). An ISD / NISD file says it has no Natham-chitta modif
 
 ## Service-code / F-Line / TSLR training data (2026-10-04)
 
-`backend/sample_db/build_lora_dataset_allcodes.py` (all 29 codes, 0155 excluded, equal quota per code, half the code-level examples carry the code table / counts in the system prompt so a code added later is read from context, not remembered), `build_lora_dataset_flinetslr.py` (record-level F-Line 0178 and TSLR 0156 questions asked through the real pipeline), `build_lora_testset.py` (held-out phrasings, never trained on). Outputs in `lora_training/`: `train_augmented_v2.jsonl` (old rows + new, shuffled), `validation_v2.jsonl`, `test_heldout_allcodes.jsonl`, `test_heldout_flinetslr.jsonl`; train, validation and test share no question. Application numbers are invented serials, applicant names / addresses / mobiles / user ids are replaced, "No applications ..." answers are capped at 40% per group. `train_qlora.py` now reads the v2 files (lr 1e-4, dropout 0.1, weight decay, early stopping); after training run `python lora_training/eval_heldout.py --model <ollama model>` and compare held-out with validation scores. A fake serial can contain the digits "0155"; that is not the service code.
+`C:\lora_data\sample_db_lora\build_lora_dataset_allcodes.py` (all 29 codes, 0155 excluded, equal quota per code, half the code-level examples carry the code table / counts in the system prompt so a code added later is read from context, not remembered), `C:\lora_data\sample_db_lora\build_lora_dataset_flinetslr.py` (record-level F-Line 0178 and TSLR 0156 questions asked through the real pipeline), `C:\lora_data\sample_db_lora\build_lora_testset.py` (held-out phrasings, never trained on). Outputs in `lora_training/`: `train_augmented_v2.jsonl` (old rows + new, shuffled), `validation_v2.jsonl`, `test_heldout_allcodes.jsonl`, `test_heldout_flinetslr.jsonl`; train, validation and test share no question. Application numbers are invented serials, applicant names / addresses / mobiles / user ids are replaced, "No applications ..." answers are capped at 40% per group. `train_qlora.py` now reads the v2 files (lr 1e-4, dropout 0.1, weight decay, early stopping); after training run `python lora_training/eval_heldout.py --model <ollama model>` and compare held-out with validation scores. A fake serial can contain the digits "0155"; that is not the service code.
 
 There is no service code 0155 and no MERGE application type. The older rows that invented them (a "MERGE (0155)" meaning/listing, and the stale "the schema only admits 0153 / 0154 / 0155, other codes are not handled" wording) were removed from `train_augmented_v2.jsonl` (-286 rows) and `validation_v2.jsonl` (-44); `train_augmented.jsonl` / `validation.jsonl` still contain them, so train only on the v2 files. A merge is only a merge id on an ISD file.
 
-**Officer jurisdiction in the training data (2026-10-04).** Every data-dependent training row now carries the officer and the data its answer is read from in the system prompt (wards held, the register figures, the rows or the record card), so the model reads them instead of remembering them. `build_lora_dataset_jurisdiction.py` adds 80 synthetic officers (different wards, any of the 29 codes, some with no applications; ward and block questions outside their wards are refused by name); validation officers and the 25 test officers are unseen, and the test wards (061-100) never occur in training. Older rows that stated register data from the previous register (lists, counts, applicant names) were dropped; `assemble_lora_final.py` builds `train_v2_clean.jsonl` / `validation_v2_clean.jsonl` (what `train_qlora.py` reads) and re-applies the 0155 / MERGE / stale-wording filter. Rows are only kept if every figure in the answer is in the prompt.
+**Officer jurisdiction in the training data (2026-10-04).** Every data-dependent training row now carries the officer and the data its answer is read from in the system prompt (wards held, the register figures, the rows or the record card), so the model reads them instead of remembering them. `C:\lora_data\sample_db_lora\build_lora_dataset_jurisdiction.py` adds 80 synthetic officers (different wards, any of the 29 codes, some with no applications; ward and block questions outside their wards are refused by name); validation officers and the 25 test officers are unseen, and the test wards (061-100) never occur in training. Older rows that stated register data from the previous register (lists, counts, applicant names) were dropped; `C:\lora_data\sample_db_lora\assemble_lora_final.py` builds `train_v2_clean.jsonl` / `validation_v2_clean.jsonl` (what `train_qlora.py` reads) and re-applies the 0155 / MERGE / stale-wording filter. Rows are only kept if every figure in the answer is in the prompt.
 
-**Evaluating the fine-tune (2026-10-05).** `lora_training/eval_grounded.py` grades each answer `correct` / `missing` / `WRONG` by comparing the values it states (count, date, ward, block, channel, status, survey, code) with the expected answer; an invented application number or a different value is WRONG (a hallucination), "I do not know" is `missing`. `--selftest` has 15 cases. The Colab evaluation of the first adapter (best checkpoint-350, eval loss 0.393) scored the old keyword metric 29% tuned vs 6% base, but its all-codes test had no officer/register data in the prompt for the data-dependent groups, so those scores were meaningless -- `build_lora_testset.part1()` never attached the context (fixed: it now calls `with_officer`, and `g_chain_deep` puts the application's row in the prompt). Copy the three test files in `lora_training/upload_to_drive/` to the Drive folder `sis_qlora_data` (meta `real_app` removed) before the next evaluation run.
+**Evaluating the fine-tune (2026-10-05).** `C:\lora_data\lora_training\eval_grounded.py` grades each answer `correct` / `missing` / `WRONG` by comparing the values it states (count, date, ward, block, channel, status, survey, code) with the expected answer; an invented application number or a different value is WRONG (a hallucination), "I do not know" is `missing`. `--selftest` has 15 cases. The Colab evaluation of the first adapter (best checkpoint-350, eval loss 0.393) scored the old keyword metric 29% tuned vs 6% base, but its all-codes test had no officer/register data in the prompt for the data-dependent groups, so those scores were meaningless -- `build_lora_testset.part1()` never attached the context (fixed: it now calls `with_officer`, and `g_chain_deep` puts the application's row in the prompt). Copy the three test files in `lora_training/upload_to_drive/` to the Drive folder `sis_qlora_data` (meta `real_app` removed) before the next evaluation run.
 
-**v3 correction set (2026-10-05).** First full evaluation of the best-350 adapter (grounded scorer, 2,038 held-out items): 60% / 67% / 50% correct and 18% / 28% / 25% WRONG on the all-codes / jurisdiction / F-Line+TSLR sets -- it reads supplied counts well but invents a record that does not exist, mixes up neighbouring service codes (0164 -> 0161), guesses a channel the prompt does not carry, and drifts on "not rejected" vs "total". `backend/sample_db/build_lora_dataset_v3.py` builds a small targeted set (1,001 train examples: channel now a column of the application rows in the prompt; "no F-Line / TSLR record is held" and "does not exist" answers in the pipeline's own wording, English + Tamil; service-code <-> name pairs with the neighbouring codes as contrasts; "how many" = not rejected + how many left out, "including rejected" = total, with each code's not-rejected / total printed in the prompt so nothing is added up; multi-turn follow-ups with "not in the data I was given" for values the rows do not hold). `assemble_lora_v3.py` drops the 12 v2 rows that stated a channel with none in the prompt and writes `train_v3_clean.jsonl` (4,848) / `validation_v3_clean.jsonl` (728). `bench_v3_extra.jsonl` (196) uses phrasings never trained on. The 2,038-item original evaluation files are untouched and share no question with v3, so v3 must beat best-350 on THEM before it replaces it. Arithmetic ("114 - 2") is not taught further: totals and differences belong to the deterministic handlers.
+**v3 correction set (2026-10-05).** First full evaluation of the best-350 adapter (grounded scorer, 2,038 held-out items): 60% / 67% / 50% correct and 18% / 28% / 25% WRONG on the all-codes / jurisdiction / F-Line+TSLR sets -- it reads supplied counts well but invents a record that does not exist, mixes up neighbouring service codes (0164 -> 0161), guesses a channel the prompt does not carry, and drifts on "not rejected" vs "total". `C:\lora_data\sample_db_lora\build_lora_dataset_v3.py` builds a small targeted set (1,001 train examples: channel now a column of the application rows in the prompt; "no F-Line / TSLR record is held" and "does not exist" answers in the pipeline's own wording, English + Tamil; service-code <-> name pairs with the neighbouring codes as contrasts; "how many" = not rejected + how many left out, "including rejected" = total, with each code's not-rejected / total printed in the prompt so nothing is added up; multi-turn follow-ups with "not in the data I was given" for values the rows do not hold). `C:\lora_data\sample_db_lora\assemble_lora_v3.py` drops the 12 v2 rows that stated a channel with none in the prompt and writes `train_v3_clean.jsonl` (4,848) / `validation_v3_clean.jsonl` (728). `bench_v3_extra.jsonl` (196) uses phrasings never trained on. The 2,038-item original evaluation files are untouched and share no question with v3, so v3 must beat best-350 on THEM before it replaces it. Arithmetic ("114 - 2") is not taught further: totals and differences belong to the deterministic handlers.

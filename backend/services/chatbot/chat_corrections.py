@@ -26,6 +26,7 @@ from backend.config import (
 )
 from backend.schemas import OfficerContext
 from . import attachment_qa
+from . import reasoning_qa as _reasoning_qa
 from .agent import AgentUnavailable, run_agent, run_agent_stream
 from backend.services.readonly_guard import chat_turn
 from . import neg_scope as _neg_scope
@@ -1040,6 +1041,13 @@ async def _workflow_remarks_answer(db, officer, message: str, ctx, language: str
     if not scope and ctx and ctx.application_numbers and (ctx.filters or {}).get("about_visit") is not True:
         nums = list(ctx.application_numbers)
         pick = fctx.ordinal_pick(message, nums) if (fctx.mentions_ordinal(message) or fctx.mentions_slice(message)) else None
+        if not pick:
+            # "why was THIS application rejected?": the canonical focus when the officer settled on
+            # one member of the set ("switch back to the first"); several and no focus -> ask (P3.3)
+            pick, choose = fctx.singular_target(message, ctx)
+            if choose:
+                from .chat_application_queries import build_ambiguous_reference_message
+                return build_ambiguous_reference_message(choose, language)
         scope = [pick] if pick else nums
     if not scope:
         return None
@@ -1171,6 +1179,17 @@ _VAGUE_OPENER_RE = re.compile(
     r"|(?:check|open|see)\s+(?:my|the)\s+(?:file|application|case)|tell\s+me\s+about\s+(?:my|the)\s+(?:application|file)"
     r"|(?:my\s+)?application\s+(?:is\s+)?not\s+moving)\s*[?.!]*$", re.IGNORECASE)
 
+# "which application am I talking about" names "application", which routes it
+# straight to `pending_applications` (not `general_query`) -- so unlike its
+# siblings ("what about the other one", "which one is mine") it never even
+# reaches the `toks`/`_FRAGMENT_WORDS` check below, and with nothing in view
+# answered with the officer's whole 47-row desk queue as if that were the
+# referent being asked about. The officer is asking which record this
+# conversation is about, not for a listing.
+_SELF_REF_CONFUSION_RE = re.compile(
+    r"^(?:please\s+)?which\s+application(?:s)?\s+(?:am\s+i|are\s+(?:we|you))\s+"
+    r"(?:talking|referring|speaking)\s+(?:about|of)\s*[?.!]*$", re.IGNORECASE)
+
 
 def _is_bare_fragment_without_context(message: str, context, chat_history=None) -> bool:
     """"why", "what is the area", "approved ones", "last month" as the FIRST thing
@@ -1191,6 +1210,8 @@ def _is_bare_fragment_without_context(message: str, context, chat_history=None) 
     if _BARE_REF_RE.match((message or "").strip()) or _is_capability_question(message):
         return False
     if _VAGUE_OPENER_RE.match((message or "").strip()):
+        return True
+    if _SELF_REF_CONFUSION_RE.match((message or "").strip()):
         return True
     toks = re.findall(r"[a-z0-9]+", (message or "").lower())
     if not toks or len(toks) > 5 or re.search(r"\d{4}/\d|\d{3,}", message or ""):
@@ -1397,6 +1418,17 @@ def _big_plan(message: str):
     text = re.sub(r"\s+", " ", (message or "").strip())
     words = text.split()
     if len(words) < 8 or _howto_qa.match(text):
+        return None
+    # A genuine evidence-reasoning question ("does X mean Y, explain using
+    # the register and the latest workflow transition") is deliberately
+    # written across several sentences and often carries a "?" of its own --
+    # exactly the shape this splitter otherwise reads as several questions.
+    # Splitting it drops the premise each fragment needs (a bare "Does that
+    # mean an inspection was mandatory?" fragment, with the application
+    # number sheared off into another fragment, answers nothing). Stand
+    # aside and let the whole message reach reasoning_qa as one question,
+    # the same way a real comparison question stands aside just below.
+    if _reasoning_qa.is_reasoning_question(text):
         return None
     # "Show my pending ISD applications and my pending NISD applications, and
     # tell me which has more." is ALREADY one fully-supported comparison
@@ -1651,16 +1683,39 @@ def _prose_plan(body: str, apps):
     return out[:_BIG_MAX_CLAUSES] if len(out) >= 3 else None
 
 
+_WARD_NAMED_RE = re.compile(r"\bward\b", re.IGNORECASE)
+_BARE_THERE_RE = re.compile(r"\bthere\b", re.IGNORECASE)
+_WARD_IN_TEXT_RE = re.compile(r"\bward\s*0*(\d{1,3})\b", re.IGNORECASE)
+
+
 async def _answer_big(clauses, message, session_id, officer, db, chat_history):
     import html as _html
     hist = list(chat_history or [])
     results = []
+    # "which ward has the most applications, and how many are rejected
+    # there" -- the bare "there" in a later clause names the ward the
+    # previous clause's own answer just picked out. Each clause is answered
+    # on its own through `_single_turn`, which has no notion of "the ward
+    # this sentence is about" -- `_geo_scope()`'s back-reference only ever
+    # reads a WARD COLUMN off a rendered table, and a superlative answer like
+    # "ward 001 leads ward 002 by 120" is prose, not a table. Resolved here,
+    # scoped to this split: the ward named by the most recent clause that
+    # itself named "ward" is substituted in for a later clause's bare
+    # "there", so the officer's own wording reaches the handler intact.
+    _last_ward = None
     for clause in clauses:
+        if (_last_ward and _BARE_THERE_RE.search(clause)
+                and not _WARD_NAMED_RE.search(clause)):
+            clause = _BARE_THERE_RE.sub(f"in ward {_last_ward}", clause, count=1)
         try:
             res = await _cb()._single_turn(clause, session_id, officer, db, hist)
         except Exception as exc:  # one failing question must not lose the others
             logger.warning(f"big message: clause failed ({type(exc).__name__}): {clause[:60]}")
             res = {"response": "(could not answer this part)", "language": detect_language(clause)}
+        if _WARD_NAMED_RE.search(clause):
+            _m = _WARD_IN_TEXT_RE.search(res.get("response") or "")
+            if _m:
+                _last_ward = _m.group(1).zfill(3)
         results.append((clause, res))
         hist.append({"role": "user", "content": clause})
         hist.append({"role": "assistant", "content": res.get("response") or ""})

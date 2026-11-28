@@ -31,6 +31,11 @@ if hasattr(sys.stdout, "reconfigure"):
 import psycopg2
 from psycopg2.extras import execute_values
 
+from pathlib import Path
+_SAMPLE_DIR = Path(__file__).resolve().parent
+if str(_SAMPLE_DIR) not in sys.path:
+    sys.path.insert(0, str(_SAMPLE_DIR))
+
 from dbconn import conn_params
 from identifiers import aadhaar_for
 from schema_builder import (SAMPLE_TABLE_DIR, TABLE_NAMES, build_ddl,

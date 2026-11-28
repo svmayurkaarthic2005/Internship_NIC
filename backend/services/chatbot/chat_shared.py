@@ -761,6 +761,19 @@ def _is_explain_request(message: str) -> bool:
     tokens = re.findall(r"[a-zA-Z]+", message or "")
     if re.search(r"\b(?:don't|dont|do not)\s+explain\b", message or "", re.IGNORECASE) and re.search(r"\b(?:numbers?\s+only|data\s+only|give\s+(?:the\s+)?numbers?)\b", message or "", re.IGNORECASE):
         return False
+    # "Thanks for the explanation." / "Thank you for explaining that." is
+    # gratitude FOR an explanation already given, not a request for one --
+    # the bare trigger word "explanation" in `_DETAIL_REQUEST_PHRASES` below
+    # matched it anyway and sent a plain thank-you to the "which record do
+    # you mean?" clarification instead of the thanks/greeting handling. Only
+    # excluded when the message opens with a thanks cue and carries no real
+    # question word of its own, so "thanks, but can you explain the SLA
+    # again?" still reaches the explain path.
+    if (re.match(r"^\s*(?:thanks?|thank\s*(?:you|u)|thx|tq|nandri|nanri)\b", message or "", re.IGNORECASE)
+            and re.search(r"\b(?:explanation|explaining|clarif\w*)\b", message or "", re.IGNORECASE)
+            and not re.search(r"\b(?:what|why|how|which|when|can|could|please|more|again|elaborate)\b",
+                              message or "", re.IGNORECASE)):
+        return False
     # A NEGATED format instruction ("dont explain in sentence", "not in
     # sentence format") is still a request to re-explain -- just not in the
     # brief form it names. Checked first so a message with no "explain"/
@@ -1580,6 +1593,8 @@ _FULLFORMS = {
     "dis": ("DIS = Deputy Inspector Surveyor.", "DIS = Deputy Inspector Surveyor (துணை ஆய்வு சர்வேயர்)."),
     "dsc": ("DSC = Digital Signature Certificate.", "DSC = Digital Signature Certificate (மின்னணு கையொப்பச் சான்று)."),
     "zdt": ("ZDT = Zonal Deputy Tahsildar.", "ZDT = மண்டல துணை வட்டாட்சியர் (Zonal Deputy Tahsildar)."),
+    "hqdt": ("HQDT = Headquarters Deputy Tahsildar (along with ZDT, reviews and approves/rejects non-subdivision patta transfer files).",
+             "HQDT = Headquarters Deputy Tahsildar (தலைமையிட துணை வட்டாட்சியர் — ZDT உடன் இணைந்து உட்பிரிவு இல்லாத பட்டா மாறுதல் விண்ணப்பங்களை ஆய்வு செய்து ஒப்புதல்/நிராகரிப்பு ஆணை பிறப்பிப்பவர்)."),
     "isd": ("ISD = Involving Sub-Division (service code 0154).", "ISD = Involving Sub-Division (சேவைக் குறியீடு 0154)."),
     "nisd": ("NISD = Not Involving Sub-Division (service code 0153).", "NISD = Not Involving Sub-Division (சேவைக் குறியீடு 0153)."),
     # "fmb" deliberately removed (2026-10-15): no backing full-form entry
@@ -1587,7 +1602,7 @@ _FULLFORMS = {
     # the full form of FMB" refusal via `_unknown_fullform`, instead of a
     # specific expansion for a concept this register does not track.
 }
-_KNOWN_ACRONYMS = frozenset({"igrs", "sro", "csc", "can", "sla", "sis", "sd", "dis", "dsc", "zdt", "isd", "nisd",
+_KNOWN_ACRONYMS = frozenset({"igrs", "sro", "csc", "can", "sla", "sis", "sd", "dis", "dsc", "zdt", "hqdt", "isd", "nisd",
                              "tahsildar", "cin", "ec", "fee"})
 
 
@@ -2669,11 +2684,33 @@ def _sd_parse(message, chat_history=None):
     return None
 
 
+_TWO_APP_COMPARE_RE = re.compile(
+    r"\bcompar\w*\b|\bvs\.?\b|\bversus\b|\bdifference\b|\bsame\s+property\b|\bseparate\s+applications?\b",
+    re.IGNORECASE)
+_TWO_APP_NUMBERS_RE = re.compile(r"\d{4}/\d{3,4}/\d{1,3}/\d+")
+
+
+def is_two_application_comparison(message: str) -> bool:
+    """"Compare 2026/.../A and 2026/.../B..." names two DIFFERENT applications
+    and asks to compare them. Every record module keyed off a single
+    application (SIS recommendation, correction-modification desk chain,
+    the full-field transfer "compare old vs new owner" sense, ...) assumes
+    exactly ONE application in view and answers about the FIRST number
+    only, silently dropping the second -- shared by `_cm_strong()` below
+    (so it stands aside and lets `compare_applications` take the turn) and
+    by `chat_application_queries._early_subdivision_answer()` (so the
+    single-application record hook stands aside too)."""
+    nums = list(dict.fromkeys(_TWO_APP_NUMBERS_RE.findall(message or "")))
+    return len(nums) >= 2 and bool(_TWO_APP_COMPARE_RE.search(message or ""))
+
+
 def _cm_strong(message, chat_history=None) -> bool:
     """A desk recommendation / remarks / flag question (correction-modification flow) or an
     application-information field question (challan, amount, proposed visit, ...) that a
     dedicated record answers. A SIS-only question about an ISD / NISD file stays with the
     existing workflow handlers."""
+    if is_two_application_comparison(message):
+        return False
     if re.search(r"\bsurvey\b[^0-9]{0,12}\d", message or "", re.IGNORECASE) and not extract_application_number(message):
         return False  # a question about a survey number is the survey handlers', not a record of an application
     # "what is TSLR?" / "what does TSLR mean?" / "explain the new owner

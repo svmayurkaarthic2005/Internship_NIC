@@ -1105,7 +1105,7 @@ function appendMessage(role, content, timestamp, tableData = null) {
  *   1. Clean HTML  — built by build_html_response() in rag.py (tables, lists, etc.)
  *   2. Plain text  — LLM free-text answer for general queries
  *
- * HTML responses are injected directly via innerHTML (trusted backend source).
+ * HTML responses are passed through sanitizeBotHtml() (an allowlist) before they reach innerHTML -- never injected as-is.
  * Plain text responses get light markdown conversion before injection.
  */
 function renderMarkdownTables(text) {
@@ -1224,18 +1224,79 @@ function formatMarkdownText(raw) {
  *   1. Clean HTML  — built by build_html_response() in rag.py (tables, lists, etc.)
  *   2. Plain text / Markdown — LLM or deterministic table/prose answers
  *
- * HTML responses are injected directly via innerHTML (trusted backend source).
+ * HTML responses are passed through sanitizeBotHtml() (an allowlist) before they reach innerHTML -- never injected as-is.
  * Plain text / Markdown responses get structured markdown table and block conversion before injection.
  */
 function formatBotMessage(text) {
+    return sanitizeBotHtml(_formatBotMessageRaw(text));
+}
+
+/**
+ * Allowlist sanitizer for everything a bot message puts into innerHTML.
+ *
+ * The backend legitimately sends HTML (tables, cards, application links), so escaping it all would
+ * break every answer -- but an answer can also carry text the backend did not write (an LLM
+ * fallback, a value quoted from a record, an uploaded file), so the HTML is never trusted as-is.
+ * Kept: the tags and attributes the backend actually emits. Dropped with their content: script,
+ * style, iframe, object, embed, svg, math, img, form controls, link/meta. Any other unknown tag
+ * is unwrapped (its text kept). Event handlers: only the three exact shapes the backend writes
+ * (copy table, open application by number); every other on* attribute is removed. href: only
+ * "#" / "javascript:void(0)". style: removed if it can load or run anything.
+ */
+const _SAFE_TAGS = new Set(['div', 'span', 'p', 'br', 'hr', 'strong', 'b', 'em', 'i', 'u', 'small', 'code', 'pre',
+    'sup', 'sub', 'h1', 'h2', 'h3', 'h4', 'h5', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'caption', 'a', 'button', 'blockquote']);
+const _DROP_TAGS = new Set(['script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'svg', 'math',
+    'img', 'video', 'audio', 'source', 'form', 'input', 'textarea', 'select', 'option', 'link', 'meta', 'base', 'template', 'noscript']);
+const _APP_NO = "\\d{4}\\/\\d{3,4}\\/\\d{1,3}\\/\\d+";
+const _SAFE_ONCLICK = [
+    /^\s*window\.copyTableData\(this\)\s*;?\s*$/,
+    new RegExp("^\\s*window\\.handleAppClick\\('" + _APP_NO + "'\\)\\s*;?\\s*$"),
+    new RegExp("^\\s*handleApplicationClick\\('" + _APP_NO + "'\\)\\s*;\\s*return\\s+false\\s*;?\\s*$"),
+];
+
+function sanitizeBotHtml(html) {
+    if (!html) return '';
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    const walk = (node) => {
+        for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === Node.COMMENT_NODE) { child.remove(); continue; }
+            if (child.nodeType !== Node.ELEMENT_NODE) continue;
+            const tag = child.tagName.toLowerCase();
+            if (_DROP_TAGS.has(tag)) { child.remove(); continue; }
+            if (!_SAFE_TAGS.has(tag)) {                     // unknown tag: keep its text, lose the tag
+                walk(child);
+                child.replaceWith(...Array.from(child.childNodes));
+                continue;
+            }
+            for (const attr of Array.from(child.attributes)) {
+                const name = attr.name.toLowerCase();
+                const value = attr.value || '';
+                let keep = false;
+                if (name === 'class' || name === 'colspan' || name === 'rowspan' || name === 'title'
+                    || name === 'aria-label' || name.startsWith('data-')) keep = true;
+                else if (name === 'style') keep = !/url\s*\(|expression\s*\(|javascript:|@import|behavior\s*:/i.test(value);
+                else if (name === 'href') keep = /^\s*(#|javascript:void\(0\);?)\s*$/i.test(value);
+                else if (name === 'onclick') keep = _SAFE_ONCLICK.some(re => re.test(value));
+                if (!keep) child.removeAttribute(attr.name);
+            }
+            walk(child);
+        }
+    };
+    walk(tpl.content);
+    return tpl.innerHTML;
+}
+
+function _formatBotMessageRaw(text) {
     if (!text) return '';
     // Detect HTML: any opening tag at all (e.g. <table, <p, <ul, <strong …)
     const hasHTML = /<[a-zA-Z][^>]*>/i.test(text);
     if (hasHTML) {
-        // Trusted HTML from the backend — inject as-is.
+        // Backend HTML -- `formatBotMessage` passes it through `sanitizeBotHtml` before it reaches the DOM.
         return text.trim();
     }
-    
+
     // ── Structured plain text (bullets, "Label: value" lines) → the same card the details use ──
     const card = plainToCard(text);
     if (card) return card;

@@ -39,7 +39,7 @@ _EXACT = {
     "changed": "change", "changes": "change", "comparing": "compare", "compare": "compare", "match": "match", "heir": "heir",
     "legal": "legal", "court": "court", "purchased": "purchased", "purchase": "purchased", "unit": "unit", "category": "category",
     "catagory": "category", "direct": "direct", "tranfer": "transfer", "regstered": "registration", "registered": "registration",
-    "zdt": "zdt", "sis": "sis", "tax": "tax", "taxrate": "taxrate", "door": "door", "street": "street", "group": "group", "u1": "u1", "u2": "u2", "u3": "u3",
+    "zdt": "zdt", "hqdt": "zdt", "sis": "sis", "tax": "tax", "taxrate": "taxrate", "door": "door", "street": "street", "group": "group", "u1": "u1", "u2": "u2", "u3": "u3",
     "transfe": "transfer", "oder": "order", "ordr": "order", "remarkks": "remarks", "statuz": "status", "recomend": "rec", "recommen": "rec",
     "recommend": "rec", "recommended": "rec",
 }

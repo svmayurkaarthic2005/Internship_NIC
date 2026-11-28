@@ -40,6 +40,8 @@ bilingual clarification instead.
 from __future__ import annotations
 
 import re
+import time
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -63,11 +65,23 @@ ENTITY_SURVEY = "survey"
 # ("service_code") rather than a new field, the same way every other scalar
 # scope (status, type, ward...) is already carried.
 ENTITY_SERVICE_CODE = "service_code"
+FOLLOWUP_COMPARISON = "comparison"
 
 # Version tag on the stored JSON. A context written by an older build that no
 # longer parses is ignored rather than half-read -- a stale reference is the
 # one thing this module exists to prevent.
-CONTEXT_VERSION = 1
+# Phase 5: bumped to 2. from_json supports both 1 and 2 for backward compatibility.
+CONTEXT_VERSION = 2
+
+_APP_NUMBER_PATTERN_RE = re.compile(
+    r"\d{4}/\d{3,4}/\d{1,3}/\d+|\bAPP-\d+-\d+\b", re.IGNORECASE
+)
+
+_COMPARISON_TRIGGER_RE = re.compile(
+    r"\b(?:compare|comparison|versus|vs\.?|oppidu|differ(?:ence)?)\b"
+    r"|ஒப்பிடு|வித்தியாசம்|rendaiyum|இரண்டையும்",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -87,37 +101,201 @@ class FollowupContext:
     intent: Optional[str] = None
     version: int = CONTEXT_VERSION
 
+    # Phase 5: Structured conversational memory
+    current_application: Optional[str] = None
+    active_applications: List[str] = field(default_factory=list)
+    current_survey: Optional[str] = None
+    current_field_visit: Optional[Dict[str, Any]] = None
+    current_service_code: Optional[str] = None
+    current_document_context: Optional[Dict[str, Any]] = None
+    active_filters: Dict[str, Any] = field(default_factory=dict)
+    previous_operations: List[Dict[str, Any]] = field(default_factory=list)
+    previous_result: Optional[Dict[str, Any]] = None
+    created_at: float = field(default_factory=time.time)
+    ttl_seconds: int = 1800
+    officer_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+    def __post_init__(self):
+        # Synchronization between current/active and legacy fields
+        if not self.active_applications and self.application_numbers:
+            self.active_applications = list(self.application_numbers)
+        elif self.active_applications and not self.application_numbers:
+            self.application_numbers = list(self.active_applications)
+
+        if not self.current_application and len(self.application_numbers) == 1 and self.entity in (ENTITY_APPLICATION, ENTITY_FIELD_VISIT):
+            self.current_application = self.application_numbers[0]
+        elif self.current_application and not self.application_numbers and self.entity == ENTITY_APPLICATION:
+            self.application_numbers = [self.current_application]
+
+        if not self.current_survey and self.survey_numbers:
+            self.current_survey = self.survey_numbers[0]
+        elif self.current_survey and not self.survey_numbers:
+            self.survey_numbers = [self.current_survey]
+
+        if not self.active_filters and self.filters:
+            self.active_filters = dict(self.filters)
+        elif self.active_filters and not self.filters:
+            self.filters = dict(self.active_filters)
+
+        if not self.current_service_code and self.filters:
+            self.current_service_code = self.filters.get("service_code")
+
+    def is_expired(self, now: Optional[float] = None) -> bool:
+        """Check if this context has exceeded its TTL (default 1800s / 30m)."""
+        if self.ttl_seconds <= 0:
+            return False
+        ts = time.time() if now is None else now
+        return (ts - self.created_at) > self.ttl_seconds
+
+    def validate_officer(self, officer_id: Optional[str]) -> bool:
+        """Validate that the context belongs to the requesting officer.
+        
+        Zero-grant rule: if officer_id is provided and does not match, return False.
+        """
+        if not self.officer_id or not officer_id:
+            return True
+        return str(self.officer_id).strip() == str(officer_id).strip()
+
     def to_json(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_json(cls, raw: Any) -> Optional["FollowupContext"]:
+    def from_json(cls, raw: Any, officer_id: Optional[str] = None) -> Optional["FollowupContext"]:
         if not isinstance(raw, dict):
             return None
-        if raw.get("version") != CONTEXT_VERSION:
+        ver = raw.get("version")
+        # Accept version 1 and version 2
+        if ver not in (1, 2):
             return None
         entity = raw.get("entity")
         if entity not in (ENTITY_APPLICATION, ENTITY_APPLICATION_LIST,
                           ENTITY_FIELD_VISIT, ENTITY_SURVEY, ENTITY_SERVICE_CODE):
             return None
         try:
-            return cls(
+            app_nums = [str(n) for n in (raw.get("application_numbers") or [])]
+            act_apps = [str(n) for n in (raw.get("active_applications") or [])] or list(app_nums)
+            surv_nums = [str(n) for n in (raw.get("survey_numbers") or [])]
+            filts = dict(raw.get("filters") or {})
+            act_filts = dict(raw.get("active_filters") or {}) or dict(filts)
+            cur_app = raw.get("current_application")
+            if not cur_app and len(app_nums) == 1 and entity in (ENTITY_APPLICATION, ENTITY_FIELD_VISIT):
+                cur_app = app_nums[0]
+
+            ctx = cls(
                 entity=entity,
-                application_numbers=[str(n) for n in (raw.get("application_numbers") or [])],
-                survey_numbers=[str(n) for n in (raw.get("survey_numbers") or [])],
-                filters=dict(raw.get("filters") or {}),
+                application_numbers=app_nums,
+                survey_numbers=surv_nums,
+                filters=filts,
                 query_type=raw.get("query_type"),
                 intent=raw.get("intent"),
+                version=ver,
+                current_application=cur_app,
+                active_applications=act_apps,
+                current_survey=raw.get("current_survey") or (surv_nums[0] if surv_nums else None),
+                current_field_visit=raw.get("current_field_visit"),
+                current_service_code=raw.get("current_service_code") or filts.get("service_code"),
+                current_document_context=raw.get("current_document_context"),
+                active_filters=act_filts,
+                previous_operations=list(raw.get("previous_operations") or []),
+                previous_result=raw.get("previous_result"),
+                created_at=float(raw.get("created_at", time.time())),
+                ttl_seconds=int(raw.get("ttl_seconds", 1800)),
+                officer_id=raw.get("officer_id"),
+                session_id=raw.get("session_id"),
             )
+            if ctx.is_expired():
+                return None
+            if officer_id and not ctx.validate_officer(officer_id):
+                return None
+            return ctx
         except Exception:  # pragma: no cover - a malformed record is simply unusable
             return None
 
     @property
     def single_application(self) -> Optional[str]:
+        if self.current_application:
+            return self.current_application
         if self.entity in (ENTITY_APPLICATION, ENTITY_FIELD_VISIT) and \
                 len(self.application_numbers) == 1:
             return self.application_numbers[0]
         return None
+
+
+class FollowupContextStore:
+    """Thread-safe in-memory store for active conversational contexts.
+
+    Indexed by (session_id, officer_id) to ensure cross-officer isolation.
+    Enforces TTL expiration.
+    """
+    _instance: Optional["FollowupContextStore"] = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self._store: Dict[str, FollowupContext] = {}
+        self._mutex = threading.Lock()
+
+    @classmethod
+    def get_instance(cls) -> "FollowupContextStore":
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    @staticmethod
+    def _make_key(session_id: str, officer_id: Optional[str] = None) -> str:
+        s_id = str(session_id or "").strip()
+        o_id = str(officer_id or "").strip()
+        return f"{s_id}:{o_id}"
+
+    def get(self, session_id: str, officer_id: Optional[str] = None) -> Optional[FollowupContext]:
+        if not session_id:
+            return None
+        key = self._make_key(session_id, officer_id)
+        with self._mutex:
+            ctx = self._store.get(key)
+            if ctx is None and officer_id:
+                ctx = self._store.get(self._make_key(session_id, None))
+            if ctx is not None:
+                if ctx.is_expired():
+                    self._store.pop(key, None)
+                    return None
+                if officer_id and not ctx.validate_officer(officer_id):
+                    return None
+                return ctx
+        return None
+
+    def put(self, session_id: str, context: FollowupContext, officer_id: Optional[str] = None) -> None:
+        if not session_id or not context:
+            return
+        effective_officer = officer_id or context.officer_id
+        if effective_officer:
+            context.officer_id = str(effective_officer)
+        context.session_id = str(session_id)
+        key = self._make_key(session_id, effective_officer)
+        with self._mutex:
+            self._store[key] = context
+
+    def clear(self, session_id: str, officer_id: Optional[str] = None) -> None:
+        with self._mutex:
+            if officer_id:
+                key = self._make_key(session_id, officer_id)
+                self._store.pop(key, None)
+            else:
+                prefix = f"{session_id}:"
+                keys_to_del = [k for k in self._store if k.startswith(prefix)]
+                for k in keys_to_del:
+                    self._store.pop(k, None)
+
+    def purge_expired(self) -> int:
+        now = time.time()
+        purged = 0
+        with self._mutex:
+            expired_keys = [k for k, ctx in self._store.items() if ctx.is_expired(now)]
+            for k in expired_keys:
+                self._store.pop(k, None)
+                purged += 1
+        return purged
 
 
 # How many application numbers are worth carrying. A listing of 34 is still a
@@ -129,7 +307,54 @@ MAX_CARRIED = 200
 
 def build_context(intent: Optional[str],
                   structured_data: Optional[Dict[str, Any]],
-                  fallback_app_number: Optional[str] = None) -> Optional[FollowupContext]:
+                  fallback_app_number: Optional[str] = None,
+                  previous_context: Optional[FollowupContext] = None,
+                  officer_id: Optional[str] = None,
+                  session_id: Optional[str] = None) -> Optional[FollowupContext]:
+    """Derive the context from a deterministic answer's structured data (see `_build_context`),
+    carrying the earlier comparison pair along as `filters["prior_pair"]` (P3.3 / P3.4)."""
+    return _carry_prior_pair(
+        _build_context(intent, structured_data, fallback_app_number, previous_context, officer_id, session_id),
+        previous_context)
+
+
+def _is_app_pair(nums) -> bool:
+    return (isinstance(nums, list) and len(nums) == 2 and len(set(nums)) == 2
+            and all(_APP_NUMBER_PATTERN_RE.fullmatch(str(n) or "") for n in nums))
+
+
+def _carry_prior_pair(ctx: Optional[FollowupContext], prev: Optional[FollowupContext]) -> Optional[FollowupContext]:
+    """`prior_pair` is the last comparison pair the officer established, kept beside the active set.
+
+    * Leaving a two-application pair for anything else (a new application, a new comparison, a listing)
+      records that pair as `prior_pair`.
+    * A comparison DERIVED from the prior pair ("compare C with the first one from our earlier
+      comparison" -> C/A shares A) does not replace it: "our earlier comparison" still means A/B.
+    * Otherwise the previous `prior_pair` carries forward, and it is dropped once it is active again.
+    Pair membership is never re-activated silently: only an explicit reference reads `prior_pair`."""
+    if ctx is None or prev is None:
+        return ctx
+    prev_active = list(prev.active_applications or [])
+    prev_prior = list((prev.filters or {}).get("prior_pair") or [])
+    new_active = list(ctx.active_applications or [])
+    prior = prev_prior if _is_app_pair(prev_prior) else []
+    if _is_app_pair(prev_active) and set(prev_active) != set(new_active):
+        derived = bool(prior) and set(prev_active) != set(prior) and bool(set(prev_active) & set(prior))
+        if not derived:
+            prior = prev_active
+    if not prior or set(prior) == set(new_active):
+        return ctx
+    ctx.filters = {**(ctx.filters or {}), "prior_pair": prior}
+    ctx.active_filters = {**(ctx.active_filters or {}), "prior_pair": prior}
+    return ctx
+
+
+def _build_context(intent: Optional[str],
+                   structured_data: Optional[Dict[str, Any]],
+                   fallback_app_number: Optional[str] = None,
+                   previous_context: Optional[FollowupContext] = None,
+                   officer_id: Optional[str] = None,
+                   session_id: Optional[str] = None) -> Optional[FollowupContext]:
     """Derive the context from a deterministic answer's structured data.
 
     Returns None when the answer had no referent worth carrying -- a greeting,
@@ -144,6 +369,14 @@ def build_context(intent: Optional[str],
     # An answer that found nothing, or refused, leaves no referent.
     if sd.get("found") is False or sd.get("accessible") is False:
         return None
+
+    eff_officer = officer_id or (previous_context.officer_id if previous_context else None)
+    eff_session = session_id or (previous_context.session_id if previous_context else None)
+    prev_ops = list(previous_context.previous_operations if previous_context else [])
+    if intent:
+        prev_ops.append({"intent": intent, "timestamp": time.time()})
+    prev_result = sd.get("result") or sd
+    carried_active_apps = list(previous_context.active_applications) if previous_context and previous_context.active_applications else []
 
     filters = {k: sd[k] for k in (
         # `submission_channels` is the list a multi-channel listing was scoped
@@ -173,9 +406,14 @@ def build_context(intent: Optional[str],
         return FollowupContext(
             entity=ENTITY_APPLICATION_LIST,
             application_numbers=[],
+            active_applications=[],
             filters=filters,
             query_type=sd.get("query_type"),
             intent=intent,
+            officer_id=eff_officer,
+            session_id=eff_session,
+            previous_operations=prev_ops,
+            previous_result=prev_result,
         )
 
     # "what is ISD?" -> "explain briefly" -> "explain in detail" -- a chain of
@@ -199,9 +437,15 @@ def build_context(intent: Optional[str],
         return FollowupContext(
             entity=ENTITY_SERVICE_CODE,
             application_numbers=sc_list,
+            active_applications=sc_list,
+            current_service_code=sc_list[0],
             filters={**filters, "service_code": sc_list[0], "service_codes": sc_list},
             query_type=sd.get("query_type"),
             intent=intent,
+            officer_id=eff_officer,
+            session_id=eff_session,
+            previous_operations=prev_ops,
+            previous_result=prev_result,
         )
 
     # "show me details for <A> and <B>" answers with several NAMED
@@ -224,9 +468,14 @@ def build_context(intent: Optional[str],
             return FollowupContext(
                 entity=ENTITY_APPLICATION_LIST,
                 application_numbers=numbers,
+                active_applications=numbers,
                 filters=filters,
                 query_type=sd.get("query_type") or "Named Applications",
                 intent=intent,
+                officer_id=eff_officer,
+                session_id=eff_session,
+                previous_operations=prev_ops,
+                previous_result=prev_result,
             )
 
     # fv_unassigned_awaiting stores its list under a different key ("which
@@ -261,9 +510,14 @@ def build_context(intent: Optional[str],
             return FollowupContext(
                 entity=ENTITY_APPLICATION_LIST,
                 application_numbers=numbers,
+                active_applications=numbers,
                 filters=filters,
                 query_type=sd.get("query_type"),
                 intent=intent,
+                officer_id=eff_officer,
+                session_id=eff_session,
+                previous_operations=prev_ops,
+                previous_result=prev_result,
             )
 
     # A listing that matched nothing still says what the officer just asked
@@ -279,9 +533,14 @@ def build_context(intent: Optional[str],
         return FollowupContext(
             entity=ENTITY_APPLICATION_LIST,
             application_numbers=[],
+            active_applications=[],
             filters=filters,
             query_type=sd.get("query_type"),
             intent=intent,
+            officer_id=eff_officer,
+            session_id=eff_session,
+            previous_operations=prev_ops,
+            previous_result=prev_result,
         )
 
     # The field-visit PRIORITIZATION queue ("which application should I visit
@@ -353,23 +612,49 @@ def build_context(intent: Optional[str],
     if number:
         # A field-visit answer is about the visit, not only about the file. The
         # distinction is what makes "when was it scheduled?" resolvable.
-        entity = ENTITY_FIELD_VISIT if _is_field_visit_payload(intent, sd) else ENTITY_APPLICATION
+        is_fv = _is_field_visit_payload(intent, sd)
+        entity = ENTITY_FIELD_VISIT if is_fv else ENTITY_APPLICATION
+        single_num = str(number).upper()
+        # Still inside the carried pair ("what about the other one?" -> "what
+        # is its status?") -> keep the WHOLE pair active, so "show both
+        # again" has both members to restore. A genuinely new, unrelated
+        # single application (a fresh explicit number, no relation to the
+        # old pair) starts its own active set of just itself, rather than
+        # the stale pair incorrectly bleeding into a fresh question -- the
+        # `carried_active_apps or [single_num]` form this replaced returned
+        # the OLD pair whenever one existed at all, `or` never reaching
+        # `[single_num]` while `carried_active_apps` was truthy.
+        active_apps = carried_active_apps if (carried_active_apps and single_num in carried_active_apps) else [single_num]
+        # (the earlier pair, when this application leaves it, is kept by `_carry_prior_pair`)
+        fv_dict = sd.get("field_visit") or ({"application_number": single_num} if is_fv else None)
         return FollowupContext(
             entity=entity,
-            application_numbers=[str(number).upper()],
+            current_application=single_num,
+            application_numbers=[single_num],
+            active_applications=active_apps,
+            current_field_visit=fv_dict,
             filters=filters,
             query_type=sd.get("query_type"),
             intent=intent,
+            officer_id=eff_officer,
+            session_id=eff_session,
+            previous_operations=prev_ops,
+            previous_result=prev_result,
         )
 
     survey = sd.get("survey_no") or sd.get("base_survey_no") or sd.get("survey_number")
     if survey:
         return FollowupContext(
             entity=ENTITY_SURVEY,
+            current_survey=str(survey),
             survey_numbers=[str(survey)],
             filters=filters,
             query_type=sd.get("query_type"),
             intent=intent,
+            officer_id=eff_officer,
+            session_id=eff_session,
+            previous_operations=prev_ops,
+            previous_result=prev_result,
         )
     return None
 
@@ -2155,48 +2440,24 @@ def field_projections(message: str, along_base: Optional[List[str]] = None) -> O
 # An explicit pointer back at ONE record. Present or not, the fragment still
 # has to be a fragment -- this only raises confidence.
 _BACKREF_RE = re.compile(
-    r"\b(?:it|its|it's|the\s+same)\b"
+    r"\b(?:it|its|it's|the\s+same|that\s+one|this\s+one|the\s+same\s+application)\b"
     # "this week / this month / this year" is a period; "that is / that are" is a
     # relative clause ("applications that are overdue"). Neither points back.
     r"|\bthis\b(?!\s+(?:week|month|year|quarter|time|day|morning|afternoon|evening|weekend|fortnight))"
     r"|\bthat\b(?!\s+(?:is|are|was|were|has|have|had|will|can|could|should|would|need|needs)\b)"
-    r"|அது|அதன்",
+    r"|\b(?:adhu|idhu|athu|ithu|adhan|adhoda|adha|indha|andha|antha|adhey)\b"
+    r"|அது|அதன்|அதை|இந்த|அந்த|அதே",
     re.IGNORECASE,
 )
 
-# A PLURAL pointer back is deliberately not this module's business.
-# `_rescope_list_followup` in chatbot.py already folds "how many of them are
-# approved" back into the question it continues, and answers it well. What was
-# missing -- and what this module adds -- is the same thing without a pronoun
-# ("which is oldest?"). Claiming the plural case too would replace a working
-# answer with a clarification.
 _PLURAL_BACKREF_RE = re.compile(
-    # A bare "both" is anaphoric on its own: it is only sayable about two things
-    # already in view. Without it here, "show both applications" tripped the
-    # own-subject gate on the word "applications" and was routed as a fresh
-    # question -- the officer was shown their whole open queue instead of the
-    # two rows they were pointing at.
-    #
-    # "all the above application(s)" / "all above" is the same anaphor as
-    # "all of them" in different words -- an officer pointing back at a
-    # 70-row listing they were just shown. Without it, the bare word
-    # "application" inside the phrase tripped the own-subject gate below
-    # ("all the above application" reads, to that gate, as naming a fresh
-    # subject), and "what is the CAN number of all the above application"
-    # was routed as if it named no list at all.
-    r"\b(?:they|them|their|these|those|both)\b|\ball\s+of\s+them\b"
+    r"\b(?:they|them|their|these|those|both|those\s+applications|these\s+applications)\b|\ball\s+of\s+them\b"
     r"|\ball\s+(?:of\s+)?(?:the\s+)?above\b"
-    # "application no only" / "application no with type" -- naming the row
-    # key explicitly is itself a back-reference to the list on screen (there
-    # is no OTHER application number to mean), same as "all the above" a few
-    # lines up. Without this, the bare word "application" inside the phrase
-    # tripped the own-subject gate before `field_projections()` below ever
-    # got a look at it, and "application no only" was routed as a fresh
-    # question naming no list at all.
     r"|\b(?:application|app)\s*(?:no\.?|number)\s+only\b"
     r"|\bonly\s+(?:the\s+)?(?:application|app)\s*(?:no\.?|number)\b"
     r"|\b(?:application|app)\s*(?:no\.?|number)\s+(?:with|and)\b"
-    r"|அவை|அவற்றை|அவற்றின்|இரண்டும்",
+    r"|\b(?:avai|avatrai|avatrin|rendum|rendaiyum|adhunga)\b"
+    r"|அவை|அவற்றை|அவற்றின்|இரண்டும்|இரண்டையும்",
     re.IGNORECASE,
 )
 
@@ -2408,6 +2669,141 @@ def is_deictic_field(message: str) -> bool:
     return bool(_DEICTIC_FIELD_RE.fullmatch((message or "").strip().lower().strip(" ?.!")))
 
 
+# bare "this"/"that" would also match "this list" / "that table", so they need a singular noun
+_SINGLE_POINTER_RE = re.compile(
+    r"\bits\b|\bit\b|\b(?:this|that)\s+(?:application|file|record|one)\b|\bthe\s+application(?:'s)?\b", re.IGNORECASE)
+_MANY_POINTER_RE = re.compile(r"\b(?:both|all|them|their|these|those|each|every|they)\b", re.IGNORECASE)
+
+
+def points_at_one(message: str) -> bool:
+    """"its details" / "this application" point at ONE file; "both" / "their" at the set.
+    Lets a handler over a carried set narrow to `current_application` (P3.3)."""
+    m = message or ""
+    return bool(_SINGLE_POINTER_RE.search(m)) and not _MANY_POINTER_RE.search(m)
+
+
+# The turn's canonical server context (P3.3): set once per request by the orchestrator right after
+# `_load_followup_context`, reset at entry, read by shared history fallbacks such as
+# `unheld_qa.context_app`. A ContextVar, so concurrent requests never see each other's.
+import contextvars as _cv
+CANONICAL: "_cv.ContextVar[Optional[FollowupContext]]" = _cv.ContextVar("p33_canonical_context", default=None)
+
+
+# P3.4 -- an EXPLICIT reference into the earlier comparison: "the first application from our earlier
+# comparison", "the second one we compared earlier", "both applications from our previous comparison".
+_HIST_SRC = (r"(?:(?:from|in|of)\s+(?:our|the|my|that)\s+(?:earlier|previous|last|prior|original|old(?:er)?)\s+"
+             r"(?:comparison|pair|compare)"
+             r"|(?:that\s+|which\s+)?we\s+compared\s+(?:earlier|before|previously|initially|first)"
+             r"|(?:from|in)\s+(?:the\s+)?(?:earlier|previous)\s+(?:comparison|pair))")
+_HIST_ONE_RE = re.compile(r"\b(?:the\s+)?(first|second|1st|2nd)\s+(?:application|one|file)\s+" + _HIST_SRC, re.IGNORECASE)
+_HIST_BOTH_RE = re.compile(r"\b(?:both|the\s+two)(?:\s+(?:applications?|files|of\s+them))?\s+" + _HIST_SRC
+                           + r"(?:\s+again)?", re.IGNORECASE)
+_HIST_THIS_RE = re.compile(r"\b(?:this|that)(?:\s+(?:application|file|one))?\b(?!\s+we\b)|\bit\b", re.IGNORECASE)
+_SHOW_LEAD_RE = re.compile(r"^\s*(?:please\s+)?(?:show|display|list|give|bring\s+up)\b", re.IGNORECASE)
+
+
+def is_other_ref(message: str) -> bool:
+    """"what about the other one?" -- by definition NOT the application already in view."""
+    return bool(_PAIR_OTHER_RE.search((message or "").strip().rstrip(" ?.!")))
+
+
+def has_historical_ref(message: str) -> bool:
+    return bool(_HIST_ONE_RE.search(message or "") or _HIST_BOTH_RE.search(message or ""))
+
+
+def historical_pair(ctx: Optional[FollowupContext]) -> Optional[List[str]]:
+    """The earlier comparison a historical reference points into: the recorded `prior_pair`,
+    else the pair still active. Never the client's history -- only server context."""
+    if ctx is None:
+        return None
+    prior = list((ctx.filters or {}).get("prior_pair") or [])
+    if _is_app_pair(prior):
+        return prior
+    active = list(ctx.active_applications or [])
+    return active if _is_app_pair(active) else None
+
+
+def rewrite_historical_refs(message: str, ctx: Optional[FollowupContext],
+                            language: Optional[str] = "en") -> Tuple[str, Optional[str]]:
+    """(message, None) unchanged when there is no explicit historical reference; (rewritten, None)
+    with every reference replaced by the application number it names, in the officer's own order, so
+    the ordinary explicit-ID path resolves and re-authorizes each one; or (message, question) when
+    it cannot be settled safely: no earlier comparison, "this" with no current application, or three
+    applications for a two-application comparison (never silently dropping one)."""
+    text = message or ""
+    ones, both = list(_HIST_ONE_RE.finditer(text)), _HIST_BOTH_RE.search(text)
+    if not ones and not both:
+        return text, None
+    pair = historical_pair(ctx)
+    if not pair:
+        return text, _clarify(
+            "There is no earlier comparison in this conversation to refer to. Give the application numbers.",
+            "இந்த உரையாடலில் முந்தைய ஒப்பீடு இல்லை. விண்ணப்ப எண்களைத் தரவும்.", language)
+    cur = getattr(ctx, "current_application", None)
+    out = text
+    for m in reversed(ones):                      # right to left, so earlier spans keep their offsets
+        idx = 0 if m.group(1).lower() in ("first", "1st") else 1
+        out = out[:m.start()] + pair[idx] + out[m.end():]
+    rest = _HIST_BOTH_RE.sub(" ", out) if both else out
+    rest_wo_ids = _APP_NUMBER_PATTERN_RE.sub(" ", rest)
+    explicit = [n for n in _APP_NUMBER_PATTERN_RE.findall(text)]
+    this_m = None if explicit else _HIST_THIS_RE.search(rest_wo_ids)
+    if this_m and not cur:
+        return text, _clarify("Which application do you mean by \"this\"? Give its number.",
+                              "\"இது\" எந்த விண்ணப்பம்? அதன் எண்ணைத் தரவும்.", language)
+    if both:
+        other = explicit[0] if explicit else (cur if this_m else None)
+        if other:
+            return text, _clarify(
+                f"I can compare two applications at a time. Compare {other} with which one from the earlier "
+                f"comparison: {pair[0]} or {pair[1]}?",
+                f"ஒரே நேரத்தில் இரண்டு விண்ணப்பங்களை மட்டுமே ஒப்பிட முடியும். {other}-ஐ {pair[0]} அல்லது "
+                f"{pair[1]} -- எதனுடன் ஒப்பிட வேண்டும்?", language)
+        if _SHOW_LEAD_RE.search(out) or not re.search(r"\bcompar|\bdifferen", out, re.IGNORECASE):
+            return f"Compare {pair[0]} and {pair[1]}.", None
+        out = out[:both.start()] + f"{pair[0]} and {pair[1]}" + out[both.end():]
+    if this_m:
+        m2 = _HIST_THIS_RE.search(out)            # "this application" -> the current application
+        out = out[:m2.start()] + cur + out[m2.end():]
+    return out, None
+
+
+def canonical_tiebreak(app: Optional[str]) -> Tuple[Optional[str], List[str]]:
+    """A number a history fallback recovered, checked against this turn's canonical set.
+
+    Inside a carried set of several: the focus wins, and with no focus nothing is chosen
+    -> (None, candidates) so the caller asks. Outside it, or with no canonical context, the
+    number stands. Never introduces a number of its own."""
+    ctx = CANONICAL.get()
+    nums = list(getattr(ctx, "application_numbers", None) or [])
+    if app and len(nums) > 1 and app in nums:
+        cur = getattr(ctx, "current_application", None)
+        return (cur, []) if cur in nums else (None, nums)
+    return app, []
+
+
+def singular_target(message: str, ctx) -> Tuple[Optional[str], List[str]]:
+    """Which ONE carried application a singular question means (P3.3).
+
+    Returns (app, []) when it is settled -- an ordinal/position pick, else the canonical
+    `current_application` -- and (None, candidates) when "its" points into a set of several with
+    no focus among them, so the caller asks instead of answering for all. (None, []) when the
+    question is not singular or nothing is carried. Pair membership is never changed here."""
+    nums = list(getattr(ctx, "application_numbers", None) or [])
+    if not nums or not points_at_one(message):
+        return None, []
+    if mentions_ordinal(message) or mentions_slice(message):
+        pick = ordinal_pick(message, nums)
+        if pick:
+            return pick, []
+    if len(nums) == 1:
+        return nums[0], []
+    cur = getattr(ctx, "current_application", None)
+    if cur in nums:
+        return cur, []
+    return None, nums
+
+
 def classify(message: str) -> str:
     """Which kind of implicit follow-up this message is, if any.
 
@@ -2420,6 +2816,28 @@ def classify(message: str) -> str:
         return FOLLOWUP_NONE
     words = text.split()
     lowered = text.lower()
+
+    # A message naming its OWN explicit application number is never a bare
+    # fragment to be resolved against a DIFFERENT, earlier application --
+    # whatever conversational filler surrounds it ("Goodbye, but first show
+    # the status of 2026/0154/02/012766."). Without this, `resolve()` still
+    # classified such a message as a follow-up kind below (nothing here
+    # checked for the message's own explicit identifier outside the
+    # comparison trigger and the long-message `_has_own_subject` branch),
+    # and `_apply_followup_resolution()` rewrote the message with the STALE
+    # context's application number, discarding the one the officer actually
+    # typed. A single explicit number here means there is nothing left to
+    # resolve -- the normal application gate (`resolve_application_reference`)
+    # already uses it correctly on its own. Two explicit numbers are still
+    # a comparison, handled by the trigger check right below.
+    if len(_APP_NUMBER_PATTERN_RE.findall(text)) == 1:
+        return FOLLOWUP_NONE
+
+    # Comparative follow-up: "compare them", "compare it with the second application", "compare row 1 and 2"
+    if len(words) <= 12 and _COMPARISON_TRIGGER_RE.search(lowered):
+        app_nums_in_msg = _APP_NUMBER_PATTERN_RE.findall(text)
+        if len(app_nums_in_msg) < 2:
+            return FOLLOWUP_COMPARISON
     if len(words) > _MAX_FOLLOWUP_WORDS:
         # An ordinal/slice reference with no subject of its own ("the second
         # overdue visit") points at a carried row exactly as concretely as a
@@ -3009,52 +3427,31 @@ class Resolution:
     status: Optional[str] = None
     application_type: Optional[str] = None
     submission_channel: Optional[str] = None
-    # The status/type a NEGATED refinement named ("not approved" -> status
-    # here is None but status_excluded is "approved"). `status`/
-    # `application_type` stay scalar and never hold the negation itself
-    # (see `refinement()`'s own docstring for why); these let
-    # `_scoped_list_answer` still state an exact count for "how many are
-    # not X" instead of falling back to counting everything as "matching".
     status_excluded: Optional[str] = None
     type_excluded: Optional[str] = None
-    # A field question that covers EVERY carried row: the projected field key
-    # ("applicant_name"), or the whole record for each when a details word was
-    # used. Both are answered over the re-read rows, never by picking one.
     per_row_field: Optional[str] = None
     full_details: bool = False
-    # How many rows a "remove row 2" / "exclude 2026/.../001167" style request
-    # dropped from the carried list. 0 (the default) for every other kind of
-    # follow-up. `_scoped_list_answer` checks this FIRST and answers with a
-    # plain "N remaining" confirmation instead of running the status/type
-    # aggregate logic built for "show only NISD" -- that logic filters the
-    # rows by whatever status/type the message named, which for a row
-    # removal is nothing at all, and it answered "None of those 0
-    # application(s) are pending" for a table that still had a row in it.
     rows_dropped: int = 0
-    # An ordinal picked ONE specific row out of a larger carried list purely
-    # to read a field off it ("what is the subdivision number in the second
-    # row?") -- a peek, not a narrowing. `_scoped_list_answer` still renders
-    # the answer from just that one row (`per_row_field` + `application_
-    # numbers` of length 1 together do that), but the carried list the NEXT
-    # follow-up resolves against must stay the whole table the row was
-    # counted from, not collapse to the one row just looked at -- "exclude
-    # the second row" right after this must still mean the second row of
-    # the SAME table, not "exclude row 2 of a 1-row list". Set only by the
-    # ordinal + `fields_for_each` branch below.
     row_peek: bool = False
-    # "show more" / "less kami" -- a vague request for a bigger or smaller
-    # result set with no number attached. There is no default row cap
-    # anywhere in this app's listings (every query returns everything that
-    # matches), so there is nothing to lift or narrow; this only records
-    # that the officer asked so `_scoped_list_answer` can say so plainly
-    # instead of falling all the way through to the document-search
-    # fallback, which answered "No documents found with the query 'less'."
-    # -- a developer-facing string for a request that named an application
-    # list, not a document.
     vague_count: bool = False
     ambiguous: bool = False
     clarification: Optional[str] = None
     context: Optional[FollowupContext] = None
+
+    # Phase 5 additions:
+    is_comparison: bool = False
+    comparison_targets: List[str] = field(default_factory=list)
+    target_field: Optional[str] = None
+    operation: Optional[str] = None
+
+    # The ORIGINAL two-application pair, carried alongside a single-focus
+    # pick ("the other one", "the first one", ...) so the turn after a
+    # focus switch can still answer "both" / "compare them again" without
+    # the pair ever having been narrowed to one. `application_numbers`
+    # above stays the CURRENT focus set (one item for a single pick); this
+    # is the pair that focus was picked FROM, regardless of how many of
+    # them are the current focus.
+    pair: List[str] = field(default_factory=list)
 
     @property
     def resolved(self) -> bool:
@@ -3293,15 +3690,343 @@ def excluded_row_numbers(message: str, numbers: List[str]) -> Optional[List[str]
     return None
 
 
+
+def _resolve_comparison(message: str,
+                        context: Optional[FollowupContext],
+                        language: Optional[str] = "en") -> Optional[Resolution]:
+    """Resolve comparative follow-up requests against structured context.
+
+    e.g.
+    - "Compare it with the second application"
+    - "Compare row 1 and row 2"
+    - "Compare the first and second application"
+    - "Compare them" / "Compare both"
+    - "Compare with 2026/0154/28/000002"
+    """
+    if context is None:
+        return None
+
+    lowered = _correct_typos(message or "").lower()
+    if not _COMPARISON_TRIGGER_RE.search(lowered):
+        return None
+
+    active_apps: List[str] = list(context.active_applications or context.application_numbers or [])
+    if not active_apps and context.filters and context.filters.get("list_numbers"):
+        active_apps = list(context.filters["list_numbers"])
+
+    cur_app = context.current_application or context.single_application
+    app_no_matches = _APP_NUMBER_PATTERN_RE.findall(message or "")
+
+    # Look for ordinals in the query
+    ord_indices = []
+    # Token-based ordinal scanning
+    for token in re.findall(r"[a-zA-Z0-9஀-௿]+", lowered):
+        idx = ordinal_index(token)
+        if idx is not None and idx not in ord_indices:
+            ord_indices.append(idx)
+    # Also check "row N" or "வரிசை N"
+    for m in re.finditer(r"(?:row|வரிசை)\s*(\d+)", lowered):
+        r_num = int(m.group(1))
+        if r_num not in ord_indices:
+            ord_indices.append(r_num)
+
+    has_pronoun = bool(_BACKREF_RE.search(lowered) or re.search(r"\b(?:it|that\s+one|this\s+one|adhu|athu)\b", lowered))
+
+    # Sub-case A: Pronoun ("it") + Ordinal ("the second application")
+    if has_pronoun and cur_app and ord_indices:
+        target_idx = ord_indices[0]
+        if 1 <= target_idx <= len(active_apps):
+            target_app = active_apps[target_idx - 1]
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                application_numbers=[cur_app, target_app],
+                comparison_targets=[cur_app, target_app],
+                operation="compare",
+                context=context,
+            )
+        else:
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                ambiguous=True,
+                clarification=_clarify(
+                    f"That list had {len(active_apps)} applications, so there is no number {target_idx}. Please specify a valid position.",
+                    f"அந்தப் பட்டியலில் {len(active_apps)} விண்ணப்பங்கள் மட்டுமே இருந்தன; எனவே {target_idx}-ஆவது இல்லை. சரியான இடத்தைக் குறிப்பிடவும்.",
+                    language,
+                ),
+                context=context,
+            )
+
+    # Sub-case B: Pronoun ("it") + Explicit Application Number
+    if has_pronoun and cur_app and app_no_matches:
+        target_app = app_no_matches[0].upper()
+        return Resolution(
+            kind=FOLLOWUP_COMPARISON,
+            is_comparison=True,
+            application_numbers=[cur_app, target_app],
+            comparison_targets=[cur_app, target_app],
+            operation="compare",
+            context=context,
+        )
+
+    # Sub-case C: Two Ordinals ("compare row 1 and row 2" / "compare the first and second")
+    if len(ord_indices) >= 2:
+        idx1, idx2 = ord_indices[0], ord_indices[1]
+        if 1 <= idx1 <= len(active_apps) and 1 <= idx2 <= len(active_apps):
+            app1 = active_apps[idx1 - 1]
+            app2 = active_apps[idx2 - 1]
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                application_numbers=[app1, app2],
+                comparison_targets=[app1, app2],
+                operation="compare",
+                context=context,
+            )
+        else:
+            bad = [i for i in (idx1, idx2) if not (1 <= i <= len(active_apps))]
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                ambiguous=True,
+                clarification=_clarify(
+                    f"That list had {len(active_apps)} applications, so position {bad[0]} does not exist. Please specify a position from 1 to {len(active_apps)}.",
+                    f"அந்தப் பட்டியலில் {len(active_apps)} விண்ணப்பங்கள் மட்டுமே இருந்தன; எனவே {bad[0]}-ஆவது இடம் இல்லை. 1 முதல் {len(active_apps)} வரையிலான இடத்தைக் குறிப்பிடவும்.",
+                    language,
+                ),
+                context=context,
+            )
+
+    # Sub-case D: "Compare them" / "compare both" / "இரண்டையும் ஒப்பிடு"
+    if re.search(r"\b(?:them|both|these|those)\b|இரண்டையும்|rendaiyum", lowered):
+        if len(active_apps) == 2:
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                application_numbers=active_apps[:2],
+                comparison_targets=active_apps[:2],
+                operation="compare",
+                context=context,
+            )
+        elif len(active_apps) > 2:
+            shown = ", ".join(active_apps[:3]) + ("…" if len(active_apps) > 3 else "")
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                ambiguous=True,
+                clarification=_clarify(
+                    f"That list contains {len(active_apps)} applications ({shown}). Which two would you like to compare? For example, 'the first and second'.",
+                    f"அந்தப் பட்டியலில் {len(active_apps)} விண்ணப்பங்கள் உள்ளன ({shown}). எவற்றை ஒப்பிட விரும்புகிறீர்கள்? எ.கா. 'முதலாவதும் இரண்டாவதும்'.",
+                    language,
+                ),
+                context=context,
+            )
+        else:
+            return Resolution(
+                kind=FOLLOWUP_COMPARISON,
+                is_comparison=True,
+                ambiguous=True,
+                clarification=_clarify(
+                    "Comparison requires at least two applications. Please provide the application numbers or ask for a list first.",
+                    "ஒப்பீடு செய்ய குறைந்தது இரண்டு விண்ணப்பங்கள் தேவை. விண்ணப்ப எண்களை வழங்கவும் அல்லது பட்டியலைக் கேட்கவும்.",
+                    language,
+                ),
+                context=context,
+            )
+
+    # Bare compare with 2 active apps
+    if len(active_apps) == 2 and not ord_indices and not app_no_matches:
+        return Resolution(
+            kind=FOLLOWUP_COMPARISON,
+            is_comparison=True,
+            application_numbers=active_apps[:2],
+            comparison_targets=active_apps[:2],
+            operation="compare",
+            context=context,
+        )
+
+    # More than 2 apps with ambiguous compare request
+    if len(active_apps) > 2:
+        shown = ", ".join(active_apps[:3]) + ("…" if len(active_apps) > 3 else "")
+        return Resolution(
+            kind=FOLLOWUP_COMPARISON,
+            is_comparison=True,
+            ambiguous=True,
+            clarification=_clarify(
+                f"Which applications would you like to compare from the {len(active_apps)} listed ({shown})? For example, 'compare the first and second'.",
+                f"பட்டியலிடப்பட்ட {len(active_apps)} விண்ணப்பங்களில் எவற்றை ஒப்பிட விரும்புகிறீர்கள்? எ.கா. 'முதலாவதையும் இரண்டாவதையும் ஒப்பிடு'.",
+                language,
+            ),
+            context=context,
+        )
+
+    return Resolution(
+        kind=FOLLOWUP_COMPARISON,
+        is_comparison=True,
+        ambiguous=True,
+        clarification=_clarify(
+            "Which applications do you want to compare? Please specify two application numbers or positions.",
+            "எந்த விண்ணப்பங்களை ஒப்பிட வேண்டும்? இரண்டு விண்ணப்ப எண்கள் அல்லது இடங்களைக் குறிப்பிடவும்.",
+            language,
+        ),
+        context=context,
+    )
+
+
+# Pair-level references after a two-application comparison -- NOT "wrong
+# one" / "not this one" / "none of them", which are genuine negations with
+# nothing concrete to switch to (see `is_negated_ref` above). These
+# patterns are narrow on purpose: they only ever fire below when the pair
+# is already known (exactly two), so they resolve deterministically instead
+# of asking a clarifying question the officer did not need to answer.
+_PAIR_OTHER_RE = re.compile(
+    r"^(?:and\s+|so\s+|now\s+|ok\s+|okay\s+)?what\s+about\s+(?:the\s+)?other\s+one"
+    r"|^(?:the\s+)?other\s+one$|^another\s+one$"
+    r"|^go\s+back\s+to\s+(?:the\s+)?other\s+one$"
+    r"|மற்றது|இன்னொன்று", re.IGNORECASE)
+_PAIR_LEAD = r"^(?:and\s+|so\s+|now\s+|ok\s+|okay\s+)?(?:please\s+)?(?:show\s+|switch\s+(?:back\s+)?to\s+)?(?:me\s+)?(?:only\s+)?"
+_PAIR_FIRST_RE = re.compile(
+    _PAIR_LEAD + r"(?:the\s+)?first\s+(?:one|application)$"
+    r"|^switch\s+back\s+to\s+(?:the\s+)?first\s+one$", re.IGNORECASE)
+_PAIR_SECOND_RE = re.compile(_PAIR_LEAD + r"(?:the\s+)?second\s+(?:one|application)$", re.IGNORECASE)
+_PAIR_BOTH_RE = re.compile(
+    r"^both(?:\s+of\s+them)?$"
+    r"|^show\s+both(?:\s+applications?)?(?:\s+again)?(?:\s+in\s+one\s+comparison)?$"
+    r"|^compare\s+them\s+again$"
+    r"|^compare\s+(?:the\s+)?first\s+and\s+second(?:\s+applications?)?(?:\s+again)?$"
+    r"|^display\s+(?:the\s+)?(?:two|both)(?:\s+applications?)?(?:\s+again)?$",
+    re.IGNORECASE)
+# "Which one was submitted first?" / "which one is older/newer?" / "which
+# took longer?" over the pair -- a genuine superlative question, not a
+# positional "the first one" and not a plural back-reference to whichever
+# ONE application a prior pick narrowed to. Found live: without this,
+# `resolve()`'s plain-backref narrowing (further below, meant for "was
+# that the rejected one?" right after a single pick) treated "which one"
+# as pointing at the single last-peeked application, answering a
+# two-application question as if only one application existed at all.
+# Routed the same way as `_PAIR_BOTH_RE` -- the ORIGINAL message (with the
+# aspect word still in it) is what decides the verdict downstream, this
+# resolver only has to recognise the SHAPE, never the specific aspect.
+_PAIR_SUPERLATIVE_RE = re.compile(
+    r"\bwhich\s+(?:one\s+)?(?:was|is|took|has)\b.{0,40}\b"
+    r"(?:first|last|earliest|latest|oldest|newest|older|newer|longer|longest|faster|fastest|more|less|higher|lower)\b",
+    re.IGNORECASE)
+
+
+def _resolve_pair_reference(message: str, context: Optional[FollowupContext],
+                            language: Optional[str] = "en") -> Optional[Resolution]:
+    """"What about the other one?" / "the first one" / "the second one" /
+    "both (of them)" / "compare them again" / "show both again" / "switch
+    back to the first one" / "go back to the other one" -- all resolved
+    against the ORIGINAL two-application pair (`context.application_numbers`
+    / `.active_applications`, synchronised by `__post_init__` and never
+    narrowed by this function), never against whatever single application a
+    PRIOR turn happened to focus on. Only acts when the pair is unambiguous
+    (exactly two); with any other count it stands aside and the ordinary
+    ambiguous paths elsewhere in `resolve()` still apply.
+
+    A single pick ("the other one" / "the first one" / "the second one")
+    uses `row_peek=True` the same way an ordinary ordinal pick over a list
+    already does (see the "list in view" branch below) -- the PRIOR
+    context (the pair) is carried to the next turn completely unchanged,
+    with only a `last_peeked` breadcrumb added, so a later "both" / "show
+    both again" / "compare them again" still has the full pair to restore,
+    and a later "was that the rejected one?" / "what was the reason for
+    that?" still resolves against the one just picked. This is what
+    actually fixes the pair collapsing to a singleton: nothing here ever
+    rewrites `application_numbers` down to one."""
+    if context is None:
+        return None
+    # `active_applications` is the field meant to carry the pair across a
+    # single-application follow-up ("what is its status?" narrows
+    # `application_numbers` to just the one in view, by design --
+    # `__post_init__`'s own comment calls `application_numbers` the
+    # "legacy" field). Preferring it only when `application_numbers` has
+    # genuinely lost the pair (not just reordered it) keeps every other
+    # caller of this function, which already expects `application_numbers`
+    # first, unaffected.
+    pair: List[str] = list(context.application_numbers or [])
+    if len(pair) != 2 and len(context.active_applications or []) == 2:
+        pair = list(context.active_applications)
+    text = (message or "").strip().rstrip(" ?.!")
+    _prior = list((context.filters or {}).get("prior_pair") or [])
+    if len(pair) != 2 and _PAIR_BOTH_RE.search(text):
+        pair = _prior   # explicit "both" only (P3.3)
+    if len(pair) != 2 and _PAIR_OTHER_RE.search(text) and _is_app_pair(_prior):
+        # P3.4: "the other one" after an UNRELATED application became current -- other than what?
+        # The earlier pair is not in view any more; never silently pick from it.
+        cur = context.current_application or context.single_application
+        return Resolution(kind=FOLLOWUP_SINGULAR, ambiguous=True, context=context, clarification=_clarify(
+            f"Which application do you mean? You are now on {cur}; the earlier comparison was "
+            f"{_prior[0]} and {_prior[1]}. Give the number, or say for example \"the second application "
+            f"from our earlier comparison\"." if cur else
+            f"Which application do you mean? The earlier comparison was {_prior[0]} and {_prior[1]}.",
+            f"எந்த விண்ணப்பம்? இப்போது {cur or '-'}; முந்தைய ஒப்பீடு {_prior[0]}, {_prior[1]}. எண்ணைத் தரவும்.",
+            language))
+    if len(pair) != 2:
+        return None
+    if _PAIR_BOTH_RE.search(text) or _PAIR_SUPERLATIVE_RE.search(text):
+        return Resolution(
+            kind=FOLLOWUP_COMPARISON,
+            is_comparison=True,
+            entity=ENTITY_APPLICATION_LIST,
+            application_numbers=list(pair),
+            comparison_targets=list(pair),
+            operation="compare",
+            pair=list(pair),
+            context=context,
+        )
+    pick = None
+    if _PAIR_OTHER_RE.search(text):
+        cur = context.current_application or context.single_application
+        # Default to the SECOND-named application when nothing has been
+        # singled out yet -- "the other one" right after a comparison means
+        # "not the one named first", the natural reading with no focus
+        # established either way.
+        pick = pair[0] if cur == pair[1] else pair[1]
+    elif _PAIR_FIRST_RE.search(text):
+        pick = pair[0]
+    elif _PAIR_SECOND_RE.search(text):
+        pick = pair[1]
+    if pick is None:
+        return None
+    return Resolution(
+        kind=FOLLOWUP_LIST_FIELD,
+        per_row_field=list(_STANDARD_LISTING_COLUMNS),
+        application_number=pick,
+        application_numbers=[pick],
+        entity=ENTITY_APPLICATION_LIST,
+        row_peek=True,
+        pair=list(pair),
+        context=context,
+    )
+
 def resolve(message: str,
             context: Optional[FollowupContext],
-            language: Optional[str] = "en") -> Resolution:
+            language: Optional[str] = "en",
+            officer_id: Optional[str] = None) -> Resolution:
     """Decide what a bare follow-up refers to, or that it is unanswerable.
 
     Called before intent routing, so the rest of the pipeline sees a question
     that names its own subject. Returns an unresolved `Resolution` for anything
     that is not a follow-up, which is the overwhelmingly common case.
     """
+    # Zero-grant and expiration rules:
+    if context is not None:
+        if context.is_expired():
+            return Resolution()
+        if officer_id and not context.validate_officer(officer_id):
+            return Resolution()
+
+    # Check comparative follow-ups first
+    comp_res = _resolve_comparison(message, context, language)
+    if comp_res is not None:
+        return comp_res
+    other_res = _resolve_pair_reference(message, context, language)
+    if other_res is not None:
+        return other_res
+
     kind = classify(message)
 
     # A patta-transfer-party answer ("... new owner (transferee): X") leaves ONE
@@ -3486,11 +4211,34 @@ def resolve(message: str,
                     f"{named_pos}-ஆவது இல்லை. நீங்கள் குறிப்பிடும் விண்ணப்ப "
                     f"எண்ணைத் தரவும்.",
                     language))
+        _single_op = None
+        _target_fld = None
+        _low_msg = (message or "").lower()
+        if about_visit or context.entity == ENTITY_FIELD_VISIT:
+            if re.search(r"\b(?:when|date|eppo)\b|எப்போது|தேதி", _low_msg):
+                _target_fld = "scheduled_date"
+                _single_op = "field_visit_schedule"
+            else:
+                _single_op = "field_visit_details"
+        elif re.search(r"\b(?:applicant\s*name|name|peyar)\b|பெயர்", _low_msg):
+            _target_fld = "applicant_name"
+
         return Resolution(
             kind=kind,
             application_number=single,
             application_numbers=[single],
-            entity=context.entity,
+            # A list context (ENTITY_APPLICATION_LIST) that has narrowed to
+            # ONE application via `current_application` (a pair-focus pick,
+            # "the other one" / "the second one") must render through the
+            # single-application pipeline, not the list renderer -- found
+            # live: `_scoped_list_answer()` has no notion of
+            # `FOLLOWUP_SINGULAR` at all, so "What is its status?" right
+            # after such a pick answered with a bare list count instead of
+            # the actual status. ENTITY_FIELD_VISIT (and a context that was
+            # already ENTITY_APPLICATION) keep their own existing entity,
+            # unaffected -- this narrows only the one case that was wrong.
+            entity=(ENTITY_APPLICATION if context.entity == ENTITY_APPLICATION_LIST
+                    else context.entity),
             # The previous answer was about the visit, or this question is.
             about_visit=about_visit or context.entity == ENTITY_FIELD_VISIT,
             status=refine["status"],
@@ -3498,6 +4246,8 @@ def resolve(message: str,
             submission_channel=refine["submission_channel"],
             status_excluded=refine.get("status_excluded"),
             type_excluded=refine.get("type_excluded"),
+            target_field=_target_fld,
+            operation=_single_op,
             context=context,
         )
 
@@ -3522,6 +4272,14 @@ def resolve(message: str,
                 and not _PLURAL_BACKREF_RE.search((message or "").lower())
                 and not mentions_ordinal(message) and not mentions_slice(message)):
             numbers = [_lp]
+        # "show ITS details" over a carried set with no focus among it: the set is not "it" (P3.3)
+        if len(numbers) > 1 and not about_visit and singular_target(message, context)[1]:
+            return Resolution(kind=kind, ambiguous=True, context=context, clarification=_clarify(
+                "That refers to one application, but " + str(len(numbers)) + " are in view: "
+                + ", ".join(numbers[:5]) + ". Which one do you mean? Give the number, or a position (the first, the second).",
+                "ஒரு விண்ணப்பத்தைக் குறிக்கிறது, ஆனால் " + str(len(numbers)) + " உள்ளன: "
+                + ", ".join(numbers[:5]) + ". எந்த விண்ணப்பம்? எண்ணை அல்லது இடத்தைத் (முதல், 2-வது) தரவும்.",
+                language))
         # A field-visit list is carried overdue-first (then awaiting, then
         # scheduled -- see `build_context`'s `fv_visit_plan` / `field_visits`
         # branches), so an ordinal naming "overdue" / "awaiting" lands in the
@@ -3774,6 +4532,12 @@ def resolve(message: str,
                 context=context,
             )
         if kind in (FOLLOWUP_LIST_AGGREGATE, FOLLOWUP_LIST_REFINE):
+            _op = None
+            _low_m = (message or "").lower()
+            if re.search(r"\b(?:oldest|earliest|pazhaya|முந்தைய|பழைய)\b|மிகவும்\s+பழைய", _low_m):
+                _op = "oldest"
+            elif re.search(r"\b(?:newest|latest|most\s+recent|puthu|புதிய|பின்னைய)\b|மிகவும்\s+புதிய", _low_m):
+                _op = "newest"
             return Resolution(
                 kind=kind,
                 application_numbers=list(numbers),
@@ -3784,6 +4548,7 @@ def resolve(message: str,
                 submission_channel=refine["submission_channel"],
                 status_excluded=refine.get("status_excluded"),
                 type_excluded=refine.get("type_excluded"),
+                operation=_op,
                 context=context,
             )
         # "the 9th one" of a 2-row list -- a position that points past the end.

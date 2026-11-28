@@ -1,0 +1,34 @@
+{
+  "Chain4_original_context": [
+    {
+      "q": "Consider 2026/0153/02/045470. This is an NISD application, which normally follows a workflow without a mandatory field inspection. However, I can see a field_visit_dt value in one workflow entry. Can you inspect the raw workflow evidence and the service type separately, and explain whether the stored date actually establishes a required field visit?",
+      "a": "<div><strong>1. Consider . This is an NISD application of 2026/0153/02/045470</strong></div>\nApplication 2026/0153/02/045470 is of type: NISD\n\n<div><strong>2. which normally follows a workflow without a mandatory field inspection. However of 2026/0153/02/045470</strong></div>\nI could not find that particular detail for 2026/0153/02/045470 in the record. Here is what it does hold — Type: NISD, Status: Rejected, Stage: REJECTED, Applicant: ர. சிவானந்தம், Survey No: 110.\n\n<div><strong>3. explain whether the stored date actually establishes a required field visit of 2026/0153/02/045470</strong></div>\n2026/0153/02/045470 is an NISD application -- NISD needs no field visit (only ISD do)."
+    },
+    {
+      "q": "Which workflow transition contains that date?",
+      "a": "2026/0153/02/045470 is an NISD application -- NISD needs no field visit (only ISD do)."
+    },
+    {
+      "q": "Does a populated date column automatically mean that the service requires an inspection?",
+      "a": "'Overdue' does not apply to 2026/0153/02/045470 -- it was rejected and is closed, not an open file being tracked against a deadline."
+    }
+  ],
+  "Chain14_original_context": [
+    {
+      "q": "I need to inspect the ownership information for 2026/0153/02/045472. There are separate old-owner and IGRS-owner extracts, and I don't want their rows mixed up. Please count the rows in each source, identify the fields they share, compare the available owner and relationship information, and distinguish source records from the applicant-information record.",
+      "a": "<div><strong>1. I need to inspect the ownership information for . There are separate old-owner and IGRS-owner extracts of 2026/0153/02/045472</strong></div>\n<div class='table-intro'>No old-owner (chitta) record is held for application 2026/0153/02/045472.</div>\n\n<div><strong>2. identify the fields they share of 2026/0153/02/045472</strong></div>\n<div class='table-intro'>No old-owner (chitta) record is held for application 2026/0153/02/045472.</div>\n\n<div><strong>3. compare the available owner and relationship information of 2026/0153/02/045472</strong></div>\n<div class='data-table-card'><div class='data-table-header'><div class='data-table-title-section'><span class='data-table-icon'>📋</span><h3 class='data-table-title'>2026/0153/02/045472 (IGRS)</h3><span class='data-table-count'>2 records</span></div><button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button></div><div class='data-table-container'><table class='data-table'><thead><tr><th>FIELD</th><th>DETAILS</th></tr></thead><tbody class='table-body-rows'><tr><td colspan='2'><strong>Owner 1</strong></td></tr><tr><td>Relative / relationship</td><td>சுப்பைய்யா (s/o (son of))</td></tr><tr><td colspan='2'><strong>Owner 2</strong></td></tr><tr><td>Relative / relationship</td><td>பாலாஜி (w/o (wife of))</td></tr></tbody></table></div></div>\n\n<div><strong>4. distinguish source records from the applicant-information record of 2026/0153/02/045472</strong></div>\nSub-Registrar referral — application 2026/0153/02/045472 reached the office through the Sub-Registrar / IGRS Form 6 route (CAN 202653322998 — 12 digits)."
+    },
+    {
+      "q": "How many IGRS-owner records are linked to this application?",
+      "a": "<div class='table-intro'>Applicant: பாலாஜி  [2026/0153/02/045472]</div>"
+    },
+    {
+      "q": "Does the old-owner table contain the same number of rows?",
+      "a": "<div class='table-intro'>Owner no: 1  [2026/0153/02/045472]</div>"
+    },
+    {
+      "q": "Can you explain why these two tables should not automatically be treated as identical?",
+      "a": "The CAN Number for 2026/0153/02/045472 is: 202653322998"
+    }
+  ]
+}

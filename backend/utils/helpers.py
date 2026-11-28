@@ -353,7 +353,10 @@ def _build_catalogue_service_phrases() -> Dict[str, List[str]]:
             plist.append(raw_name.replace("/", " / "))
             for part in raw_name.split("/"):
                 p_clean = part.strip()
-                if len(p_clean) >= 4 and p_clean not in plist:
+                # Exclude common administrative geography words ('block', 'land', etc.)
+                # so a revenue block query does not falsely resolve to 0163 Block/Revoke.
+                _GENERIC_GEO_WORDS = {"block", "land", "town", "ward", "survey", "number", "patta", "sub", "division"}
+                if len(p_clean) >= 4 and p_clean not in plist and p_clean.lower() not in _GENERIC_GEO_WORDS:
                     plist.append(p_clean)
         if "-" in raw_name:
             plist.append(raw_name.replace("-", " "))

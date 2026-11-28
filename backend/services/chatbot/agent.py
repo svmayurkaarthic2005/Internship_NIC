@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.schemas import OfficerContext
 from backend.services import llm_gate, rag
-from .agent_tools import ToolContext, execute_tool, tool_schemas
+from .agent_tools import ToolContext, execute_tool, select_tool_names, tool_schemas
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -253,8 +253,13 @@ async def gather_evidence(
     return what they said. Raises `AgentUnavailable` if the model layer itself
     is unusable."""
     rounds_allowed = max_iterations or settings.AGENT_MAX_ITERATIONS
+    # Picked once, for the whole turn: every round below -- the first bind
+    # and every "followup" re-ask -- offers and enforces the SAME allowlist,
+    # so a tool call can never slip in on a later round under a wider scope
+    # than the turn started with.
+    allowed_tools = select_tool_names(message, chat_history)
     try:
-        bound = rag.llm.bind_tools(tool_schemas())
+        bound = rag.llm.bind_tools(tool_schemas(allowed_tools))
     except Exception as exc:  # pragma: no cover - depends on langchain version
         raise AgentUnavailable(f"tool binding unsupported: {exc}") from exc
 
@@ -323,7 +328,7 @@ async def gather_evidence(
                 ))
                 continue
             logger.info(f"agent: calling {name}({args})")
-            result = await execute_tool(ctx, name, args)
+            result = await execute_tool(ctx, name, args, allowed=allowed_tools)
             dumped = _dump(result)
             seen[key] = dumped
             evidence.observations.append({"tool": name, "arguments": args, "result": result})
@@ -418,6 +423,41 @@ class AgentResult:
     @property
     def grounded(self) -> bool:
         return self.evidence.grounded
+
+
+async def run_agent_with_plan(
+    message: str,
+    officer: OfficerContext,
+    db: AsyncSession,
+    query_plan: Optional[Any] = None,
+    chat_history: Optional[list] = None,
+    language: str = "en",
+) -> AgentResult:
+    """Execute a structured plan using typed execution planning and DAG scheduling."""
+    from .agent_plan import (
+        create_execution_plan,
+        execute_execution_plan,
+        plan_to_evidence,
+        synthesize_plan_answer
+    )
+    from .query_understanding import understand_query
+
+    if query_plan is None:
+        query_plan = await understand_query(message, chat_history=chat_history)
+
+    ctx = await ToolContext.create(db, officer)
+    plan = create_execution_plan(query_plan, message)
+
+    if not plan.is_valid:
+        raise AgentUnavailable(f"Plan validation failed: {plan.validation_errors}")
+
+    executed_plan = await asyncio.wait_for(
+        execute_execution_plan(plan, ctx, timeout_seconds=settings.AGENT_TIMEOUT_SECONDS),
+        timeout=settings.AGENT_TIMEOUT_SECONDS
+    )
+    evidence = plan_to_evidence(executed_plan)
+    answer = await synthesize_plan_answer(executed_plan, message, language, officer, chat_history)
+    return AgentResult(answer=answer, evidence=evidence)
 
 
 async def run_agent(

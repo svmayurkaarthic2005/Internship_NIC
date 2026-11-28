@@ -37,14 +37,10 @@ python serve_frontend.py       # Serves on http://localhost:3000
 # Database integrity checks
 python backend/sample_db/verify_sample_db.py     # CSV-shaped layer
 python -m backend.sample_db.verify_identifiers   # Aadhaar + CAN, both layers
-python check_missing_values.py                   # ORM layer field validation
 
-# Check login credentials
-python check_login_credentials.py  # Shows current officers and passwords
-
-# Run tests
-python test_comprehensive_suite.py
-python backend/test_200_suite.py
+# Run tests -- pytest under tests/ (needs PostgreSQL; tests/unit makes no LLM calls)
+python -m pytest tests/unit -q
+python -m backend.sample_db.check_app_wiring --chat   # smoke test against this DB
 ```
 
 **API Docs** (dev only): http://localhost:8000/api/docs
@@ -75,7 +71,7 @@ nic_internship/
 │   │   ├── applications.py   # GET/PUT /applications
 │   │   ├── survey.py         # Survey endpoints
 │   ├── services/
-│   │   ├── chatbot.py        # Main orchestrator (~29000 lines) — entry point for all chat logic
+│   │   ├── chatbot/          # The chat package (was one ~29000-line chatbot.py); orchestrator.py holds the entry points
 │   │   ├── rag.py            # Intent detection, language detection, LLM calls, prompt building
 │   │   ├── postgres.py       # All database query handlers (get_officer_applications, etc.)
 │   │   ├── pgvector_store.py # pgvector operations (init, similarity search, ingest)
@@ -105,7 +101,7 @@ POST /api/v1/chat/stream
         ↓
   chat.py router
         ↓
-  chatbot.py → process_chat_stream()   ← MAIN ENTRY POINT
+  chatbot/orchestrator.py → process_chat_stream()   ← MAIN ENTRY POINT
         ↓
   rag.py → parse_intent()              ← classify the user message
         ↓
@@ -137,8 +133,8 @@ comparisons, field visits, sub-division desk, the agent fallback, …).
    ISD?" is service code 0154, looked up rather than generated)
 8. `general_query` — falls back to the agent tool-calling layer, then plain RAG/vector search
 
-`python -m backend.sample_db.test_intent_coverage` prints the live list; there
-are 67 intents, so treat any enumeration in prose as a sketch.
+`parse_intent` in `backend/services/rag.py` is the live list (the former `test_intent_coverage`
+script was removed); treat any enumeration in prose as a sketch.
 
 ### Language Detection
 
@@ -264,7 +260,7 @@ survey/subdivision pairing subsection for that rule's mechanism and known gaps.
 
 ### Service Layer
 
-- **`chatbot.py`** is the single orchestration layer — all chat logic flows through it. It is large (~29000 lines) by design; new intent handlers belong here or in `postgres.py`.
+- **`backend/services/chatbot/`** is the single orchestration layer — all chat logic flows through it. It replaced the old ~29000-line the `backend/services/chatbot/` package: `orchestrator.py` holds `process_chat` / `process_chat_stream`, the `chat_*.py` modules the shared helpers, the `*_qa.py` modules the record answers. New intent handlers belong in it or in `postgres.py`.
 - **`postgres.py`** contains *only* database query functions. No LLM calls, no intent logic.
 - **`rag.py`** contains *only* NLP utilities: intent detection, language detection, extraction helpers, LLM calls, and prompt builders.
 - Numeric/count data **always** comes from the database directly. Never let the LLM generate counts or application numbers — this prevents hallucination.
@@ -314,7 +310,7 @@ survey/subdivision pairing subsection for that rule's mechanism and known gaps.
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
 
-3. **`chatbot.py` is very large** — use IDE symbol search to navigate. Key entry points:
+3. **The `backend/services/chatbot/` package is very large** — use IDE symbol search to navigate. Key entry points (`orchestrator.py`):
    - `process_chat_stream()` — streaming chat
    - `process_chat()` — non-streaming chat
    - `create_chat_session()` — session creation
@@ -346,11 +342,11 @@ survey/subdivision pairing subsection for that rule's mechanism and known gaps.
 ## Testing
 
 ```powershell
-# Comprehensive suite (top-level)
-python test_comprehensive_suite.py
+# The maintained suite: pytest under tests/unit (live PostgreSQL, no LLM)
+python -m pytest tests/unit -q
 
-# 200-question suite (backend-focused)
-python backend/test_200_suite.py
+# Bot-message sanitizer check: serve the repo (launch config "sis-static-tests") and open
+# http://localhost:8766/tests/frontend/test_sanitize_bot_html.html -- title PASS / FAIL
 
 # Test question sets (plain text, one question per line)
 # test_questions_100.txt, test_questions_200.txt, test_questions_206.txt

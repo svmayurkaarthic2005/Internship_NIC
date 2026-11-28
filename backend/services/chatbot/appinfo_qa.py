@@ -48,7 +48,13 @@ _EXACT = {
     "encertify": "encertify", "physical": "physical", "verification": "verification", "verifcation": "verification",
     "receved": "received", "recieved": "received", "receipt": "received", "received": "received", "sent": "sent",
     "sending": "sent", "rtr": "rtr", "automautated": "automutated", "automated": "automutated",
-    "automutated": "automutated", "automutation": "automutated", "automatically": "automutated", "merge": "merge",
+    "automutated": "automutated", "automutation": "automutated", "merge": "merge",
+    # "automatically" deliberately NOT mapped to "automutated" -- it is an
+    # ordinary English adverb ("does X automatically mean Y?", "should not
+    # automatically be treated as..."), and collapsing it here made every
+    # reasoning question using that word answer with the unrelated
+    # automutation-flag field. The real automutation cue is the word
+    # "automutated" itself (or a typo of it), already covered above.
     "merged": "merged", "corection": "correction", "correction": "correction", "occupashun": "occupation",
     "occupation": "occupation", "latest": "latest", "update": "update", "updated": "update", "completd": "completed",
     "enclosd": "enclosures", "enclosed": "enclosures", "applid": "applid", "applied": "applid", "proposd": "proposed", "proposed": "proposed", "rejct": "reject", "rejected": "reject",

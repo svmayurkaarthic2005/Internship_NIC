@@ -1,0 +1,116 @@
+{
+  "with_history": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.4
+    },
+    {
+      "q": "What about the other one?",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045472')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045472</a></td><td>NISD</td><td>35</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0012</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.3
+    },
+    {
+      "q": "What is its status?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.3
+    },
+    {
+      "q": "Show both applications again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.3
+    },
+    {
+      "q": "Switch back to the first application.",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045470')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045470</a></td><td>NISD</td><td>110</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0043</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.3
+    },
+    {
+      "q": "What was its rejection reason?",
+      "a": "Common rejection reasons (workflow guide): 1) incomplete documents -- a missing, invalid or expired Sale Deed, EC or ID, or documents not properly attested; 2) area mismatch -- the sale deed area differs from the survey records or the sub-division areas do not add up to the original; 3) encroachment found at the field visit, boundary disputes or unauthorised construction; 4) litigation flag -- an ongoing court case, disputed ownership or a stay order; 5) revenue arrears -- pending property tax or dues on the survey number; 6) invalid survey number -- it does not exist, belongs to another jurisdiction or is already sub-divided. After a rejection the applicant has 30 days to resubmit (up to 3 resubmissions). For why one file was rejected ask: why was [application number] rejected?",
+      "intent": "howto_answer",
+      "seconds": 0.0
+    }
+  ],
+  "without_history": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.2
+    },
+    {
+      "q": "What about the other one?",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045472')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045472</a></td><td>NISD</td><td>35</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0012</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.2
+    },
+    {
+      "q": "What is its status?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.2
+    },
+    {
+      "q": "Show both applications again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.3
+    },
+    {
+      "q": "Switch back to the first application.",
+      "a": "Nothing has been shown in this conversation yet, so I do not know which one you mean. Give an application number (for example 2026/0154/28/001197), or ask for a list first (\"my pending applications\").",
+      "intent": "followup_clarification",
+      "seconds": 0.1
+    },
+    {
+      "q": "What was its rejection reason?",
+      "a": "Common rejection reasons (workflow guide): 1) incomplete documents -- a missing, invalid or expired Sale Deed, EC or ID, or documents not properly attested; 2) area mismatch -- the sale deed area differs from the survey records or the sub-division areas do not add up to the original; 3) encroachment found at the field visit, boundary disputes or unauthorised construction; 4) litigation flag -- an ongoing court case, disputed ownership or a stay order; 5) revenue arrears -- pending property tax or dues on the survey number; 6) invalid survey number -- it does not exist, belongs to another jurisdiction or is already sub-divided. After a rejection the applicant has 30 days to resubmit (up to 3 resubmissions). For why one file was rejected ask: why was [application number] rejected?",
+      "intent": "howto_answer",
+      "seconds": 0.0
+    }
+  ],
+  "stale_history": [
+    {
+      "q": "Compare 2026/0153/02/045470 and 2026/0153/02/045472.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.2
+    },
+    {
+      "q": "What about the other one?",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045472')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045472</a></td><td>NISD</td><td>35</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0012</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.2
+    },
+    {
+      "q": "What is its status?",
+      "a": "The Status for 2026/0153/02/045472 is: rejected",
+      "intent": "application_status",
+      "seconds": 0.2
+    },
+    {
+      "q": "Show both applications again.",
+      "a": "**2026/0153/02/045470** vs **2026/0153/02/045472**\n• **Type**: NISD  |  NISD\n• **Status**: rejected  |  rejected\n• **Filed**: 2026-08-29  |  2026-08-29\n• **Decided**: 2026-09-13  |  2026-09-13\n• **Days to decide**: 15  |  15\n• **Survey**: 110  |  35\n• **Old patta no**: 75100  |  1841\n• **Registration document**: R/17/1/11822/2026  |  R/17/1/11775/2026\n• **Registered at**: Ambattur  |  Ambattur\n• **Registered on**: 28-08-2026  |  27-08-2026\n• **Ward**: 001  |  001\n• **Channel**: sub_registrar  |  sub_registrar\n• **Area (sq.m)**: 1.0  |  37.0\n• **Rejection remark**: [N/06]//NO LINK from RH வேதராமன் மகன் பாலசுப்பிரமணியன்/ N-Parent /Linked Documents are not submitted  |  [N/06]//NO LINK from RH பாஸ்கர மனைவி ஜே. சித்ரலேகா / N-Parent /Linked Documents are not submitted\n\nAsk \"which took longer\" or \"which is older\" for a verdict on one of these.",
+      "intent": "compare_applications",
+      "seconds": 0.2
+    },
+    {
+      "q": "Switch back to the first application.",
+      "a": "<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>Application No.</th><th>Type</th><th>Survey Number</th><th>Sub-Divisions</th><th>Status</th><th>Stage</th><th>Submission Date</th><th>Ward</th><th>Block</th></tr></thead><tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045470')\" style='color:#2563eb;text-decoration:underline;cursor:pointer;font-weight:600;'>2026/0153/02/045470</a></td><td>NISD</td><td>110</td><td>-</td><td>rejected</td><td>REJECTED</td><td>2026-08-29</td><td>ward 001</td><td>block 0043</td></tr></tbody></table>",
+      "intent": "followup_list",
+      "seconds": 0.2
+    },
+    {
+      "q": "What was its rejection reason?",
+      "a": "Common rejection reasons (workflow guide): 1) incomplete documents -- a missing, invalid or expired Sale Deed, EC or ID, or documents not properly attested; 2) area mismatch -- the sale deed area differs from the survey records or the sub-division areas do not add up to the original; 3) encroachment found at the field visit, boundary disputes or unauthorised construction; 4) litigation flag -- an ongoing court case, disputed ownership or a stay order; 5) revenue arrears -- pending property tax or dues on the survey number; 6) invalid survey number -- it does not exist, belongs to another jurisdiction or is already sub-divided. After a rejection the applicant has 30 days to resubmit (up to 3 resubmissions). For why one file was rejected ask: why was [application number] rejected?",
+      "intent": "howto_answer",
+      "seconds": 0.0
+    }
+  ]
+}

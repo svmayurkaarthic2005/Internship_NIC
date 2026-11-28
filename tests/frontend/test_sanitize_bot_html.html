@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>sanitizeBotHtml check</title></head>
+<body>
+<!-- Self-check for the bot-message XSS fix. Open in a browser: the page title becomes PASS or FAIL
+     and #out lists every case. Loads the real frontend/js/chat.js. -->
+<pre id="out"></pre>
+<script>
+window.lucide = undefined;
+// chat.js boots the chat app on DOMContentLoaded (auth check -> redirect to login.html); this page
+// only needs its formatting functions, so that one boot listener is not registered while it loads.
+const _addEL = document.addEventListener.bind(document);
+document.addEventListener = (type, fn, opts) => { if (type !== 'DOMContentLoaded') _addEL(type, fn, opts); };
+</script>
+<script src="../../frontend/js/chat.js"></script>
+<script>document.addEventListener = _addEL;</script>
+<script>
+window.__xssFired = false;
+const cases = [];
+function check(name, ok) { cases.push((ok ? 'ok   ' : 'FAIL ') + name); }
+function render(html) { const d = document.createElement('div'); d.innerHTML = formatBotMessage(html); return d; }
+
+// attacks
+let d = render('<p>hi</p><script>window.__xssFired = true<\/script>');
+check('script tag dropped', !d.querySelector('script') && d.textContent.includes('hi'));
+d = render('<b>x</b><img src=x onerror="window.__xssFired=true">');
+check('img onerror dropped', !d.querySelector('img'));
+d = render('<div onmouseover="window.__xssFired=true">x</div>');
+check('arbitrary on* removed', !d.querySelector('div[onmouseover]'));
+d = render('<a href="javascript:alert(1)">x</a>');
+check('javascript: href removed', !d.querySelector('a[href]'));
+d = render('<span onclick="fetch(\'//evil\')">x</span>');
+check('non-allowlisted onclick removed', !d.querySelector('[onclick]'));
+d = render("<a onclick=\"window.handleAppClick('x'); fetch('//e')\">x</a>");
+check('allowlisted call with extra code removed', !d.querySelector('[onclick]'));
+d = render('<svg onload="window.__xssFired=true"></svg><iframe src="//e"></iframe>');
+check('svg/iframe dropped', !d.querySelector('svg,iframe'));
+d = render('<div style="background:url(javascript:alert(1))">x</div>');
+check('dangerous style removed', !d.querySelector('[style]'));
+d = render('<marquee><b>kept text</b></marquee>');
+check('unknown tag unwrapped, text kept', !d.querySelector('marquee') && d.querySelector('b').textContent === 'kept text');
+
+// legitimate backend HTML survives
+d = render("<div class='table-intro'>Found 1 application(s):</div><table class='data-table'><thead><tr><th>No</th></tr></thead>" +
+    "<tbody><tr><td><a href='javascript:void(0)' class='app-table-link' onclick=\"window.handleAppClick('2026/0153/02/045470')\" " +
+    "style='color:#2563eb;text-decoration:underline;cursor:pointer;'>2026/0153/02/045470</a></td></tr></tbody></table>");
+const a = d.querySelector('a.app-table-link');
+check('app link keeps href/onclick/style', a && a.getAttribute('onclick').includes('handleAppClick') && a.getAttribute('href') === 'javascript:void(0)' && a.getAttribute('style'));
+check('table structure kept', d.querySelectorAll('table thead th, table tbody td').length === 2);
+d = render("<button class='btn-copy-table' onclick='window.copyTableData(this)'>Copy</button>");
+check('copy button handler kept', d.querySelector('button[onclick]'));
+d = render("<a href='#' onclick=\"handleApplicationClick('2026/0154/02/012766'); return false;\">x</a>");
+check('legacy app-click handler kept', d.querySelector('a[onclick]'));
+d = render('Status: approved\nType: ISD\nStage: COMPLETED');
+check('plain-text card still rendered', d.querySelector('.data-table-card'));
+d = render('Line with <b>bold</b> & a <script>alert(1)<\/script> tag');
+check('mixed text sanitized', !d.querySelector('script'));
+
+setTimeout(() => {
+    check('no payload executed', window.__xssFired === false);
+    const fail = cases.some(c => c.startsWith('FAIL'));
+    document.title = fail ? 'FAIL' : 'PASS';
+    document.getElementById('out').textContent = cases.join('\n');
+}, 300);
+</script>
+</body>
+</html>

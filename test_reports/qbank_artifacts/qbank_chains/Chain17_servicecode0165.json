@@ -1,0 +1,9 @@
+{
+  "chain_id": "Chain17_servicecode0165",
+  "questions": [
+    "Look at application 2026/0165/02/000043. I want its application information, current register status and workflow history. Then check whether there is a specialized correction-modification, UAREG, Natham, F-Line or TSLR detail record for this particular application. Don't invent module-specific details if the source table does not hold a matching row.",
+    "Which source tables actually contain this application?",
+    "Which specialized detail sources have no matching record?",
+    "Can you still provide a register-level application answer without pretending a module-specific record exists?"
+  ]
+}

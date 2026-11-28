@@ -1,0 +1,10 @@
+{
+  "chain_id": "Chain10_0158_001804",
+  "questions": [
+    "I am looking at 2026/0158/02/001804, related to survey number 161. The main register shows an open status, but the correction-modification table contains several positive recommendations and an Approved remark at a later desk. Please reconcile the sources. Give me the register status, latest workflow event, desk-level recommendations and remarks, and explain whether the presence of an Approved remark is enough to conclude that the entire application is complete.",
+    "Which was the latest workflow transition?",
+    "What does the correction-modification table say about the Tahsildar's remark?",
+    "Why should we not automatically interpret that remark as proof of final application closure?",
+    "Is there more than one UAREG modification row associated with this application? Show their operation values separately."
+  ]
+}

@@ -31,6 +31,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import psycopg2
 
+from pathlib import Path
+_SAMPLE_DIR = Path(__file__).resolve().parent
+if str(_SAMPLE_DIR) not in sys.path:
+    sys.path.insert(0, str(_SAMPLE_DIR))
+
 from dbconn import conn_params
 from schema_builder import SAMPLE_TABLE_DIR, TABLE_NAMES, read_header, table_specs
 

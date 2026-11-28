@@ -1163,7 +1163,7 @@ def _render_status_yes_no_answer(structured_data: dict, asked_status: str, langu
 # first at the call site -- since REJECTED is also a valid stage value and the
 # officer's own word ("rejected") is the status one, not the desk name.
 _STAGE_NAME_MAP = (
-    ("TAHSILDAR", r"\btahsildar\b|\bzdt\b|\bzonal\s+(?:level\s+|deputy\s+)?tahsildar\b"),
+    ("TAHSILDAR", r"\btahsildar\b|\bzdt\b|\bhqdt\b|\bzonal\s+(?:level\s+|deputy\s+)?tahsildar\b|\bheadquarters\s+(?:deputy\s+)?tahsildar\b"),
     ("DIS", r"\bdis\b|\bdeputy\s+inspector\b"),
     ("SD", r"\bsd\b|\bsenior\s+draughtsman\b|\bdraughtsman\b"),
     ("SIS", r"\bsis\b|\bsub\s+inspector\b"),
@@ -1188,7 +1188,7 @@ def _stage_yes_no_question(message: str) -> Optional[str]:
 
 _DECISION_DESK_LABEL = {
     "SIS": "the Sub Inspector Surveyor (SIS)", "SD": "the Senior Draughtsman (SD)",
-    "DIS": "the Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal Deputy Tahsildar",
+    "DIS": "the Deputy Inspector Surveyor (DIS)", "TAHSILDAR": "the Zonal / Headquarters Deputy Tahsildar (ZDT/HQDT)",
 }
 
 
@@ -1196,7 +1196,7 @@ def _get_decision_desk_label(desk: str, app_no: Optional[str] = None) -> str:
     if desk == "TAHSILDAR":
         if app_no and "/0154/" in app_no:
             return "the Tahsildar"
-        return "the Zonal Deputy Tahsildar"
+        return "the Zonal / Headquarters Deputy Tahsildar (ZDT/HQDT)"
     return _DECISION_DESK_LABEL.get(desk, desk)
 
 
@@ -1386,7 +1386,15 @@ _PROJECT_LABELS = {
     "stage": ("stage", "கட்டம்"),
     "application_type": ("type", "வகை"),
     "survey_no": ("survey number", "புல எண்"),
-    "can_number": ("CAN number", "கணக்கெண்"),
+    # Was "கணக்கெண்" -- the exact Tamil word this codebase uses everywhere
+    # else for SURVEY number (see survey_no just above, and the ~20 other
+    # labels/regexes across chat_application_queries.py, chat_followups.py,
+    # chat_answer.py, ... that pair "survey" with கணக்கெண்). Giving CAN the
+    # identical label made a Tanglish "when was X approved" answer print the
+    # survey number under a line that reads as the CAN number. CAN's own
+    # established Tamil label, used in chat_application_queries.py's
+    # _LAST_APP_FIELD_LABELS and elsewhere, is "CAN எண்".
+    "can_number": ("CAN number", "CAN எண்"),
     "submission_channel": ("submission channel", "சமர்ப்பிப்பு வழி"),
     "applicant_name": ("applicant", "விண்ணப்பதாரர்"),
     "applicant_mobile": ("mobile", "மொபைல்"),

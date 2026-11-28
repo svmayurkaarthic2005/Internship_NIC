@@ -27,7 +27,7 @@ _NOUN = re.compile(r"\b(?:applications?|aplications?|applicatons?|apps?|files?|c
 # words that are fine in a listing request; anything else short is a suspect
 _OK = frozenset("""
 a an the of in on at to for from by with without and or nor but not no yes all any every each some my mine me i we us our
-your you it its this that these those them they their there here is are was were be been being do does did have has had
+your you it its this that these those them they their there here am is are was were be been being do does did have has had
 show display list give get find see view fetch tell count how many much what which who whom whose when where why
 please pls kindly also only just even ever again still already yet now then today yesterday tomorrow tonight
 application applications aplication aplications app apps file files case cases record records entry entries item items
@@ -54,6 +54,7 @@ aana ana en enoda ennoda enaku enakku iruku irukku irukka iruka evalo pathi patr
 igrs tahsildar dsc zdt patta chitta deed sketch remarks litigation encroachment
 csv pdf docx doc txt upload uploaded attachment attachments document documents sheet sheets spreadsheet spreadsheets deeds sketches
 here kaattu kaami kaatu sollu enna evlo evvalavu edhu ethu yaar eppo epdi
+compare compared comparing comparison versus vs
 """.split())
 _TA = re.compile(r"[஀-௿]")
 _NUMLIKE = re.compile(r"^\d")

@@ -17,6 +17,7 @@ import os
 import re
 import csv
 import unicodedata
+from typing import Optional, List, Dict, Any
 
 try:
     import fitz  # PyMuPDF — PDF text, native tables, and page images for OCR
@@ -166,6 +167,7 @@ SUPPORTED_SUFFIXES = {".txt", ".md", ".csv", ".pdf", ".docx"}
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from backend.config import settings
 from backend.services.pgvector_store import init_pgvector, add_documents, get_collection_stats
 from backend.utils.logger import get_logger
 
@@ -174,11 +176,19 @@ logger = get_logger(__name__)
 # Document metadata configuration
 DOCUMENT_CONFIG = {
     "workflow_guide.txt": {
+        "service_code": "0154/0153",
+        "document_type": "manual",
+        "effective_date": "2024-01-01",
+        "version": "2.1",
         "category": "workflow",
         "language": "english",
         "source": "official_manual"
     },
     "survey_manual.txt": {
+        "service_code": "0154",
+        "document_type": "manual",
+        "effective_date": "2023-06-01",
+        "version": "1.8",
         "category": "survey_rules",
         "language": "english",
         "source": "official_manual"
@@ -209,6 +219,10 @@ DOCUMENT_CONFIG = {
         "source": "official_manual"
     },
     "tamilnilam_urban_services_and_districts.txt": {
+        "service_code": "0151-0158",
+        "document_type": "reference",
+        "effective_date": "2024-01-01",
+        "version": "2.0",
         "category": "reference",
         "language": "bilingual",
         "source": "tamilnilam_official_portal"
@@ -539,7 +553,12 @@ def _page_info_for_chunks(content: str, chunks: list) -> list:
     return out
 
 
-def chunk_document(content: str, document_name: str) -> list:
+def chunk_document(
+    content: str,
+    document_name: str,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
+) -> list:
     """
     Split document into chunks using RecursiveCharacterTextSplitter
     """
@@ -552,8 +571,8 @@ def chunk_document(content: str, document_name: str) -> list:
         # top of a chunk with no indication that it belongs to NISD, and the
         # model would quote it for ISD.
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2000,
-            chunk_overlap=200,
+            chunk_size=chunk_size or getattr(settings, "RAG_CHUNK_SIZE", 1200),
+            chunk_overlap=chunk_overlap or getattr(settings, "RAG_CHUNK_OVERLAP", 150),
             length_function=len,
             keep_separator=True,
             separators=["\n=== ", "\n\n", "\n", ". ", " ", ""]
@@ -646,9 +665,15 @@ def ingest_documents(extra_paths=None):
             chunk_metadata = {
                 "document_name": doc_name,
                 "section": f"chunk_{i}" + ("_ocr" if used_ocr else ""),
-                "category": metadata["category"],
-                "source": metadata["source"],
-                "language": metadata["language"],
+                "category": metadata.get("category", "general"),
+                "source": metadata.get("source", "official_manual"),
+                "language": metadata.get("language", "english"),
+                "service_code": metadata.get("service_code"),
+                "document_type": metadata.get("document_type") or metadata.get("category"),
+                "effective_date": metadata.get("effective_date"),
+                "version": metadata.get("version"),
+
+
                 "page_number": page_no if page_no is not None else i + 1,
                 "total_chunks": len(chunks)
             }

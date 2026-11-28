@@ -47,10 +47,15 @@ async def llm_slot():
     except asyncio.TimeoutError:
         logger.warning(f"LLM busy: no slot free within {settings.LLM_QUEUE_WAIT_SECONDS}s")
         raise LLMBusy() from None
+    started = time.perf_counter()
     try:
         yield
     finally:
         slots.release()
+        # every gated generation (call_llama, the stream, the agent, query understanding) is timed
+        # here, inside the slot, so queueing for a slot is not counted as generation time
+        from backend.services.observability import record_llm
+        record_llm((time.perf_counter() - started) * 1000)
 
 
 async def guarded_stream(make_stream) -> AsyncIterator:

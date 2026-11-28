@@ -950,9 +950,12 @@ def _named_unsupported_service_code(message: str) -> Optional[str]:
     if not message or not _UNSUPPORTED_CODE_CONTEXT_RE.search(message):
         return None
     from backend.utils.helpers import SIS_URBAN_SERVICES, find_service_codes
-    from backend.services.rag import extract_application_number
-    app_no = extract_application_number(message)
-    text = message.replace(app_no, " ") if app_no else message
+    from backend.services.rag import extract_application_number, extract_application_numbers
+    text = message
+    for app_no in extract_application_numbers(message):
+        text = text.replace(app_no, " ")
+    import re
+    text = re.sub(r"\b\d{4}/\d{3,4}/\d{1,3}/\d+\b", " ", text)
     # A real, supported code named in the SAME breath is not itself a reason
     # to stand aside (see "Compare 0155 and 0154." -- 0154 is real, 0155 is
     # not, and the invalid one is still what must be refused); this only
@@ -1466,11 +1469,17 @@ def _comparison_answer_core(data: dict, is_tamil: bool = False) -> str:
         _fields_en = (("Type", "type"), ("Status", "status"),
                       ("Filed", "submission_date"), ("Decided", "decision_date"),
                       ("Days to decide", "days_to_decide"),
-                      ("Survey", "survey_no"), ("Ward", "ward_number"),
-                      ("Channel", "submission_channel"), ("Area (sq.m)", "area_sqm"))
+                      ("Survey", "survey_no"), ("Sub-division", "sub_division_no"),
+                      ("Old patta no", "old_patta_no"),
+                      ("Registration document", "registration_document_no"),
+                      ("Registered at", "registration_place"), ("Registered on", "registration_date"),
+                      ("Ward", "ward_number"),
+                      ("Channel", "submission_channel"), ("Area (sq.m)", "area_sqm"),
+                      ("Rejection remark", "rejection_remark"))
         _fields_ta = ("வகை", "நிலை", "சமர்ப்பித்த தேதி", "முடிவு தேதி",
-                     "முடிவெடுக்க எடுத்த நாட்கள்", "கணக்கெண்", "வார்டு",
-                     "வழி", "பரப்பளவு (ச.மீ)")
+                     "முடிவெடுக்க எடுத்த நாட்கள்", "கணக்கெண்", "உட்பிரிவு எண்",
+                     "பழைய பட்டா எண்", "பதிவு ஆவணம்", "பதிவு செய்த இடம்", "பதிவு தேதி", "வார்டு",
+                     "வழி", "பரப்பளவு (ச.மீ)", "நிராகரிப்பு குறிப்பு")
         _na = "இல்லை" if is_tamil else "N/A"
         for (label_en, key), label_ta in zip(_fields_en, _fields_ta):
             lv, rv = left.get(key), right.get(key)
